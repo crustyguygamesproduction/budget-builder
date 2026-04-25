@@ -1,2 +1,2 @@
 # budget-builder
- Personal budgeting app
+Personal budgeting app
