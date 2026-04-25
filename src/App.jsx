@@ -29,11 +29,7 @@ const startingPots = [
   { id: "holiday", name: "Holiday Pot", target: 2000, saved: 0, scope: "shared" },
 ];
 
-const startingCashPots = [
-  { id: "wallet", name: "Wallet", amount: 0, location: "On me", note: "Everyday cash" },
-  { id: "home", name: "Cash at home", amount: 0, location: "Home", note: "Safe place / envelope" },
-  { id: "car", name: "Car cash", amount: 0, location: "Car", note: "Emergency cash" },
-];
+const startingCashPots = [];
 
 const startingBills = [
   { id: "rent", name: "Rent", amount: 0, dueDay: "last", category: "Rent/Mortgage", keywords: "rent landlord letting housing", scope: "shared", allowChunks: true },
@@ -209,7 +205,7 @@ const styles = {
   lightButton: { border: "1px solid #d4d4d8", background: "white", color: "#18181b", padding: "10px 12px", borderRadius: 14, fontWeight: 700, cursor: "pointer" },
   tab: { border: "1px solid #d4d4d8", background: "white", padding: "10px 12px", borderRadius: 999, cursor: "pointer", fontWeight: 700 },
   activeTab: { border: "1px solid #18181b", background: "#18181b", color: "white", padding: "10px 12px", borderRadius: 999, cursor: "pointer", fontWeight: 700 },
-  small: { color: "#71717a", fontSize: 13 },
+  small: { color: "#3f3f46", fontSize: 14, lineHeight: 1.45 },
 };
 
 export default function App() {
@@ -342,6 +338,23 @@ export default function App() {
     setCashPots(cashPots.map((p) => (p.id === id ? { ...p, [field]: field === "amount" ? Number(value) || 0 : value } : p)));
   }
 
+  function addCashPot() {
+    setCashPots([
+      ...cashPots,
+      {
+        id: `${Date.now()}-cash`,
+        name: "New cash pot",
+        amount: 0,
+        location: "",
+        note: "",
+      },
+    ]);
+  }
+
+  function deleteCashPot(id) {
+    setCashPots(cashPots.filter((p) => p.id !== id));
+  }
+
   function handleLocalAuth() {
     if (!authEmail || !authPassword) return;
     const email = authEmail.trim().toLowerCase();
@@ -439,7 +452,7 @@ export default function App() {
         {tab === "receipts" && (
           <div style={styles.card}>
             <h2>Receipts and quick add</h2>
-            <p style={styles.small}>Add daily spends from receipts, screenshots or manual entry. Later CSV imports should ignore likely matches.</p>
+            <p style={styles.small}>Add daily spends manually, upload an e-receipt/screenshot, or on iPhone tap the receipt upload to take a photo with the camera. Later CSV imports should ignore likely matches.</p>
             <div style={styles.grid2}>
               <input style={styles.input} value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="Shop / spend name" />
               <input style={styles.input} type="number" value={manualAmount} onChange={(e) => setManualAmount(e.target.value)} placeholder="Amount" />
@@ -447,7 +460,7 @@ export default function App() {
               <select style={styles.input} value={manualType} onChange={(e) => setManualType(e.target.value)}><option value="spend">Spending</option><option value="income">Income</option></select>
               <select style={styles.input} value={manualCategory} onChange={(e) => setManualCategory(e.target.value)}>{categories.filter((c) => c !== "Income").map((c) => <option key={c}>{c}</option>)}</select>
               <select style={styles.input} value={manualScope} onChange={(e) => setManualScope(e.target.value)}><option value="personal">Personal</option><option value="shared">Shared</option></select>
-              <input style={styles.input} type="file" accept="image/*,.pdf" onChange={uploadReceipt} />
+              <input style={styles.input} type="file" accept="image/*,.pdf" capture="environment" onChange={uploadReceipt} />
             </div>
             <button style={{ ...styles.button, marginTop: 12 }} onClick={() => addManual("manual")}>Add manual entry</button>
           </div>
@@ -471,17 +484,26 @@ export default function App() {
 
         {tab === "cash" && (
           <div style={styles.card}>
-            <h2>Cash pots</h2>
-            <p style={styles.small}>Track physical cash separately, including where it is kept. This helps with cash sales, eBay collections, emergency cash and envelopes.</p>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <h2>Cash pots</h2>
+                <p style={styles.small}>Track physical cash separately, including where it is kept. Add as many pots as you need for cash sales, eBay collections, emergency cash or envelopes.</p>
+              </div>
+              <button style={styles.button} onClick={addCashPot}>+ Add cash pot</button>
+            </div>
             <h2>Total cash: {money(totals.cashTotal)}</h2>
+            {cashPots.length === 0 ? <p style={styles.small}>No cash pots yet. Tap + Add cash pot to create one.</p> : null}
             <div style={styles.grid2}>
               {cashPots.map((p) => (
                 <div key={p.id} style={{ ...styles.card, background: "#fafafa" }}>
-                  <input style={styles.input} value={p.name} onChange={(e) => updateCashPot(p.id, "name", e.target.value)} />
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                    <input style={styles.input} value={p.name} onChange={(e) => updateCashPot(p.id, "name", e.target.value)} />
+                    <button style={styles.lightButton} onClick={() => deleteCashPot(p.id)}>Delete</button>
+                  </div>
                   <div style={{ height: 8 }} />
                   <input style={styles.input} type="number" value={p.amount} onChange={(e) => updateCashPot(p.id, "amount", e.target.value)} placeholder="Amount" />
                   <div style={{ height: 8 }} />
-                  <input style={styles.input} value={p.location} onChange={(e) => updateCashPot(p.id, "location", e.target.value)} placeholder="Where is it?" />
+                  <input style={styles.input} value={p.location} onChange={(e) => updateCashPot(p.id, "location", e.target.value)} placeholder="Where is it? e.g. wallet, drawer, envelope" />
                   <div style={{ height: 8 }} />
                   <input style={styles.input} value={p.note} onChange={(e) => updateCashPot(p.id, "note", e.target.value)} placeholder="Note" />
                 </div>
