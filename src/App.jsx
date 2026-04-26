@@ -769,7 +769,7 @@ function UploadPage({
 const sampleRows = results.data.slice(0, 5);
 
 const { data: mapping, error: mappingError } = await supabase.functions.invoke(
-  "map-statement-columns",
+  "swift-worker",
   {
     body: { headers, sampleRows },
   }
