@@ -780,6 +780,7 @@ if (mappingError) {
   alert("AI mapping failed: " + JSON.stringify(mappingError));
   return;
 }
+alert("AI mapping result: " + JSON.stringify(mapping));
           const cleaned = results.data
             .map((row) => {
               const amount = cleanAmount(
