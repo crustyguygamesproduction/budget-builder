@@ -764,10 +764,33 @@ function UploadPage({
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
-        complete: function (results) {
+        complete: async function (results) {
+          const headers = Object.keys(results.data[0] || {});
+const sampleRows = results.data.slice(0, 5);
+
+const mappingRes = await fetch(
+  "https://itayxahonejogrnkhlkp.supabase.co/functions/v1/map-statement-columns",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ headers, sampleRows }),
+  }
+);
+
+const mapping = await mappingRes.json();
           const cleaned = results.data
             .map((row) => {
-              const amount = cleanAmount(row.Amount ?? row.amount ?? row.VALUE ?? row.Value);
+              const amount = cleanAmount(
+  mapping.amount
+    ? row[mapping.amount]
+    : (mapping.money_in && row[mapping.money_in]
+        ? row[mapping.money_in]
+        : mapping.money_out && row[mapping.money_out]
+        ? -Math.abs(row[mapping.money_out])
+        : "")
+);
               const date = row.Date ?? row.date ?? row.TransactionDate ?? row["Transaction Date"];
               const description =
                 row.Description ?? row.description ?? row.Payee ?? row.Reference ?? row.Merchant;
