@@ -777,7 +777,7 @@ const { data: mapping, error: mappingError } = await supabase.functions.invoke(
 
 if (mappingError) {
   console.error("AI mapping failed:", mappingError);
-  alert("Could not read this statement format yet. Please try again.");
+  alert("AI mapping failed: " + JSON.stringify(mappingError));
   return;
 }
           const cleaned = results.data
