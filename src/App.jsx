@@ -762,9 +762,29 @@ function UploadPage({
 
     selectedFiles.forEach((file) => {
       Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: async function (results) {
+  header: true,
+  skipEmptyLines: true,
+
+  beforeFirstChunk: function (chunk) {
+    const lines = chunk.split(/\r?\n/);
+
+    const headerIndex = lines.findIndex((line) => {
+      const lower = line.toLowerCase();
+      return (
+        lower.includes("date") &&
+        (lower.includes("description") || lower.includes("merchant") || lower.includes("payee")) &&
+        (lower.includes("amount") || lower.includes("money in") || lower.includes("money out"))
+      );
+    });
+
+    if (headerIndex > 0) {
+      return lines.slice(headerIndex).join("\n");
+    }
+
+    return chunk;
+  },
+
+  complete: async function (results) {
           const headers = Object.keys(results.data[0] || {});
 const sampleRows = results.data.slice(0, 5);
 
