@@ -800,29 +800,45 @@ if (mappingError) {
   alert("AI mapping failed: " + JSON.stringify(mappingError));
   return;
 }
-alert("AI mapping result: " + JSON.stringify(mapping));
-alert("First parsed row: " + JSON.stringify(results.data[0]));
+
+
           const cleaned = results.data
             .map((row) => {
               const amount = Number(
   cleanAmount(
-    mapping.amount
-      ? row[mapping.amount]
-      : (mapping.money_in && row[mapping.money_in]
-          ? row[mapping.money_in]
-          : mapping.money_out && row[mapping.money_out]
-            ? -Math.abs(row[mapping.money_out])
-            : ""
-        )
+    (mapping.amount && row[mapping.amount]) ||
+      (mapping.money_in && row[mapping.money_in]) ||
+      (mapping.money_out && row[mapping.money_out]
+        ? -Math.abs(cleanAmount(row[mapping.money_out]))
+        : "") ||
+      row.Amount ||
+      row.amount ||
+      row["Amount"] ||
+      row["Transaction Amount"] ||
+      row["Money In"] ||
+      (row["Money Out"] ? -Math.abs(cleanAmount(row["Money Out"])) : "")
   )
 );
-              const date = mapping.date
-  ? row[mapping.date]
-  : row.Date ?? row.date ?? row.TransactionDate ?? row["Transaction Date"];
+              const date =
+  (mapping.date && row[mapping.date]) ||
+  row.Date ||
+  row.date ||
+  row.TransactionDate ||
+  row["Transaction Date"] ||
+  row["Posted Date"] ||
+  row["Transaction Date"] ||
+  "";
 
-const description = mapping.description
-  ? row[mapping.description]
-  : row.Description ?? row.description ?? row.Payee ?? row.Reference ?? row.Merchant ?? "";
+const description =
+  (mapping.description && row[mapping.description]) ||
+  row["Transaction Description"] ||
+  row.Description ||
+  row.description ||
+  row.Payee ||
+  row.Reference ||
+  row.Merchant ||
+  row["Details"] ||
+  "";
 
               return {
                 date,
