@@ -768,18 +768,18 @@ function UploadPage({
           const headers = Object.keys(results.data[0] || {});
 const sampleRows = results.data.slice(0, 5);
 
-const mappingRes = await fetch(
-  "https://itayxahonejogrnkhlkp.supabase.co/functions/v1/map-statement-columns",
+const { data: mapping, error: mappingError } = await supabase.functions.invoke(
+  "map-statement-columns",
   {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ headers, sampleRows }),
+    body: { headers, sampleRows },
   }
 );
 
-const mapping = await mappingRes.json();
+if (mappingError) {
+  console.error("AI mapping failed:", mappingError);
+  alert("Could not read this statement format yet. Please try again.");
+  return;
+}
           const cleaned = results.data
             .map((row) => {
               const amount = cleanAmount(
