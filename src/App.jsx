@@ -801,6 +801,7 @@ if (mappingError) {
   return;
 }
 alert("AI mapping result: " + JSON.stringify(mapping));
+alert("First parsed row: " + JSON.stringify(results.data[0]));
           const cleaned = results.data
             .map((row) => {
               const amount = cleanAmount(
