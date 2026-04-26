@@ -804,14 +804,17 @@ alert("AI mapping result: " + JSON.stringify(mapping));
 alert("First parsed row: " + JSON.stringify(results.data[0]));
           const cleaned = results.data
             .map((row) => {
-              const amount = cleanAmount(
-  mapping.amount
-    ? row[mapping.amount]
-    : (mapping.money_in && row[mapping.money_in]
-        ? row[mapping.money_in]
-        : mapping.money_out && row[mapping.money_out]
-        ? -Math.abs(row[mapping.money_out])
-        : "")
+              const amount = Number(
+  cleanAmount(
+    mapping.amount
+      ? row[mapping.amount]
+      : (mapping.money_in && row[mapping.money_in]
+          ? row[mapping.money_in]
+          : mapping.money_out && row[mapping.money_out]
+            ? -Math.abs(row[mapping.money_out])
+            : ""
+        )
+  )
 );
               const date = row.Date ?? row.date ?? row.TransactionDate ?? row["Transaction Date"];
               const description =
@@ -825,7 +828,7 @@ alert("First parsed row: " + JSON.stringify(results.data[0]));
                 category: detectCategory(description || "", amount),
               };
             })
-            .filter((row) => row.date && row.description && !Number.isNaN(row.amount));
+            .filter(row => row.date && row.description && row.amount !== "" && row.amount !== null)
 
           setFiles((prev) => {
             const nextCard = buildFileCard(file, cleaned);
