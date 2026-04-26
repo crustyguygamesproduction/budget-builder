@@ -816,9 +816,13 @@ alert("First parsed row: " + JSON.stringify(results.data[0]));
         )
   )
 );
-              const date = row.Date ?? row.date ?? row.TransactionDate ?? row["Transaction Date"];
-              const description =
-                row.Description ?? row.description ?? row.Payee ?? row.Reference ?? row.Merchant;
+              const date = mapping.date
+  ? row[mapping.date]
+  : row.Date ?? row.date ?? row.TransactionDate ?? row["Transaction Date"];
+
+const description = mapping.description
+  ? row[mapping.description]
+  : row.Description ?? row.description ?? row.Payee ?? row.Reference ?? row.Merchant ?? "";
 
               return {
                 date,
