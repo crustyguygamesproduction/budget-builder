@@ -805,8 +805,7 @@ function TodayPage({
 
         <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.primaryDisplay}</h1>
         <p style={styles.balanceSubcopy}>
-          {cashSummary.body} This is not a random budget total: it is the app's current read from uploaded statements,
-          with transfers ignored where detected.
+          {cashSummary.body} 
         </p>
 
         <div style={styles.balancePills}>
