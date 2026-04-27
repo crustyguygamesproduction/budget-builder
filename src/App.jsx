@@ -308,7 +308,12 @@ export default function App() {
         )}
 
         {page === "goals" && (
-          <GoalsPage goals={goals} transactions={smartTransactions} />
+          <GoalsPage
+            goals={goals}
+            transactions={smartTransactions}
+            onGoToCoach={openCoachWithPrompt}
+            onNavigate={setPage}
+          />
         )}
 
         {page === "receipts" && (
@@ -316,6 +321,7 @@ export default function App() {
             receipts={receipts}
             transactions={smartTransactions}
             onChange={loadReceipts}
+            onGoToCoach={openCoachWithPrompt}
           />
         )}
 
@@ -612,30 +618,34 @@ function TodayPage({
         </div>
       </section>
 
-      <Section title="Do This Next">
+      <Section title={dataFreshness.needsUpload ? "Start Here" : "Do This Next"}>
         <div style={styles.aiInsightGrid}>
-          {prioritizedActionCards.slice(0, 3).map((card) => (
-            <ActionCard
-              key={card.key}
-              label={card.label}
-              headline={card.headline}
-              body={card.body}
-              actionLabel={card.action}
-              onClick={card.onClick}
-            />
-          ))}
+          {(dataFreshness.needsUpload ? [refreshActionCard] : prioritizedActionCards.slice(0, 3))
+            .filter(Boolean)
+            .map((card) => (
+              <ActionCard
+                key={card.key}
+                label={card.label}
+                headline={card.headline}
+                body={card.body}
+                actionLabel={card.action}
+                onClick={card.onClick}
+              />
+            ))}
         </div>
       </Section>
 
-      <Section title="Quick Read">
+      <Section title={dataFreshness.needsUpload ? "What Still Works" : "Quick Read"}>
         <div style={styles.aiInsightGrid}>
-          <InsightCard
-            label="Today"
-            headline={dailyBrief.headline}
-            body={dailyBrief.body}
-            ctaLabel="Ask AI about this"
-            onClick={() => onGoToCoach(`Use my current money data and explain this: ${dailyBrief.headline}`)}
-          />
+          {!dataFreshness.needsUpload ? (
+            <InsightCard
+              label="Today"
+              headline={dailyBrief.headline}
+              body={dailyBrief.body}
+              ctaLabel="Ask AI about this"
+              onClick={() => onGoToCoach(`Use my current money data and explain this: ${dailyBrief.headline}`)}
+            />
+          ) : null}
           <InsightCard
             label="Trend"
             headline={trendSummary.headline}
@@ -3032,44 +3042,120 @@ function CalendarPage({ transactions, screenWidth }) {
   );
 }
 
-function GoalsPage({ goals, transactions }) {
-  const possibleSavings = transactions
-    .filter((t) => t.category === "Internal Transfer")
+function GoalsPage({ goals, transactions, onGoToCoach, onNavigate }) {
+  const freshness = getDataFreshness(transactions);
+  const latestMonth = getDisplayedMonthSnapshot(transactions);
+  const billsEstimate = getTotals(transactions).bills;
+  const transferSavings = transactions
+    .filter((t) => isInternalTransferLike(t) && Number(t.amount) < 0)
     .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
 
-  const houseGoal =
-    goals.find((goal) =>
-      String(goal.name || "").toLowerCase().includes("house")
-    ) || null;
+  const mainGoal =
+    goals.find((goal) => String(goal.name || "").toLowerCase().includes("house")) ||
+    goals[0] ||
+    null;
 
-  const target = Number(houseGoal?.target_amount || 15000);
-  const current = Number(houseGoal?.current_amount || possibleSavings || 0);
-  const percent = Math.min((current / target) * 100, 100);
+  const target = Number(mainGoal?.target_amount || Math.max(billsEstimate * 3, 1500, 5000));
+  const current = Number(mainGoal?.current_amount || transferSavings || 0);
+  const percent = target > 0 ? Math.min((current / target) * 100, 100) : 0;
+  const gap = Math.max(target - current, 0);
+  const nextMilestone = gap > 0 ? Math.min(target, current + Math.max(250, Math.ceil(gap / 4 / 50) * 50)) : target;
+
+  const goalHeadline = mainGoal?.name || "Main goal";
+  const goalRead = freshness.needsUpload
+    ? {
+        headline: freshness.hasData ? `Your latest visible month is ${freshness.latestMonthLabel}` : "Upload your first statement",
+        body: freshness.hasData
+          ? "Before this page tries to coach your goals properly, get your newest statement in so the pace and progress are real."
+          : "Once a statement is in, Money Hub can suggest more believable goals instead of generic filler.",
+      }
+    : {
+        headline: gap > 0 ? `${formatCurrency(gap)} still to go` : "Target reached",
+        body: gap > 0
+          ? `Next sensible marker is ${formatCurrency(nextMilestone)}. That keeps the goal feeling near enough to matter.`
+          : "This goal is already at or above target, so it is time to set the next one.",
+      };
+
+  const goalActions = [
+    {
+      key: 'main-goal',
+      label: mainGoal ? 'Goal check' : 'Set your first goal',
+      headline: mainGoal ? `${goalHeadline} is ${percent >= 50 ? 'moving' : 'still early'}` : 'You need one goal that matters',
+      body: mainGoal
+        ? `${formatCurrency(current)} saved against ${formatCurrency(target)}. ${gap > 0 ? `${formatCurrency(gap)} still left.` : 'You have hit the target.'}`
+        : 'Pick one target first. House deposit, emergency buffer, or debt cleanup are the best starting points.',
+      action: mainGoal ? 'Ask AI for a plan' : 'Build goals with AI',
+      onClick: () =>
+        onGoToCoach(
+          mainGoal
+            ? `Build me a simple plan to reach my ${goalHeadline} faster using my current money data.`
+            : 'Suggest 3 simple money goals based on my imported data, and tell me which one I should start with first.',
+          { autoSend: true }
+        ),
+    },
+    {
+      key: 'buffer',
+      label: 'Safety buffer',
+      headline: billsEstimate > 0 ? `One month of bills looks like ${formatCurrency(billsEstimate)}` : 'Bills need more history',
+      body: billsEstimate > 0
+        ? 'A proper cash buffer makes the rest of the app much less stressful, because surprises stop wrecking the month.'
+        : 'Once more statement history lands, this can estimate a buffer target from your real bills.',
+      action: freshness.needsUpload ? 'Upload statement' : 'Open coach',
+      onClick: () => (freshness.needsUpload ? onNavigate('upload') : onGoToCoach('Help me build a realistic emergency buffer from my money data.', { autoSend: true })),
+    },
+  ];
 
   return (
     <>
-      <Section title="House Deposit">
-        <p style={styles.goalStat}>
-          £{current.toFixed(2)} / £{target.toFixed(2)}
-        </p>
+      <Section title={mainGoal ? goalHeadline : 'Start With One Goal'}>
+        <p style={styles.goalStat}>{formatCurrency(current)} / {formatCurrency(target)}</p>
         <div style={styles.progressOuter}>
           <div style={{ ...styles.progressInner, width: `${percent}%` }} />
         </div>
-        <p style={styles.transactionMeta}>
-          AI note: protect this before casual spending starts winning.
-        </p>
+        <div style={styles.inlineInfoBlock}>
+          <Row name="Progress" value={`${percent.toFixed(0)}%`} />
+          <Row name="Left to go" value={formatCurrency(gap)} />
+          <Row name="Next milestone" value={formatCurrency(nextMilestone)} />
+        </div>
       </Section>
 
-      <Section title="Pots">
-        <Row name="Hustler Pot" value="Coming soon" />
-        <Row name="Holiday Pot" value="Coming soon" />
-        <Row name="Investment Pot" value="Coming soon" />
+      <Section title="Goal Read">
+        <div style={styles.aiInsightGrid}>
+          <InsightCard
+            label="AI read"
+            headline={goalRead.headline}
+            body={goalRead.body}
+            ctaLabel={freshness.needsUpload ? 'Upload statement' : 'Ask AI for plan'}
+            onClick={() => (freshness.needsUpload ? onNavigate('upload') : onGoToCoach(`Give me a sharp plan for ${goalHeadline || 'my money goal'} using the data you can already see.`, { autoSend: true }))}
+          />
+        </div>
+      </Section>
+
+      <Section title="Next Moves">
+        <div style={styles.aiInsightGrid}>
+          {goalActions.map((card) => (
+            <ActionCard
+              key={card.key}
+              label={card.label}
+              headline={card.headline}
+              body={card.body}
+              actionLabel={card.action}
+              onClick={card.onClick}
+            />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="What This Uses">
+        <Row name="Latest visible month" value={latestMonth.monthName} />
+        <Row name="Transfer-style saving" value={formatCurrency(transferSavings)} />
+        <Row name="Bills estimate" value={formatCurrency(billsEstimate)} />
       </Section>
     </>
   );
 }
 
-function ReceiptsPage({ receipts, transactions, onChange }) {
+function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
   const [merchant, setMerchant] = useState("");
   const [total, setTotal] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
@@ -3077,6 +3163,8 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
   const [keepFile, setKeepFile] = useState(false);
   const [saving, setSaving] = useState(false);
   const [match, setMatch] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [receiptFilter, setReceiptFilter] = useState("all");
 
   function guessFromFileName(fileName) {
     const clean = fileName.toLowerCase();
@@ -3102,8 +3190,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
 
       const merchantMatches = description.includes(merchantText);
       const amountMatches = Math.abs(amount - receiptAmount) < 0.02;
-      const dateMatches =
-        !nextDate || transaction.transaction_date === nextDate;
+      const dateMatches = !nextDate || transaction.transaction_date === nextDate;
 
       return merchantMatches && amountMatches && dateMatches;
     });
@@ -3114,10 +3201,13 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
     if (!selectedFile) return;
 
     setFile(selectedFile);
+    if (!keepFile) setKeepFile(true);
 
     const guess = guessFromFileName(selectedFile.name);
     if (guess.guessedMerchant && !merchant) {
       setMerchant(guess.guessedMerchant);
+    } else if (!merchant) {
+      setMerchant(selectedFile.name.replace(/\.[^.]+$/, ""));
     }
   }
 
@@ -3138,7 +3228,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
 
   async function addReceipt() {
     if (!merchant.trim() && !file) {
-      alert("Add a merchant or upload a receipt first.");
+      alert("Add a receipt name or upload a receipt first.");
       return;
     }
 
@@ -3169,10 +3259,12 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
       fileUrl = data.publicUrl;
     }
 
+    const displayName = merchant.trim() || file?.name.replace(/\.[^.]+$/, "") || "Saved receipt";
+
     const { error } = await supabase.from("receipts").insert({
       user_id: user.id,
       transaction_id: match?.id || null,
-      merchant: merchant.trim() || "Scanned receipt",
+      merchant: displayName,
       total: Number(total || 0),
       receipt_date: receiptDate || null,
       source: file ? "upload" : "manual",
@@ -3182,7 +3274,9 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
       ai_summary: match
         ? `Matched to transaction: ${match.description}`
         : file
-        ? "Receipt uploaded. AI extraction will come later."
+        ? keepFile
+          ? "Receipt saved for warranty or returns."
+          : "Receipt added without keeping the file."
         : "Manual receipt added.",
     });
 
@@ -3204,12 +3298,40 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
     onChange();
   }
 
+  const filteredReceipts = receipts.filter((receipt) => {
+    const searchText = `${receipt.merchant || ""} ${receipt.ai_summary || ""} ${receipt.receipt_date || ""}`.toLowerCase();
+    const matchesSearch = !searchQuery.trim() || searchText.includes(searchQuery.trim().toLowerCase());
+    const matchesFilter =
+      receiptFilter === "all"
+        ? true
+        : receiptFilter === "warranty"
+        ? Boolean(receipt.file_url)
+        : receiptFilter === "matched"
+        ? receipt.matched_status === "matched"
+        : receipt.matched_status !== "matched";
+    return matchesSearch && matchesFilter;
+  });
+
   return (
     <>
-      <Section title="Receipt Scanner">
+      <Section
+        title="Receipt Scanner"
+        right={
+          <button
+            style={styles.ghostBtn}
+            onClick={() =>
+              onGoToCoach(
+                'Help me set up a simple receipt system for warranties, returns, and tax-style record keeping using the app I already have.',
+                { autoSend: true }
+              )
+            }
+          >
+            Ask AI how to use this
+          </button>
+        }
+      >
         <p style={styles.sectionIntro}>
-          Take a photo, upload an image or PDF, or add receipt details manually.
-          I'll try to match it to your imported bank transactions.
+          Save receipts with a proper name so you can actually find them later for returns, warranties, or proof of purchase.
         </p>
 
         <input
@@ -3224,7 +3346,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
           <div style={styles.receiptPreview}>
             <strong>{file.name}</strong>
             <p style={styles.transactionMeta}>
-              {file.type || "Unknown file type"} · {(file.size / 1024).toFixed(1)} KB
+              {file.type || "Unknown file type"} ? {(file.size / 1024).toFixed(1)} KB
             </p>
           </div>
         )}
@@ -3240,7 +3362,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
 
         <input
           style={styles.input}
-          placeholder="Merchant, e.g. Tesco"
+          placeholder="Receipt name or merchant, e.g. AirPods Pro / Tesco"
           value={merchant}
           onChange={(e) => updateMerchant(e.target.value)}
         />
@@ -3248,7 +3370,8 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
         <input
           style={styles.input}
           placeholder="Total"
-          type="text" inputMode="decimal"
+          type="text"
+          inputMode="decimal"
           value={total}
           onChange={(e) => updateTotal(e.target.value)}
         />
@@ -3264,8 +3387,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
           <div style={styles.matchBox}>
             <strong>Matched transaction found</strong>
             <p style={styles.transactionMeta}>
-              {match.description} · {match.transaction_date} · £
-              {Math.abs(Number(match.amount || 0)).toFixed(2)}
+              {match.description} ? {match.transaction_date} ? {formatCurrency(Math.abs(Number(match.amount || 0)))}
             </p>
           </div>
         )}
@@ -3275,25 +3397,67 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
         </button>
       </Section>
 
-      <Section title="Saved Receipts">
-        {receipts.length === 0 ? (
-          <p style={styles.emptyText}>No receipts yet.</p>
-        ) : (
-          receipts.map((receipt) => (
-            <div key={receipt.id} style={styles.transactionRow}>
-              <div>
-                <strong>{receipt.merchant || "Receipt"}</strong>
-                <p style={styles.transactionMeta}>
-                  {receipt.receipt_date || "No date"} -{" "}
-                  {receipt.matched_status === "matched"
-                    ? "Matched"
-                    : receipt.file_url
-                    ? "File kept"
-                    : "Data only"}
-                </p>
-              </div>
+      <Section title="Find A Receipt Later">
+        <input
+          style={styles.input}
+          placeholder="Search by receipt name, merchant, or date"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <div style={styles.actionChipWrap}>
+          {[
+            ["all", "All receipts"],
+            ["warranty", "Warranty / kept files"],
+            ["matched", "Matched"],
+            ["manual", "Unmatched"],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              style={{ ...styles.promptChip, ...(receiptFilter === key ? styles.modeChipActive : null) }}
+              onClick={() => setReceiptFilter(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </Section>
 
-              <strong>£{Number(receipt.total || 0).toFixed(2)}</strong>
+      <Section title="Saved Receipts">
+        {filteredReceipts.length === 0 ? (
+          <p style={styles.emptyText}>No receipts match that search yet.</p>
+        ) : (
+          filteredReceipts.map((receipt) => (
+            <div key={receipt.id} style={styles.signalCard}>
+              <div style={styles.signalHeader}>
+                <div>
+                  <strong>{receipt.merchant || "Receipt"}</strong>
+                  <p style={styles.transactionMeta}>
+                    {receipt.receipt_date || "No date"} ? {receipt.matched_status === "matched" ? "Matched" : "Unmatched"} ? {receipt.file_url ? "File saved" : "Details only"}
+                  </p>
+                </div>
+                <strong>{formatCurrency(receipt.total || 0)}</strong>
+              </div>
+              {receipt.ai_summary ? <p style={styles.signalBody}>{receipt.ai_summary}</p> : null}
+              <div style={styles.inlineBtnRow}>
+                {receipt.file_url ? (
+                  <button style={styles.secondaryInlineBtn} type="button" onClick={() => window.open(receipt.file_url, '_blank', 'noopener,noreferrer')}>
+                    Open file
+                  </button>
+                ) : null}
+                <button
+                  style={styles.secondaryInlineBtn}
+                  type="button"
+                  onClick={() =>
+                    onGoToCoach(
+                      `Help me work out whether I should keep this receipt and what it is most useful for: ${receipt.merchant || 'Receipt'} for ${formatCurrency(receipt.total || 0)} on ${receipt.receipt_date || 'unknown date'}.`,
+                      { autoSend: true }
+                    )
+                  }
+                >
+                  Ask AI
+                </button>
+              </div>
             </div>
           ))
         )}
@@ -5639,6 +5803,7 @@ function getCoachSectionStyle(viewportHeight, screenWidth) {
   return {
     ...styles.coachSection,
     minHeight: `calc(${viewportHeight}px - ${reservedHeight}px)`,
+    height: `calc(${viewportHeight}px - ${reservedHeight}px)`,
   };
 }
 
@@ -5669,6 +5834,7 @@ function getChatMessagesStyle(viewportHeight, screenWidth) {
     ...styles.chatMessages,
     minHeight: `${minHeight}px`,
     maxHeight: `${maxHeight}px`,
+    flex: 1,
   };
 }
 
@@ -6234,6 +6400,7 @@ const styles = {
   coachSection: {
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
   },
 
   coachShell: {
@@ -6242,6 +6409,7 @@ const styles = {
     gap: "12px",
     flex: 1,
     minHeight: 0,
+    height: "100%",
   },
 
   coachStatusCard: {
@@ -6331,7 +6499,11 @@ const styles = {
     display: "flex",
     gap: "10px",
     alignItems: "center",
-    paddingTop: "2px",
+    paddingTop: "10px",
+    position: "sticky",
+    bottom: 0,
+    background: "linear-gradient(180deg, rgba(248,251,255,0), rgba(248,251,255,0.98) 28%)",
+    zIndex: 2,
   },
 
   chatInput: {
