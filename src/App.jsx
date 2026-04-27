@@ -805,8 +805,10 @@ function TodayPage({
 
         <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.primaryDisplay}</h1>
         <p style={styles.balanceSubcopy}>
-          {cashSummary.body} 
-        </p>
+  {monthSnapshot.net < 0
+    ? `You are ${formatCurrency(Math.abs(monthSnapshot.net))} behind this month.`
+    : `You are ${formatCurrency(monthSnapshot.net)} ahead this month.`}
+</p>
 
         <div style={styles.balancePills}>
           {homeHeroPills.map((pill) => (
