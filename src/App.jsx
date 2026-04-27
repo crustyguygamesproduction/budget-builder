@@ -472,7 +472,8 @@ function TodayPage({
 }) {
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
-  const monthSnapshot = useMemo(() => getCurrentMonthSnapshot(transactions), [transactions]);
+  const dataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
+  const monthSnapshot = useMemo(() => getDisplayedMonthSnapshot(transactions), [transactions]);
   const cashSummary = useMemo(() => getCashSummary(accounts, transactions), [accounts, transactions]);
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [transactions]);
 
@@ -502,6 +503,7 @@ function TodayPage({
     subscriptions: subscriptionSummary.count,
     goalPercent,
     cashSummary,
+    dataFreshness,
   });
 
   const coachPrompts = getCoachPromptIdeas({
@@ -576,6 +578,22 @@ function TodayPage({
     },
   ];
 
+  const refreshActionCard = dataFreshness.needsUpload
+    ? {
+        key: 'fresh-statement',
+        label: 'Latest statement needed',
+        headline: dataFreshness.hasData
+          ? `Your data currently stops at ${dataFreshness.latestMonthLabel}`
+          : 'Upload your first bank statement',
+        body: dataFreshness.hasData
+          ? 'Today only becomes trustworthy when the newest statement is loaded, otherwise this month can look empty or stale.'
+          : 'Once you import a statement, Money Hub can turn it into something useful straight away.',
+        action: 'Upload statement',
+        onClick: () => onNavigate('upload'),
+      }
+    : null;
+  const prioritizedActionCards = [refreshActionCard, ...actionCards].filter(Boolean);
+
   return (
     <>
       <section style={styles.balanceCard}>
@@ -584,11 +602,11 @@ function TodayPage({
           <span style={styles.pulseTag}>{cashSummary.badge}</span>
         </div>
 
-        <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.amountLabel}</h1>
+        <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.primaryDisplay}</h1>
         <p style={styles.balanceSubcopy}>{cashSummary.body}</p>
 
         <div style={styles.balancePills}>
-          <StatPill label="This month" value={formatCurrency(monthSnapshot.net)} />
+          <StatPill label={monthSnapshot.pillLabel} value={`${monthSnapshot.net >= 0 ? '+' : '-'}${formatCurrency(Math.abs(monthSnapshot.net))}`} />
           <StatPill label="Bills spotted" value={formatCurrency(totals.bills)} />
           <StatPill label="Subscriptions" value={`${subscriptionSummary.count}`} />
         </div>
@@ -596,7 +614,7 @@ function TodayPage({
 
       <Section title="Do This Next">
         <div style={styles.aiInsightGrid}>
-          {actionCards.map((card) => (
+          {prioritizedActionCards.slice(0, 3).map((card) => (
             <ActionCard
               key={card.key}
               label={card.label}
@@ -626,16 +644,22 @@ function TodayPage({
             onClick={() => onGoToCoach('Explain what changed in my recent spending trend and what is driving it.')}
           />
           <InsightCard
-            label="This month"
+            label={monthSnapshot.label}
             headline={monthSnapshot.headline}
             body={monthSnapshot.body}
-            ctaLabel="Open calendar"
-            onClick={() => onNavigate('calendar')}
+            ctaLabel={monthSnapshot.needsRefresh ? 'Upload statement' : 'Open calendar'}
+            onClick={() => (monthSnapshot.needsRefresh ? onNavigate('upload') : onNavigate('calendar'))}
           />
         </div>
       </Section>
 
-      <Section title="This Month">
+      <Section title={monthSnapshot.sectionTitle}>
+        {monthSnapshot.needsRefresh ? (
+          <p style={styles.smallMuted}>
+            Showing {monthSnapshot.monthName}. Upload your latest statement to make the current month view accurate.
+          </p>
+        ) : null}
+        {!monthSnapshot.isCurrent ? <Row name="Period" value={monthSnapshot.monthName} /> : null}
         <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
         <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
         <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
@@ -738,7 +762,7 @@ function UploadPage({
       /money out/i.test(raw);
 
     const cleaned = raw
-      .replace(/[\u00A3$?,]/g, "")
+      .replace(/[\\u00A3$€,]/g, "")
       .replace(/[()]/g, "")
       .replace(/\bcr\b/gi, "")
       .replace(/\bdr\b/gi, "")
@@ -2655,15 +2679,24 @@ function CalendarPage({ transactions, screenWidth }) {
         source: "calendar",
         timeframe,
         timeframe_label: timeframeLabel,
+        visible_window_label: shortRangeTitle,
         calendar_mode: calendarMode,
         summary,
+        calendar_summary: {
+          spent: summary.spent,
+          earned: summary.earned,
+          net: summary.net,
+          active_days: summary.activeDays,
+        },
+        data_freshness: getDataFreshness(transactions),
         monthly_breakdown: monthlyBreakdown.slice(0, 4),
         visible_transactions: visibleHistoryTransactions.slice(0, 30).map((transaction) => ({
           date: transaction.transaction_date,
           description: transaction.description,
-          category: transaction.category,
+          category: getMeaningfulCategory(transaction),
           amount: transaction.amount,
         })),
+        visible_transaction_count: visibleHistoryTransactions.length,
         selected_day: selectedDay
           ? {
               date: toIsoDate(selectedDay.date),
@@ -2789,13 +2822,22 @@ function CalendarPage({ transactions, screenWidth }) {
           <MiniCard title={usingShortHistoryView ? "Days Used" : "Active Days"} value={`${summary.activeDays}`} />
         </div>
 
-        <div
-          style={
-            shortTimeframe && calendarMode === "history"
-              ? getRollingDaysGridStyle(screenWidth, shortWindowSize)
-              : styles.calendarGrid
-          }
-        >
+        <div style={styles.calendarGridViewport}>
+          <div
+            style={{
+              ...(shortTimeframe && calendarMode === "history"
+                ? getRollingDaysGridStyle(screenWidth, shortWindowSize)
+                : styles.calendarGrid),
+              minWidth:
+                shortTimeframe && calendarMode === "history"
+                  ? screenWidth <= 768
+                    ? `${Math.max(shortWindowSize, 2) * 112}px`
+                    : undefined
+                  : screenWidth <= 768
+                  ? "720px"
+                  : undefined,
+            }}
+          >
           {!usingShortHistoryView
             ? DAY_NAMES.map((day) => (
                 <div key={day} style={styles.calendarDayHeader}>{day}</div>
@@ -2871,6 +2913,7 @@ function CalendarPage({ transactions, screenWidth }) {
               </button>
             );
           })}
+          </div>
         </div>
 
         {selectedDay ? (
@@ -2888,7 +2931,7 @@ function CalendarPage({ transactions, screenWidth }) {
               ) : (
                 <>
                   <p style={styles.transactionMeta}>
-                    {selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"} ? In {formatCurrency(selectedDay.earned)} ? Out {formatCurrency(selectedDay.spent)} ? Net {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}
+                    {selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"}. In {formatCurrency(selectedDay.earned)}. Out {formatCurrency(selectedDay.spent)}. Net {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}
                   </p>
                   {selectedDay.transactions.map((transaction) => (
                     <TransactionRow
@@ -2957,7 +3000,7 @@ function CalendarPage({ transactions, screenWidth }) {
           <div style={styles.daySummaryCard}>
             <strong>{monthlyBreakdown[0].label}</strong>
             <p style={styles.transactionMeta}>
-              Money in {formatCurrency(monthlyBreakdown[0].earned)} ? Money out {formatCurrency(monthlyBreakdown[0].spent)} ? Transactions happened on {monthlyBreakdown[0].activeDays} day{monthlyBreakdown[0].activeDays === 1 ? "" : "s"}.
+              Money in {formatCurrency(monthlyBreakdown[0].earned)}. Money out {formatCurrency(monthlyBreakdown[0].spent)}. Transactions happened on {monthlyBreakdown[0].activeDays} day{monthlyBreakdown[0].activeDays === 1 ? "" : "s"}.
             </p>
             <p style={{ ...styles.transactionMeta, color: monthlyBreakdown[0].net >= 0 ? "#059669" : "#dc2626", marginTop: "8px" }}>
               Overall this month: {monthlyBreakdown[0].net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(monthlyBreakdown[0].net))}
@@ -2969,7 +3012,7 @@ function CalendarPage({ transactions, screenWidth }) {
               <div>
                 <strong>{month.label}</strong>
                 <p style={styles.transactionMeta}>
-                  In {formatCurrency(month.earned)} ? Out {formatCurrency(month.spent)} ? Active on {month.activeDays} day{month.activeDays === 1 ? "" : "s"}
+                  In {formatCurrency(month.earned)}. Out {formatCurrency(month.spent)}. Active on {month.activeDays} day{month.activeDays === 1 ? "" : "s"}
                 </p>
               </div>
               <strong style={{ color: month.net >= 0 ? "#059669" : "#dc2626" }}>
@@ -3244,7 +3287,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
                 </p>
               </div>
 
-              <strong>?{Number(receipt.total || 0).toFixed(2)}</strong>
+              <strong>£{Number(receipt.total || 0).toFixed(2)}</strong>
             </div>
           ))
         )}
@@ -3840,32 +3883,50 @@ function getCashSummary(accounts, transactions) {
     })
     .filter((value) => value !== null);
 
+  const freshness = getDataFreshness(transactions);
+
   if (balances.length > 0) {
     const total = balances.reduce((sum, value) => sum + Number(value || 0), 0);
+    const looksStale = Math.abs(total) < 0.01 && freshness.hasData && !freshness.hasCurrentMonthData;
 
+    if (!looksStale) {
+      return {
+        hasLiveBalances: true,
+        amount: total,
+        primaryDisplay: formatCurrency(total),
+        label: "Cash in your accounts",
+        badge: total <= 25 ? "Tight right now" : "Balance-based",
+        body:
+          total <= 25
+            ? "This is the money your accounts say you have right now, so spending room looks genuinely tight today."
+            : "This is the latest balance we know across your linked accounts, so it is more honest than a guess from historic spending alone.",
+      };
+    }
+  }
+
+  if (freshness.needsUpload) {
     return {
-      hasLiveBalances: true,
-      amount: total,
-      amountLabel: formatCurrency(total),
-      label: "Cash in your accounts",
-      badge: total <= 25 ? "Tight right now" : "Balance-based",
-      body:
-        total <= 25
-          ? "This is the money your accounts say you have right now, so spending room looks genuinely tight today."
-          : "This is the latest balance we know across your linked accounts, so it is more honest than a guess from historic spending alone.",
+      hasLiveBalances: false,
+      amount: 0,
+      primaryDisplay: "Needs refresh",
+      label: "Latest statement needed",
+      badge: "Refresh needed",
+      body: freshness.hasData
+        ? `Your newest imported activity is from ${freshness.latestMonthLabel}, so today's cash view should not be trusted until you upload a fresher statement.`
+        : "Upload your first statement so Money Hub can build a real picture instead of guessing.",
     };
   }
 
-  const monthSnapshot = getCurrentMonthSnapshot(transactions);
+  const monthSnapshot = getDisplayedMonthSnapshot(transactions);
 
   return {
     hasLiveBalances: false,
     amount: monthSnapshot.net,
-    amountLabel: formatCurrency(monthSnapshot.net),
-    label: "Imported money picture",
-    badge: "Not live cash",
+    primaryDisplay: formatCurrency(monthSnapshot.net),
+    label: monthSnapshot.sectionTitle,
+    badge: "Imported only",
     body:
-      "We do not have live account balances here yet, so this number is only based on imported statement history and should not be treated as money you can safely spend today.",
+      "This is based on imported statement history rather than a live bank balance, so treat it as a pattern read rather than spendable cash.",
   };
 }
 
@@ -3905,18 +3966,19 @@ function buildSubscriptionCoachPrompt(subscriptionSummary) {
   return `Review my subscription-style payments and rank the easiest ones to cancel first. Use this detected list and be specific:\n${lines}\n\nTell me: 1. biggest totals, 2. easiest quick wins, 3. any that look duplicated or suspicious.`;
 }
 
-function getCurrentMonthSnapshot(transactions) {
-  const monthTransactions = transactions.filter((transaction) => isThisMonth(transaction.transaction_date));
-  const income = monthTransactions
-    .filter((transaction) => Number(transaction.amount) > 0 && !isInternalTransferLike(transaction))
+function getMonthSnapshotForDate(transactions, viewDate = new Date()) {
+  const monthTransactions = transactions.filter((transaction) => isTransactionInMonth(transaction, viewDate));
+  const settled = monthTransactions.filter((transaction) => !isInternalTransferLike(transaction));
+  const income = settled
+    .filter((transaction) => Number(transaction.amount) > 0)
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-  const spending = monthTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction))
+  const spending = settled
+    .filter((transaction) => Number(transaction.amount) < 0)
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
   const net = income - spending;
-  const activeDays = new Set(monthTransactions.map((transaction) => transaction.transaction_date).filter(Boolean)).size;
-  const biggestSpend = monthTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction))
+  const activeDays = new Set(settled.map((transaction) => transaction.transaction_date).filter(Boolean)).size;
+  const biggestSpend = settled
+    .filter((transaction) => Number(transaction.amount) < 0)
     .reduce((biggest, transaction) => Math.max(biggest, Math.abs(Number(transaction.amount || 0))), 0);
 
   return {
@@ -3926,8 +3988,87 @@ function getCurrentMonthSnapshot(transactions) {
     activeDays,
     biggestSpend,
     biggestSpendLabel: biggestSpend > 0 ? formatCurrency(biggestSpend) : "Nothing big yet",
-    headline: net >= 0 ? `Up ${formatCurrency(net)} so far this month` : `Down ${formatCurrency(Math.abs(net))} so far this month`,
-    body: `${activeDays} active day${activeDays === 1 ? "" : "s"} so far, with ${formatCurrency(income)} in and ${formatCurrency(spending)} out.`,
+    monthDate: startOfMonth(viewDate),
+    monthName: formatMonthYear(viewDate),
+  };
+}
+
+function getCurrentMonthSnapshot(transactions) {
+  const base = getMonthSnapshotForDate(transactions, new Date());
+
+  return {
+    ...base,
+    isCurrent: true,
+    needsRefresh: false,
+    label: "This month",
+    pillLabel: "This month",
+    sectionTitle: "This Month",
+    headline: base.net >= 0 ? `Up ${formatCurrency(base.net)} so far this month` : `Down ${formatCurrency(Math.abs(base.net))} so far this month`,
+    body: `${base.activeDays} active day${base.activeDays === 1 ? "" : "s"} so far, with ${formatCurrency(base.income)} in and ${formatCurrency(base.spending)} out.`,
+  };
+}
+
+function getDisplayedMonthSnapshot(transactions) {
+  const freshness = getDataFreshness(transactions);
+
+  if (!freshness.hasData) {
+    return {
+      ...getCurrentMonthSnapshot(transactions),
+      headline: "No statement data yet",
+      body: "Upload your first bank statement to unlock this month and category insights.",
+    };
+  }
+
+  if (freshness.hasCurrentMonthData) {
+    return getCurrentMonthSnapshot(transactions);
+  }
+
+  const base = getMonthSnapshotForDate(transactions, freshness.latestDate);
+
+  return {
+    ...base,
+    isCurrent: false,
+    needsRefresh: true,
+    label: "Latest imported month",
+    pillLabel: "Latest month",
+    sectionTitle: "Latest Imported Month",
+    headline: `${base.monthName} is the latest month loaded`,
+    body: "No current-month activity has been imported yet. Upload your latest statement so today's view stops looking empty.",
+  };
+}
+
+function getDataFreshness(transactions) {
+  const validDates = transactions
+    .map((transaction) => new Date(transaction.transaction_date))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => a - b);
+
+  if (validDates.length === 0) {
+    return {
+      hasData: false,
+      hasCurrentMonthData: false,
+      latestDate: null,
+      latestMonthLabel: "",
+      latestDateLabel: "",
+      daysSinceLatest: null,
+      needsUpload: true,
+    };
+  }
+
+  const latestDate = validDates[validDates.length - 1];
+  const today = startOfDay(new Date());
+  const latestDay = startOfDay(latestDate);
+  const daysSinceLatest = Math.max(Math.round((today.getTime() - latestDay.getTime()) / 86400000), 0);
+  const hasCurrentMonthData = validDates.some((date) => isThisMonth(toIsoDate(date)));
+
+  return {
+    hasData: true,
+    hasCurrentMonthData,
+    latestDate,
+    latestMonthLabel: formatMonthYear(latestDate),
+    latestDateLabel: formatDateShort(latestDate),
+    daysSinceLatest,
+    needsUpload: !hasCurrentMonthData || daysSinceLatest > 35,
   };
 }
 
@@ -4644,6 +4785,14 @@ function formatMonthYear(date) {
   }).format(date);
 }
 
+function formatDateShort(date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
 function formatDateLong(date) {
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "long",
@@ -4740,11 +4889,21 @@ function buildDailyBrief({
   subscriptions,
   goalPercent,
   cashSummary,
+  dataFreshness,
 }) {
   if (transactionCount === 0) {
     return {
       headline: "No data yet",
       body: "Upload your first statement and I'll turn this into something useful.",
+    };
+  }
+
+  if (dataFreshness?.needsUpload) {
+    return {
+      headline: dataFreshness.hasData ? "Latest statement needed" : "Upload your first statement",
+      body: dataFreshness.hasData
+        ? `Your newest imported activity is from ${dataFreshness.latestMonthLabel}, so today's read will stay stale until you upload a fresher statement.`
+        : "Upload your first bank statement so Money Hub can stop being a blank shell and start helping properly.",
     };
   }
 
@@ -6580,4 +6739,5 @@ const styles = {
     marginTop: "12px",
   },
 };
+
 
