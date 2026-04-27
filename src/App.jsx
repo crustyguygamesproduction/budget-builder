@@ -472,6 +472,9 @@ function TodayPage({
 }) {
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
+  const monthSnapshot = useMemo(() => getCurrentMonthSnapshot(transactions), [transactions]);
+  const spendingPulse = useMemo(() => getSpendingPulse(transactions), [transactions]);
+  const categoryCoverage = useMemo(() => getCategoryCoverageSummary(transactions), [transactions]);
 
   const recent = transactions.slice(0, 6);
   const subscriptions = transactions.filter((t) => t.is_subscription).length;
@@ -505,6 +508,15 @@ function TodayPage({
     goalPercent,
   });
 
+  const focusItems = getHomeFocusItems({
+    dailyBrief,
+    spendingPulse,
+    debtStatusSummary,
+    monthSnapshot,
+    outlierSummary,
+    historySummary,
+  });
+
   const coachPrompts = getCoachPromptIdeas({
     topCategories,
     totals,
@@ -528,21 +540,21 @@ function TodayPage({
           <span style={styles.pulseTag}>Live signal</span>
         </div>
 
-        <h1 style={getBigMoneyStyle(screenWidth)}>£{totals.safeToSpend.toFixed(2)}</h1>
+        <h1 style={getBigMoneyStyle(screenWidth)}>{formatCurrency(totals.safeToSpend)}</h1>
         <p style={styles.balanceSubcopy}>
           Built from imported income, bills, spending and transfers already detected.
         </p>
 
         <div style={styles.balancePills}>
-          <StatPill label="Net" value={`£${totals.net.toFixed(2)}`} />
-          <StatPill label="Bills" value={`£${totals.bills.toFixed(2)}`} />
+          <StatPill label="Net" value={formatCurrency(totals.net)} />
+          <StatPill label="Bills" value={formatCurrency(totals.bills)} />
           <StatPill label="Accounts" value={`${accounts.length}`} />
         </div>
       </section>
 
       <div style={getGridStyle(screenWidth)}>
-        <MiniCard title="Income" value={`£${totals.income.toFixed(2)}`} />
-        <MiniCard title="Spending" value={`£${totals.spending.toFixed(2)}`} />
+        <MiniCard title="Income" value={formatCurrency(totals.income)} />
+        <MiniCard title="Spending" value={formatCurrency(totals.spending)} />
         <MiniCard title="Debts" value={`${debts.length || unlinkedDebtSignals.length}`} />
         <MiniCard
           title="Investments"
@@ -550,12 +562,17 @@ function TodayPage({
         />
       </div>
 
-      <Section title="AI Home Screen">
+      <Section title="What Matters Now">
         <div style={styles.aiInsightGrid}>
           <InsightCard
-            label="Daily brief"
+            label="Best next move"
             headline={dailyBrief.headline}
             body={dailyBrief.body}
+          />
+          <InsightCard
+            label="This month"
+            headline={monthSnapshot.headline}
+            body={monthSnapshot.body}
           />
           <InsightCard
             label="Trend"
@@ -563,14 +580,14 @@ function TodayPage({
             body={trendSummary.body}
           />
           <InsightCard
-            label="Statement health"
-            headline={historySummary.headline}
-            body={historySummary.body}
+            label="Momentum"
+            headline={spendingPulse.headline}
+            body={spendingPulse.body}
           />
           <InsightCard
-            label="Recurring confidence"
-            headline={recurringSummary.headline}
-            body={recurringSummary.body}
+            label="Category confidence"
+            headline={categoryCoverage.headline}
+            body={categoryCoverage.body}
           />
           <InsightCard
             label="Debt watch"
@@ -587,13 +604,25 @@ function TodayPage({
             headline={outlierSummary.headline}
             body={outlierSummary.body}
           />
+          <InsightCard
+            label="Statement health"
+            headline={historySummary.headline}
+            body={historySummary.body}
+          />
         </div>
       </Section>
 
-      <Section title="Right Now">
-        <Row name="Best next move" value={dailyBrief.headline} />
-        <Row name="Watch point" value={outlierSummary.headline} />
-        <Row name="Statement strength" value={historySummary.label} />
+      <Section title="Focus This Week">
+        {focusItems.map((item) => (
+          <Row key={item.name} name={item.name} value={item.value} />
+        ))}
+      </Section>
+
+      <Section title="This Month">
+        <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
+        <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
+        <Row name="Net so far" value={formatCurrency(monthSnapshot.net)} />
+        <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
       </Section>
 
       <Section title="Ask AI Next">
@@ -622,6 +651,7 @@ function TodayPage({
           name="Likely investing streams"
           value={`${unlinkedInvestmentSignals.length}`}
         />
+        <Row name="Recurring confidence" value={recurringSummary.label} />
       </Section>
 
       <Section title="Top Spending Areas">
@@ -634,7 +664,7 @@ function TodayPage({
             <Row
               key={item.category}
               name={item.category}
-              value={`£${item.total.toFixed(2)}`}
+              value={formatCurrency(item.total)}
             />
           ))
         )}
@@ -650,9 +680,7 @@ function TodayPage({
             <TransactionRow
               key={t.id}
               name={t.description || "Transaction"}
-              meta={`${t.transaction_date || "No date"} ? ${
-                t.category || "Uncategorised"
-              }`}
+              meta={`${t.transaction_date || "No date"} - ${getMeaningfulCategory(t)}`}
               amount={Number(t.amount || 0)}
             />
           ))
@@ -2840,7 +2868,7 @@ function CalendarPage({ transactions, screenWidth }) {
                     <TransactionRow
                       key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`}
                       name={transaction.description || "Transaction"}
-                      meta={transaction.category || "Uncategorised"}
+                      meta={getMeaningfulCategory(transaction) || "Uncategorised"}
                       amount={Number(transaction.amount || 0)}
                     />
                   ))}
@@ -2855,7 +2883,7 @@ function CalendarPage({ transactions, screenWidth }) {
                     <div>
                       <strong>{event.title}</strong>
                       <p style={styles.transactionMeta}>
-                        Around day {event.day} ? {event.kindLabel} ? {event.confidenceLabel} confidence
+                        Around day {event.day} - {event.kindLabel} - {event.confidenceLabel} confidence
                       </p>
                     </div>
                     <strong>
@@ -3181,7 +3209,7 @@ function ReceiptsPage({ receipts, transactions, onChange }) {
               <div>
                 <strong>{receipt.merchant || "Receipt"}</strong>
                 <p style={styles.transactionMeta}>
-                  {receipt.receipt_date || "No date"} ?{" "}
+                  {receipt.receipt_date || "No date"} -{" "}
                   {receipt.matched_status === "matched"
                     ? "Matched"
                     : receipt.file_url
@@ -3732,6 +3760,141 @@ function ChatMessage({ msg }) {
   );
 }
 
+function isGenericCategory(category) {
+  return ["", "Income", "Spending", "Uncategorised"].includes(String(category || "").trim());
+}
+
+function getTransactionMerchantKey(description) {
+  return normalizeText(description)
+    .replace(/(?:^|\s)(card|payment|debit|credit|contactless|visa|pos|purchase|transaction|fpi|ref|dd|so)(?=\s|$)/g, " ")
+    .replace(/(?:^|\s)\d{2,}(?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getMeaningfulCategory(transaction) {
+  return transaction?._smart_category || transaction?.category || (Number(transaction?.amount || 0) > 0 ? "Income" : "Spending");
+}
+
+function getCurrentMonthSnapshot(transactions) {
+  const monthTransactions = transactions.filter((transaction) => isThisMonth(transaction.transaction_date));
+  const income = monthTransactions
+    .filter((transaction) => Number(transaction.amount) > 0 && !isInternalTransferLike(transaction))
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const spending = monthTransactions
+    .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction))
+    .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  const net = income - spending;
+  const activeDays = new Set(monthTransactions.map((transaction) => transaction.transaction_date).filter(Boolean)).size;
+  const biggestSpend = monthTransactions
+    .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction))
+    .reduce((biggest, transaction) => Math.max(biggest, Math.abs(Number(transaction.amount || 0))), 0);
+
+  return {
+    income,
+    spending,
+    net,
+    activeDays,
+    biggestSpend,
+    biggestSpendLabel: biggestSpend > 0 ? formatCurrency(biggestSpend) : "Nothing big yet",
+    headline: net >= 0 ? `Up ${formatCurrency(net)} so far this month` : `Down ${formatCurrency(Math.abs(net))} so far this month`,
+    body: `${activeDays} active day${activeDays === 1 ? "" : "s"} so far, with ${formatCurrency(income)} in and ${formatCurrency(spending)} out.`,
+  };
+}
+
+function getSpendingPulse(transactions) {
+  const spend = transactions.filter(
+    (transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction)
+  );
+
+  const recent = spend.slice(0, 14);
+  const previous = spend.slice(14, 28);
+
+  if (recent.length < 5 || previous.length < 5) {
+    return {
+      headline: "Early read on spending pace",
+      body: "A bit more history will make the short-term pulse much more trustworthy.",
+    };
+  }
+
+  const recentTotal = recent.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  const previousTotal = previous.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  const change = recentTotal - previousTotal;
+  const pct = previousTotal > 0 ? change / previousTotal : 0;
+
+  if (pct >= 0.15) {
+    return {
+      headline: "Recent spending is running hotter",
+      body: `${formatCurrency(recentTotal)} has gone out in your latest window, which is noticeably above the one before it.`,
+    };
+  }
+
+  if (pct <= -0.15) {
+    return {
+      headline: "Recent spending has cooled a bit",
+      body: `Your latest spending window looks lighter than the previous one, which is a good sign if that was intentional.`,
+    };
+  }
+
+  return {
+    headline: "Spending pace looks fairly steady",
+    body: `The last two spending windows are close enough that nothing dramatic is jumping out.`,
+  };
+}
+
+function getCategoryCoverageSummary(transactions) {
+  const spendTransactions = transactions.filter(
+    (transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction)
+  );
+
+  if (!spendTransactions.length) {
+    return {
+      headline: "No spend data to sort yet",
+      body: "Once some outgoing transactions land, the app can learn what belongs where.",
+    };
+  }
+
+  const genericCount = spendTransactions.filter((transaction) => isGenericCategory(getMeaningfulCategory(transaction))).length;
+  const ratio = genericCount / spendTransactions.length;
+
+  if (ratio <= 0.1) {
+    return {
+      headline: "Most spending is landing in sensible buckets",
+      body: `Only ${genericCount} of ${spendTransactions.length} outgoing transactions still look too generic to trust blindly.`,
+    };
+  }
+
+  if (ratio <= 0.3) {
+    return {
+      headline: "Categorisation is decent but still has cleanup left",
+      body: `${genericCount} spending line${genericCount === 1 ? "" : "s"} still need a better bucket, so the totals are useful but not perfect yet.`,
+    };
+  }
+
+  return {
+    headline: "A lot of spend still looks too generic",
+    body: `${genericCount} outgoing transactions are still sitting in broad buckets, so this is the next thing worth improving.`,
+  };
+}
+
+function getHomeFocusItems({
+  dailyBrief,
+  spendingPulse,
+  debtStatusSummary,
+  monthSnapshot,
+  outlierSummary,
+  historySummary,
+}) {
+  return [
+    { name: "Best next move", value: dailyBrief.headline },
+    { name: "This month", value: monthSnapshot.headline },
+    { name: "Watch point", value: outlierSummary.headline },
+    { name: "Spending pace", value: spendingPulse.headline },
+    { name: "Debt status", value: debtStatusSummary.headline },
+    { name: "Statement strength", value: historySummary.label },
+  ].slice(0, 6);
+}
+
 function getTotals(transactions) {
   const income = transactions
     .filter((t) => Number(t.amount) > 0 && !isInternalTransferLike(t))
@@ -3757,7 +3920,7 @@ function getTopCategories(transactions) {
   transactions.forEach((t) => {
     if (Number(t.amount) >= 0 || isInternalTransferLike(t)) return;
 
-    const category = t.category || "Uncategorised";
+    const category = getMeaningfulCategory(t) || "Uncategorised";
     totals[category] = (totals[category] || 0) + Math.abs(Number(t.amount || 0));
   });
 
@@ -3774,38 +3937,76 @@ function enhanceTransactions(transactions) {
   }));
 
   const incomingByAmount = new Map();
+  const merchantCategoryVotes = new Map();
 
   prepared.forEach((transaction) => {
-    if (transaction.amount <= 0) return;
-    const key = Math.abs(transaction.amount).toFixed(2);
-    if (!incomingByAmount.has(key)) incomingByAmount.set(key, []);
-    incomingByAmount.get(key).push(transaction);
+    if (transaction.amount > 0) {
+      const key = Math.abs(transaction.amount).toFixed(2);
+      if (!incomingByAmount.has(key)) incomingByAmount.set(key, []);
+      incomingByAmount.get(key).push(transaction);
+    }
+
+    const category = String(transaction.category || "").trim();
+    const merchantKey = getTransactionMerchantKey(transaction.description);
+
+    if (!merchantKey || isGenericCategory(category) || transaction.amount >= 0) return;
+
+    if (!merchantCategoryVotes.has(merchantKey)) {
+      merchantCategoryVotes.set(merchantKey, {});
+    }
+
+    const votes = merchantCategoryVotes.get(merchantKey);
+    votes[category] = (votes[category] || 0) + 1;
   });
+
+  function getLearnedCategory(description) {
+    const merchantKey = getTransactionMerchantKey(description);
+    if (!merchantKey || !merchantCategoryVotes.has(merchantKey)) return "";
+
+    const votes = merchantCategoryVotes.get(merchantKey);
+    const winner = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
+
+    if (!winner || winner[1] < 2) return "";
+    return winner[0];
+  }
 
   return prepared.map((transaction) => {
     const existingFlag = Boolean(transaction.is_internal_transfer);
-    if (existingFlag) {
-      return { ...transaction, _smart_internal_transfer: true };
+    let smartInternalTransfer = existingFlag;
+
+    if (!existingFlag && transaction.amount < 0) {
+      const key = Math.abs(transaction.amount).toFixed(2);
+      const possibleMatches = incomingByAmount.get(key) || [];
+      const match = possibleMatches.find((candidate) => {
+        if (candidate.account_id === transaction.account_id) return false;
+        const dayDiff = Math.abs(dayDifference(candidate.transaction_date, transaction.transaction_date));
+        return dayDiff <= 3;
+      });
+
+      const description = normalizeText(transaction.description);
+      const forcedByText = /transfer|faster payment|to savings|from savings/.test(description);
+      smartInternalTransfer = forcedByText || Boolean(match);
     }
 
-    if (transaction.amount >= 0) {
-      return { ...transaction, _smart_internal_transfer: false };
+    let smartCategory = String(transaction.category || "").trim();
+
+    if (smartInternalTransfer) {
+      smartCategory = "Internal Transfer";
+    } else if (isGenericCategory(smartCategory)) {
+      const learnedCategory = getLearnedCategory(transaction.description);
+      if (learnedCategory) {
+        smartCategory = learnedCategory;
+      }
     }
 
-    const key = Math.abs(transaction.amount).toFixed(2);
-    const possibleMatches = incomingByAmount.get(key) || [];
-    const match = possibleMatches.find((candidate) => {
-      if (candidate.account_id === transaction.account_id) return false;
-      const dayDiff = Math.abs(dayDifference(candidate.transaction_date, transaction.transaction_date));
-      return dayDiff <= 3;
-    });
-
-    const description = normalizeText(transaction.description);
-    const forcedByText = /transfer|faster payment|to savings|from savings/.test(description);
+    if (!smartCategory) {
+      smartCategory = transaction.amount > 0 ? "Income" : "Spending";
+    }
 
     return {
       ...transaction,
-      _smart_internal_transfer: forcedByText || Boolean(match),
+      _smart_internal_transfer: smartInternalTransfer,
+      _smart_category: smartCategory,
     };
   });
 }
