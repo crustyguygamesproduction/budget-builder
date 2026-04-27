@@ -10,13 +10,19 @@ Deno.serve(async (req) => {
   }
 
   try {
-    console.log("swift-worker called");
-
     const { headers, sampleRows } = await req.json();
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
 
     if (!headers || !Array.isArray(headers)) {
       return new Response(JSON.stringify({ error: "Missing CSV headers" }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -51,7 +57,7 @@ ${JSON.stringify(sampleRows)}
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${Deno.env.get("OPENAI_API_KEY")}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -64,7 +70,9 @@ ${JSON.stringify(sampleRows)}
 
     const result = await response.json();
 
-    console.log("AI RAW RESULT:", JSON.stringify(result));
+    if (!response.ok) {
+      throw new Error(result?.error?.message || "OpenAI CSV mapping request failed");
+    }
 
     const text =
       result.output_text ||

@@ -3586,7 +3586,7 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
         : "Receipt added without keeping the file."
       : "Manual receipt added.";
 
-    const { error } = await supabase.from("receipts").insert({
+    const receiptPayload = {
       user_id: user.id,
       transaction_id: match?.id || null,
       merchant: displayName,
@@ -3597,7 +3597,22 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
       file_url: fileUrl,
       file_type: fileType,
       ai_summary: receiptSummary,
-    });
+    };
+
+    let { error } = await supabase.from("receipts").insert(receiptPayload);
+
+    if (error && String(error.message || "").includes("schema cache")) {
+      const fallbackPayload = {
+        user_id: receiptPayload.user_id,
+        transaction_id: receiptPayload.transaction_id,
+        merchant: receiptPayload.merchant,
+        total: receiptPayload.total,
+        receipt_date: receiptPayload.receipt_date,
+        source: receiptPayload.source,
+        matched_status: receiptPayload.matched_status,
+      };
+      ({ error } = await supabase.from("receipts").insert(fallbackPayload));
+    }
 
     setSaving(false);
 
