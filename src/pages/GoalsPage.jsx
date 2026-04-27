@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
-import { ActionCard, InsightCard, Row, Section } from "../components/ui";
+import {
+  ActionCard as BaseActionCard,
+  InsightCard as BaseInsightCard,
+  Row as BaseRow,
+  Section as BaseSection,
+} from "../components/ui";
 import { buildGoalSuggestions } from "../lib/goalInsights";
 
 export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate, onChange, styles, helpers }) {
@@ -118,19 +123,19 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
   return (
     <>
       {hasSavedGoal ? (
-        <Section title={mainGoal.name || "Saved Goal"}>
+        <BaseSection styles={styles} title={mainGoal.name || "Saved Goal"}>
           <p style={styles.goalStat}>{formatCurrency(current)} / {formatCurrency(target)}</p>
           <div style={styles.progressOuter}>
             <div style={{ ...styles.progressInner, width: `${percent}%` }} />
           </div>
           <div style={styles.inlineInfoBlock}>
-            <Row name="Progress" value={`${percent.toFixed(0)}%`} />
-            <Row name="Left to go" value={formatCurrency(gap)} />
-            <Row name="Next milestone" value={formatCurrency(nextMilestone)} />
+            <BaseRow styles={styles} name="Progress" value={`${percent.toFixed(0)}%`} />
+            <BaseRow styles={styles} name="Left to go" value={formatCurrency(gap)} />
+            <BaseRow styles={styles} name="Next milestone" value={formatCurrency(nextMilestone)} />
           </div>
-        </Section>
+        </BaseSection>
       ) : (
-        <Section
+        <BaseSection styles={styles}
           title="No Saved Goal Yet"
           right={
             <button style={styles.ghostBtn} type="button" onClick={() => onNavigate("upload")}>
@@ -144,17 +149,17 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
           </p>
           {primarySuggestion ? (
             <div style={styles.inlineInfoBlock}>
-              <Row name="Smart suggestion" value={primarySuggestion.name} />
-              <Row name="Suggested target" value={formatCurrency(primarySuggestion.target)} />
-              <Row name="Starting point" value={formatCurrency(primarySuggestion.current)} />
+              <BaseRow styles={styles} name="Smart suggestion" value={primarySuggestion.name} />
+              <BaseRow styles={styles} name="Suggested target" value={formatCurrency(primarySuggestion.target)} />
+              <BaseRow styles={styles} name="Starting point" value={formatCurrency(primarySuggestion.current)} />
             </div>
           ) : null}
-        </Section>
+        </BaseSection>
       )}
 
-      <Section title={hasSavedGoal ? "Goal Read" : "Smart Goal Ideas"}>
+      <BaseSection styles={styles} title={hasSavedGoal ? "Goal Read" : "Smart Goal Ideas"}>
         <div style={styles.aiInsightGrid}>
-          <InsightCard
+          <BaseInsightCard styles={styles}
             label={hasSavedGoal ? "Saved goal" : "Suggestion"}
             headline={goalRead.headline}
             body={goalRead.body}
@@ -171,7 +176,7 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
             }
           />
           {!hasSavedGoal && suggestions.slice(0, 2).map((suggestion) => (
-            <ActionCard
+            <BaseActionCard styles={styles}
               key={suggestion.key}
               label={suggestion.label}
               headline={suggestion.headline}
@@ -181,9 +186,9 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
             />
           ))}
         </div>
-      </Section>
+      </BaseSection>
 
-      <Section title={hasSavedGoal ? "Next Moves" : "Save A Goal"}>
+      <BaseSection styles={styles} title={hasSavedGoal ? "Next Moves" : "Save A Goal"}>
         {!hasSavedGoal ? (
           <>
             <input
@@ -212,7 +217,7 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
           </>
         ) : (
           <div style={styles.aiInsightGrid}>
-            <ActionCard
+            <BaseActionCard styles={styles}
               label="AI plan"
               headline={`${mainGoal.name || "This goal"} needs a practical route`}
               body="Ask the coach to turn the target into monthly actions using the data already visible in the app."
@@ -224,7 +229,7 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
                 )
               }
             />
-            <ActionCard
+            <BaseActionCard styles={styles}
               label="Safety check"
               headline={latestMonthBills > 0 ? `${formatCurrency(latestMonthBills)} in visible bills` : "Bills need cleaner history"}
               body="Before chasing a target, check whether the monthly bills and recurring payments leave enough room."
@@ -237,10 +242,10 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
             />
           </div>
         )}
-      </Section>
+      </BaseSection>
 
       {!hasSavedGoal && suggestions.length > 0 ? (
-        <Section title="Other Smart Suggestions">
+        <BaseSection styles={styles} title="Other Smart Suggestions">
           {suggestions.map((suggestion) => (
             <div key={suggestion.key} style={styles.signalCard}>
               <div style={styles.signalHeader}>
@@ -265,32 +270,32 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
               </div>
             </div>
           ))}
-        </Section>
+        </BaseSection>
       ) : null}
 
       {goals.length > 1 ? (
-        <Section title="Saved Goals">
+        <BaseSection styles={styles} title="Saved Goals">
           {goals.map((goal) => {
             const savedTarget = Number(goal.target_amount || 0);
             const savedCurrent = Number(goal.current_amount || 0);
             const savedPercent = savedTarget > 0 ? Math.min((savedCurrent / savedTarget) * 100, 100) : 0;
             return (
-              <Row
+              <BaseRow styles={styles}
                 key={goal.id || goal.name}
                 name={goal.name || "Goal"}
                 value={`${savedPercent.toFixed(0)}% of ${formatCurrency(savedTarget)}`}
               />
             );
           })}
-        </Section>
+        </BaseSection>
       ) : null}
 
-      <Section title="What This Uses">
-        <Row name="Latest visible month" value={latestMonth.monthName} />
-        <Row name="Visible monthly bills" value={latestMonthBills > 0 ? formatCurrency(latestMonthBills) : "Not enough yet"} />
-        <Row name="Transfer-style saving" value={formatCurrency(transferSavings)} />
-        <Row name="Saved goals" value={`${goals.length}`} />
-      </Section>
+      <BaseSection styles={styles} title="What This Uses">
+        <BaseRow styles={styles} name="Latest visible month" value={latestMonth.monthName} />
+        <BaseRow styles={styles} name="Visible monthly bills" value={latestMonthBills > 0 ? formatCurrency(latestMonthBills) : "Not enough yet"} />
+        <BaseRow styles={styles} name="Transfer-style saving" value={formatCurrency(transferSavings)} />
+        <BaseRow styles={styles} name="Saved goals" value={`${goals.length}`} />
+      </BaseSection>
     </>
   );
 }

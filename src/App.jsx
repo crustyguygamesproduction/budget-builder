@@ -1548,7 +1548,7 @@ function UploadPage({
                   <div>
                     <strong>{item.fileName}</strong>
                     <p style={styles.transactionMeta}>
-                      {item.rows.length} rows · {formatDateRange(item.importMeta?.startDate, item.importMeta?.endDate)} · {item.importMeta?.monthCount || 0} month read
+                      {item.rows.length} rows · {formatDateRange(item.importMeta?.startDate, item.importMeta?.endDate)} · {item.importMeta?.fullMonthCount || item.importMeta?.monthCount || 0} full-ish month{(item.importMeta?.fullMonthCount || item.importMeta?.monthCount || 0) === 1 ? "" : "s"} read
                     </p>
                   </div>
 
@@ -1593,7 +1593,7 @@ function UploadPage({
                   {item.importMeta?.overlapSummary?.ratio >= 0.35 ? (
                     <span style={getStatusPillStyle("warn")}>Heavy overlap with existing data</span>
                   ) : null}
-                  {item.importMeta?.monthCount >= 3 ? (
+                  {(item.importMeta?.fullMonthCount || item.importMeta?.monthCount || 0) >= 3 ? (
                     <span style={getStatusPillStyle("good")}>Good history signal</span>
                   ) : (
                     <span style={getStatusPillStyle("neutral")}>Early read</span>
@@ -3421,6 +3421,13 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
     }
 
     const displayName = merchant.trim() || file?.name.replace(/\.[^.]+$/, "") || "Saved receipt";
+    const receiptSummary = match
+      ? `Matched to transaction: ${match.description}`
+      : file
+      ? keepFile
+        ? "Receipt saved for warranty or returns."
+        : "Receipt added without keeping the file."
+      : "Manual receipt added.";
 
     const { error } = await supabase.from("receipts").insert({
       user_id: user.id,
@@ -3432,13 +3439,7 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
       matched_status: match ? "matched" : "unmatched",
       file_url: fileUrl,
       file_type: fileType,
-      ai_summary: match
-        ? `Matched to transaction: ${match.description}`
-        : file
-        ? keepFile
-          ? "Receipt saved for warranty or returns."
-          : "Receipt added without keeping the file."
-        : "Manual receipt added.",
+      ai_summary: receiptSummary,
     });
 
     setSaving(false);
@@ -4544,13 +4545,15 @@ function enhanceTransactions(transactions) {
   }));
 
   const incomingByAmount = new Map();
+  const outgoingByAmount = new Map();
   const merchantCategoryVotes = new Map();
 
   prepared.forEach((transaction) => {
-    if (transaction.amount > 0) {
+    if (transaction.amount !== 0) {
       const key = Math.abs(transaction.amount).toFixed(2);
-      if (!incomingByAmount.has(key)) incomingByAmount.set(key, []);
-      incomingByAmount.get(key).push(transaction);
+      const amountMap = transaction.amount > 0 ? incomingByAmount : outgoingByAmount;
+      if (!amountMap.has(key)) amountMap.set(key, []);
+      amountMap.get(key).push(transaction);
     }
 
     const category = String(transaction.category || "").trim();
@@ -4581,9 +4584,11 @@ function enhanceTransactions(transactions) {
     const existingFlag = Boolean(transaction.is_internal_transfer);
     let smartInternalTransfer = existingFlag;
 
-    if (!existingFlag && transaction.amount < 0) {
+    if (!existingFlag && transaction.amount !== 0) {
       const key = Math.abs(transaction.amount).toFixed(2);
-      const possibleMatches = incomingByAmount.get(key) || [];
+      const possibleMatches = transaction.amount < 0
+        ? incomingByAmount.get(key) || []
+        : outgoingByAmount.get(key) || [];
       const match = possibleMatches.find((candidate) => {
         if (candidate.account_id === transaction.account_id) return false;
         const dayDiff = Math.abs(dayDifference(candidate.transaction_date, transaction.transaction_date));
@@ -4591,7 +4596,7 @@ function enhanceTransactions(transactions) {
       });
 
       const description = normalizeText(transaction.description);
-      const forcedByText = /transfer|faster payment|to savings|from savings/.test(description);
+      const forcedByText = /transfer|faster payment|standing order|to savings|from savings|own account|between accounts|bank transfer/.test(description);
       smartInternalTransfer = forcedByText || Boolean(match);
     }
 
@@ -4635,22 +4640,33 @@ function getTransferSummary(transactions) {
 
 function summariseRowsForImport(rows) {
   const validDates = rows
-    .map((row) => new Date(row.date))
+    .map((row) => parseAppDate(row.date))
     .filter(Boolean)
     .sort((a, b) => a - b);
 
   if (validDates.length === 0) {
-    return { startDate: "", endDate: "", monthCount: 0 };
+    return { startDate: "", endDate: "", monthCount: 0, fullMonthCount: 0 };
   }
 
   const startDate = toIsoDate(validDates[0]);
   const endDate = toIsoDate(validDates[validDates.length - 1]);
-  const months = new Set(validDates.map((date) => `${date.getFullYear()}-${date.getMonth() + 1}`));
+  const monthGroups = new Map();
+  validDates.forEach((date) => {
+    const key = `${date.getFullYear()}-${date.getMonth() + 1}`;
+    if (!monthGroups.has(key)) monthGroups.set(key, new Set());
+    monthGroups.get(key).add(date.getDate());
+  });
+  const fullishMonths = [...monthGroups.entries()].filter(([key, days]) => {
+    const [year, month] = key.split("-").map(Number);
+    const monthLength = daysInMonth(year, month - 1);
+    return days.size >= Math.min(20, monthLength - 4);
+  });
 
   return {
     startDate,
     endDate,
-    monthCount: months.size,
+    monthCount: monthGroups.size,
+    fullMonthCount: fullishMonths.length,
   };
 }
 
