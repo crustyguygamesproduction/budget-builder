@@ -2748,6 +2748,43 @@ function InvestmentsPage({
 }
 
 function AccountsPage({ accounts, transactions }) {
+  const accountInsights = accounts.map((account) => {
+    const accountTransactions = transactions.filter((t) => t.account_id === account.id);
+    const totals = getTotals(accountTransactions);
+    const incomeCount = accountTransactions.filter((t) => Number(t.amount) > 0 && !isInternalTransferLike(t)).length;
+    const outgoingCount = accountTransactions.filter((t) => Number(t.amount) < 0 && !isInternalTransferLike(t)).length;
+    const transferCount = accountTransactions.filter((t) => isInternalTransferLike(t)).length;
+    const salaryCount = accountTransactions.filter((t) => /salary|payroll|wage|paye/i.test(t.description || "")).length;
+    const billCount = accountTransactions.filter((t) => t.is_bill || t.is_subscription).length;
+    const latestDate = accountTransactions
+      .map((t) => parseAppDate(t.transaction_date))
+      .filter(Boolean)
+      .sort((a, b) => b - a)[0];
+    const role = salaryCount > 0 && billCount > 0
+      ? "Main spending account"
+      : salaryCount > 0
+      ? "Income account"
+      : transferCount > outgoingCount
+      ? "Savings or transfer account"
+      : billCount > 0
+      ? "Bills account"
+      : "Statement account";
+
+    return {
+      account,
+      accountTransactions,
+      totals,
+      incomeCount,
+      outgoingCount,
+      transferCount,
+      salaryCount,
+      billCount,
+      latestDate,
+      role,
+    };
+  });
+  const unassignedTransactions = transactions.filter((t) => !t.account_id).length;
+
   return (
     <>
       <Section title="Accounts">
@@ -2756,33 +2793,33 @@ function AccountsPage({ accounts, transactions }) {
             No accounts yet. Upload a statement and I'll create one.
           </p>
         ) : (
-          accounts.map((account) => {
-            const accountTransactions = transactions.filter(
-              (t) => t.account_id === account.id
-            );
-            const totals = getTotals(accountTransactions);
-
+          accountInsights.map((insight) => {
+            const { account, accountTransactions, totals } = insight;
             return (
               <div key={account.id} style={styles.accountCard}>
                 <div>
                   <strong>{account.name}</strong>
                   <p style={styles.transactionMeta}>
-                    {account.institution || "Bank account"} ·{" "}
-                    {account.account_type || "current"}
+                    {insight.role} - {accountTransactions.length} transaction{accountTransactions.length === 1 ? "" : "s"} - {insight.latestDate ? `latest ${formatDateShort(insight.latestDate)}` : "no dates yet"}
+                  </p>
+                  <p style={styles.transactionMeta}>
+                    Income {formatCurrency(totals.income)} - spending {formatCurrency(totals.spending)} - transfers ignored {insight.transferCount}
                   </p>
                 </div>
-                <strong>£{totals.net.toFixed(2)}</strong>
+                <strong>{formatCurrency(totals.net)}</strong>
               </div>
             );
           })
         )}
       </Section>
 
-      <Section title="Why account view matters">
+      <Section title="Statement Separation">
         <p style={styles.sectionIntro}>
-          This helps the app separate where wages land, where bills leave from
-          and which statement belongs to which account when you bulk import.
+          Accounts are inferred from the statement file name and saved import account. The key is keeping each CSV tied to the correct account so transfers can be ignored and real income/spending stays clean.
         </p>
+        <Row name="Accounts found" value={`${accounts.length}`} />
+        <Row name="Unassigned transactions" value={`${unassignedTransactions}`} />
+        <Row name="Transfer handling" value="Excluded from income/spend when detected" />
       </Section>
     </>
   );
@@ -3337,24 +3374,45 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
 
   function findMatchingTransaction(nextMerchant, nextTotal, nextDate) {
     if (!nextMerchant || !nextTotal) return null;
+    return findReceiptCandidates(nextMerchant, nextTotal, nextDate)[0] || null;
+  }
+
+  function findReceiptCandidates(nextMerchant, nextTotal, nextDate) {
+    if (!nextMerchant || !nextTotal) return [];
 
     const merchantText = nextMerchant.toLowerCase();
+    const merchantTokens = merchantText
+      .split(/[^a-z0-9]+/i)
+      .filter((token) => token.length >= 3);
     const receiptAmount = Number(nextTotal);
     const parsedReceiptDate = nextDate ? parseAppDate(nextDate) : null;
 
-    return transactions.find((transaction) => {
+    return transactions
+      .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction))
+      .map((transaction) => {
       const description = String(transaction.description || "").toLowerCase();
       const amount = Math.abs(Number(transaction.amount || 0));
       const parsedTransactionDate = parseAppDate(transaction.transaction_date);
 
-      const merchantMatches = description.includes(merchantText);
+        const merchantMatches =
+          description.includes(merchantText) ||
+          merchantTokens.some((token) => description.includes(token));
       const amountMatches = Math.abs(amount - receiptAmount) < 0.02;
-      const dateMatches =
-        !parsedReceiptDate ||
-        (parsedTransactionDate && toIsoDate(parsedTransactionDate) === toIsoDate(parsedReceiptDate));
+        const dateDistance = parsedReceiptDate && parsedTransactionDate
+          ? Math.abs(dayDifference(toIsoDate(parsedTransactionDate), toIsoDate(parsedReceiptDate)))
+          : 99;
+        const dateMatches = !parsedReceiptDate || dateDistance <= 7;
+        const score =
+          (amountMatches ? 6 : Math.abs(amount - receiptAmount) <= 1 ? 3 : 0) +
+          (merchantMatches ? 4 : 0) +
+          (parsedReceiptDate ? Math.max(0, 3 - Math.min(dateDistance, 3)) : 1);
 
-      return merchantMatches && amountMatches && dateMatches;
-    });
+        return { transaction, amountMatches, merchantMatches, dateMatches, score, dateDistance };
+      })
+      .filter((item) => item.score >= 6 && item.dateMatches)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4)
+      .map((item) => item.transaction);
   }
 
   function handleFileChange(event) {
@@ -3467,6 +3525,7 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
     manual: receipts.filter((receipt) => receipt.matched_status !== "matched").length,
   };
   const hasActiveFilters = Boolean(searchQuery.trim()) || receiptFilter !== "all";
+  const receiptCandidates = findReceiptCandidates(merchant, total, receiptDate);
   const filteredReceipts = receipts.filter((receipt) => {
     const searchText = `${receipt.merchant || ""} ${receipt.ai_summary || ""} ${receipt.receipt_date || ""}`.toLowerCase();
     const matchesSearch = !searchQuery.trim() || searchText.includes(searchQuery.trim().toLowerCase());
@@ -3524,7 +3583,6 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
           style={styles.input}
           type="file"
           accept="image/*,.pdf"
-          capture="environment"
           onChange={handleFileChange}
         />
 
@@ -3577,6 +3635,25 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
             </p>
           </div>
         )}
+
+        {!match && receiptCandidates.length > 0 ? (
+          <div style={styles.matchBox}>
+            <strong>Possible payment matches</strong>
+            <p style={styles.transactionMeta}>Pick the payment this receipt belongs to.</p>
+            <div style={styles.inlineBtnRow}>
+              {receiptCandidates.map((candidate) => (
+                <button
+                  key={candidate.id || `${candidate.transaction_date}-${candidate.description}-${candidate.amount}`}
+                  type="button"
+                  style={styles.secondaryInlineBtn}
+                  onClick={() => setMatch(candidate)}
+                >
+                  {candidate.description} - {formatCurrency(Math.abs(Number(candidate.amount || 0)))}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <button style={styles.primaryBtn} onClick={addReceipt} disabled={saving}>
           {saving ? "Saving..." : match ? "Save Matched Receipt" : "Save Receipt"}
@@ -3702,10 +3779,11 @@ function CoachPage({
   const [chatError, setChatError] = useState("");
   const [freshCutoff, setFreshCutoff] = useState(() => {
     if (typeof window === "undefined") return "";
-    return localStorage.getItem(COACH_FRESH_CUTOFF_KEY) || "";
+    return localStorage.getItem(COACH_FRESH_CUTOFF_KEY) || new Date().toISOString();
   });
 
   const chatBottomRef = useRef(null);
+  const latestMessageRef = useRef(null);
 
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
@@ -3750,7 +3828,11 @@ function CoachPage({
   }, []);
 
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (thinking) {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      return;
+    }
+    latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [visibleMessages, thinking]);
 
   async function sendMessage(nextMessage) {
@@ -3919,7 +4001,7 @@ function CoachPage({
             </h4>
             <p style={styles.insightBody}>
               {freshCutoff
-                ? "Fresh chat view is on. Older messages are hidden, not deleted."
+                ? "Fresh session view is on. Older messages are hidden by default, not deleted."
                 : "Short answers first, practical actions next, no fake numbers."}
             </p>
           </div>
@@ -3964,7 +4046,14 @@ function CoachPage({
               </p>
             </div>
           ) : (
-            visibleMessages.map((msg) => <ChatMessage key={msg.id} msg={msg} />)
+            visibleMessages.map((msg, index) => (
+              <div
+                key={msg.id || `${msg.role}-${msg.created_at}-${index}`}
+                ref={index === visibleMessages.length - 1 ? latestMessageRef : null}
+              >
+                <ChatMessage msg={msg} />
+              </div>
+            ))
           )}
 
           {thinking && (
