@@ -1075,7 +1075,18 @@ function UploadPage({
           .select()
           .single();
 
-        if (importError) throw importError;
+        if (importError) {
+          const isDuplicateImport =
+            importError.code === "23505" ||
+            String(importError.message || "").includes("statement_imports_user_fingerprint_idx");
+
+          if (isDuplicateImport) {
+            skippedFiles += 1;
+            continue;
+          }
+
+          throw importError;
+        }
 
         const transactionsToSave = fileItem.rows.map((row) => ({
           user_id: user.id,
