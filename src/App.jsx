@@ -581,9 +581,9 @@ function TodayPage({
   const refreshActionCard = dataFreshness.needsUpload
     ? {
         key: 'fresh-statement',
-        label: 'Latest statement needed',
+        label: 'Recent data needed',
         headline: dataFreshness.hasData
-          ? `Your data currently stops at ${dataFreshness.latestMonthLabel}`
+          ? `The latest visible month here is ${dataFreshness.latestMonthLabel}`
           : 'Upload your first bank statement',
         body: dataFreshness.hasData
           ? 'Today only becomes trustworthy when the newest statement is loaded, otherwise this month can look empty or stale.'
@@ -2822,12 +2822,18 @@ function CalendarPage({ transactions, screenWidth }) {
           <MiniCard title={usingShortHistoryView ? "Days Used" : "Active Days"} value={`${summary.activeDays}`} />
         </div>
 
-        <div style={styles.calendarGridViewport}>
+        <div
+          style={{
+            ...styles.calendarGridViewport,
+            overflowX: screenWidth <= 768 ? "auto" : "hidden",
+          }}
+        >
           <div
             style={{
               ...(shortTimeframe && calendarMode === "history"
                 ? getRollingDaysGridStyle(screenWidth, shortWindowSize)
                 : styles.calendarGrid),
+              width: "100%",
               minWidth:
                 shortTimeframe && calendarMode === "history"
                   ? screenWidth <= 768
@@ -3909,10 +3915,10 @@ function getCashSummary(accounts, transactions) {
       hasLiveBalances: false,
       amount: 0,
       primaryDisplay: "Needs refresh",
-      label: "Latest statement needed",
+      label: "Recent data needed",
       badge: "Refresh needed",
       body: freshness.hasData
-        ? `Your newest imported activity is from ${freshness.latestMonthLabel}, so today's cash view should not be trusted until you upload a fresher statement.`
+        ? `The latest visible transaction month here is ${freshness.latestMonthLabel}, so today's cash view should not be trusted until you upload a fresher statement.`
         : "Upload your first statement so Money Hub can build a real picture instead of guessing.",
     };
   }
@@ -4033,14 +4039,14 @@ function getDisplayedMonthSnapshot(transactions) {
     pillLabel: "Latest month",
     sectionTitle: "Latest Imported Month",
     headline: `${base.monthName} is the latest month loaded`,
-    body: "No current-month activity has been imported yet. Upload your latest statement so today's view stops looking empty.",
+    body: "No current-month activity is visible here yet. Upload your latest statement so today's view stops looking empty.",
   };
 }
 
 function getDataFreshness(transactions) {
   const validDates = transactions
-    .map((transaction) => new Date(transaction.transaction_date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((transaction) => parseAppDate(transaction.transaction_date))
+    .filter(Boolean)
     .sort((a, b) => a - b);
 
   if (validDates.length === 0) {
@@ -4205,7 +4211,7 @@ function getTransferSummary(transactions) {
 function summariseRowsForImport(rows) {
   const validDates = rows
     .map((row) => new Date(row.date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .filter(Boolean)
     .sort((a, b) => a - b);
 
   if (validDates.length === 0) {
@@ -4394,6 +4400,31 @@ function getRollingDaysGridStyle(screenWidth, dayCount) {
   };
 }
 
+function parseAppDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const ukMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ukMatch) {
+    const [, day, month, year] = ukMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -4443,8 +4474,8 @@ function getTimeframeStartDate(timeframe, referenceDate = new Date()) {
 
 function getCalendarMonthBounds(transactions, timeframe) {
   const validDates = transactions
-    .map((transaction) => new Date(transaction.transaction_date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((transaction) => parseAppDate(transaction.transaction_date))
+    .filter(Boolean)
     .sort((a, b) => a - b);
 
   const todayMonth = startOfMonth(new Date());
@@ -4500,16 +4531,16 @@ function getTimeframeMonthCount(timeframe) {
 
 function getEarliestHistoryDate(transactions) {
   const validDates = transactions
-    .map((transaction) => new Date(transaction.transaction_date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((transaction) => parseAppDate(transaction.transaction_date))
+    .filter(Boolean)
     .sort((a, b) => a - b);
   return validDates.length ? startOfDay(validDates[0]) : startOfDay(new Date());
 }
 
 function getLatestHistoryDate(transactions) {
   const validDates = transactions
-    .map((transaction) => new Date(transaction.transaction_date))
-    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((transaction) => parseAppDate(transaction.transaction_date))
+    .filter(Boolean)
     .sort((a, b) => a - b);
   const today = startOfDay(new Date());
   return validDates.length ? startOfDay(validDates[validDates.length - 1]) : today;
@@ -4522,7 +4553,9 @@ function filterTransactionsByTimeframe(transactions, timeframe, referenceDate = 
 
   return transactions.filter((transaction) => {
     if (!isValidTransactionDate(transaction.transaction_date)) return false;
-    const date = startOfMonth(new Date(transaction.transaction_date));
+    const parsedDate = parseAppDate(transaction.transaction_date);
+    if (!parsedDate) return false;
+    const date = startOfMonth(parsedDate);
     if (bounds.start && compareMonthDates(date, bounds.start) < 0) return false;
     if (bounds.end && compareMonthDates(date, bounds.end) > 0) return false;
     return true;
@@ -4539,7 +4572,10 @@ function buildRollingHistoryWindow(transactions, endDate, dayCount) {
     const date = addDays(startDate, i);
     const iso = toIsoDate(date);
     const dayTransactions = transactions
-      .filter((transaction) => transaction.transaction_date === iso)
+      .filter((transaction) => {
+        const parsed = parseAppDate(transaction.transaction_date);
+        return parsed && toIsoDate(parsed) === iso;
+      })
       .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
     const settled = dayTransactions.filter((transaction) => !isInternalTransferLike(transaction));
     const earned = settled
@@ -4622,7 +4658,8 @@ function getMonthlyBreakdown(transactions, timeframe) {
 
   filtered.forEach((transaction) => {
     if (!isValidTransactionDate(transaction.transaction_date) || isInternalTransferLike(transaction)) return;
-    const date = new Date(transaction.transaction_date);
+    const date = parseAppDate(transaction.transaction_date);
+    if (!date) return;
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -4728,7 +4765,10 @@ function buildHistoricalCalendarMonth(viewDate, transactions, recurringEvents) {
     date.setHours(0, 0, 0, 0);
     const iso = toIsoDate(date);
     const dayTransactions = transactions
-      .filter((transaction) => transaction.transaction_date === iso)
+      .filter((transaction) => {
+        const parsed = parseAppDate(transaction.transaction_date);
+        return parsed && toIsoDate(parsed) === iso;
+      })
       .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
     const settled = dayTransactions.filter((transaction) => !isInternalTransferLike(transaction));
     const earned = settled
@@ -4758,13 +4798,13 @@ function buildHistoricalCalendarMonth(viewDate, transactions, recurringEvents) {
 
 function isValidTransactionDate(value) {
   if (!value) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime());
+  return Boolean(parseAppDate(value));
 }
 
 function isTransactionInMonth(transaction, viewDate) {
   if (!isValidTransactionDate(transaction.transaction_date)) return false;
-  const date = new Date(transaction.transaction_date);
+  const date = parseAppDate(transaction.transaction_date);
+  if (!date) return false;
   return date.getFullYear() === viewDate.getFullYear() && date.getMonth() === viewDate.getMonth();
 }
 
@@ -4900,9 +4940,9 @@ function buildDailyBrief({
 
   if (dataFreshness?.needsUpload) {
     return {
-      headline: dataFreshness.hasData ? "Latest statement needed" : "Upload your first statement",
+      headline: dataFreshness.hasData ? "Recent data needed" : "Upload your first statement",
       body: dataFreshness.hasData
-        ? `Your newest imported activity is from ${dataFreshness.latestMonthLabel}, so today's read will stay stale until you upload a fresher statement.`
+        ? `The latest visible month here is ${dataFreshness.latestMonthLabel}, so today's read will stay stale until you upload a fresher statement.`
         : "Upload your first bank statement so Money Hub can stop being a blank shell and start helping properly.",
     };
   }
@@ -6519,8 +6559,9 @@ const styles = {
 
   calendarGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(7, 1fr)",
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
     gap: "8px",
+    width: "100%",
   },
 
   calendarDayHeader: {
@@ -6533,6 +6574,7 @@ const styles = {
 
   calendarCell: {
     minHeight: "120px",
+    minWidth: 0,
     background: "#f8fbff",
     border: "1px solid #e2e8f0",
     borderRadius: "18px",
@@ -6541,6 +6583,7 @@ const styles = {
     flexDirection: "column",
     gap: "8px",
     textAlign: "left",
+    overflow: "hidden",
   },
 
   calendarCellShort: {
@@ -6739,5 +6782,6 @@ const styles = {
     marginTop: "12px",
   },
 };
+
 
 
