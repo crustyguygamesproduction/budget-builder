@@ -17,6 +17,7 @@ const PAGE_TITLES = {
 
 const COACH_DISPLAY_LIMIT = 18;
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
+const COACH_AUTOSEND_KEY = "moneyhub-coach-autosend";
 const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
 const MONTH_NAMES = [
   "January",
@@ -213,9 +214,14 @@ export default function App() {
     setFinancialDocuments(data || []);
   }
 
-  function openCoachWithPrompt(prompt) {
+  function openCoachWithPrompt(prompt, options = {}) {
     if (typeof window !== "undefined") {
       localStorage.setItem(COACH_DRAFT_KEY, prompt);
+      if (options.autoSend) {
+        localStorage.setItem(COACH_AUTOSEND_KEY, "true");
+      } else {
+        localStorage.removeItem(COACH_AUTOSEND_KEY);
+      }
     }
     setPage("coach");
   }
@@ -528,9 +534,8 @@ function TodayPage({
       action: subscriptionSummary.count > 0 ? 'Review subscriptions' : 'Ask AI anyway',
       onClick: () =>
         onGoToCoach(
-          subscriptionSummary.count > 0
-            ? 'Review my subscription-style payments, list the biggest ones, and tell me which look worth cancelling first.'
-            : 'Do I have any subscription-style payments hiding in my imported statements?'
+          buildSubscriptionCoachPrompt(subscriptionSummary),
+          { autoSend: true }
         ),
     },
     {
@@ -644,7 +649,7 @@ function TodayPage({
             <button
               style={styles.ghostBtn}
               onClick={() =>
-                onGoToCoach('List my subscription-style transactions, group them by merchant, and tell me which are the easiest wins to cancel.')
+                onGoToCoach(buildSubscriptionCoachPrompt(subscriptionSummary), { autoSend: true })
               }
             >
               Review with AI
@@ -3276,6 +3281,7 @@ function CoachPage({
 
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
+  const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [transactions]);
 
   const houseGoal =
     goals.find((goal) =>
@@ -3294,7 +3300,6 @@ function CoachPage({
 
   const quickPrompts = getCoachPromptIdeas({
     topCategories,
-    totals,
     houseGoal,
     debtSignals,
     investmentSignals,
@@ -3302,7 +3307,16 @@ function CoachPage({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+
+    const shouldAutoSend = localStorage.getItem(COACH_AUTOSEND_KEY) === "true";
+    const draft = localStorage.getItem(COACH_DRAFT_KEY) || "";
+
     localStorage.removeItem(COACH_DRAFT_KEY);
+    localStorage.removeItem(COACH_AUTOSEND_KEY);
+
+    if (shouldAutoSend && draft.trim()) {
+      sendMessage(draft);
+    }
   }, []);
 
   useEffect(() => {
@@ -3353,6 +3367,7 @@ function CoachPage({
         investment_statuses: investmentStatuses,
         debt_signals: debtSignals.slice(0, 5),
         investment_signals: investmentSignals.slice(0, 5),
+        subscription_summary: subscriptionSummary,
         recent_messages: baseMessages.slice(-6).map((msg) => ({
           role: msg.role,
           content: msg.content,
@@ -3875,6 +3890,19 @@ function getSubscriptionSummary(transactions) {
     items,
     topLine: items.length > 0 ? `${items[0].name} is the biggest obvious one at ${formatCurrency(items[0].total)}.` : "",
   };
+}
+
+function buildSubscriptionCoachPrompt(subscriptionSummary) {
+  if (!subscriptionSummary?.items?.length) {
+    return "Do I have any subscription-style payments hiding in my imported statements?";
+  }
+
+  const lines = subscriptionSummary.items
+    .slice(0, 8)
+    .map((item) => `- ${item.name}: ${formatCurrency(item.total)} across ${item.count} hit${item.count === 1 ? "" : "s"}`)
+    .join("\n");
+
+  return `Review my subscription-style payments and rank the easiest ones to cancel first. Use this detected list and be specific:\n${lines}\n\nTell me: 1. biggest totals, 2. easiest quick wins, 3. any that look duplicated or suspicious.`;
 }
 
 function getCurrentMonthSnapshot(transactions) {
