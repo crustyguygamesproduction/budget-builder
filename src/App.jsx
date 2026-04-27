@@ -82,6 +82,8 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadAllData();
+    // loadAllData intentionally fans out to the current page loaders whenever auth changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   useEffect(() => {
@@ -258,6 +260,7 @@ export default function App() {
             debtSignals={debtSignals}
             investmentSignals={investmentSignals}
             trendSummary={trendSummary}
+            statementImports={statementImports}
             onGoToCoach={openCoachWithPrompt}
             onNavigate={setPage}
             screenWidth={screenWidth}
@@ -472,6 +475,7 @@ function TodayPage({
   debtSignals,
   investmentSignals,
   trendSummary,
+  statementImports,
   onGoToCoach,
   onNavigate,
   screenWidth,
@@ -479,11 +483,22 @@ function TodayPage({
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
   const dataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
+  const statementCoverage = useMemo(
+    () => getStatementCoverageSummary(transactions, statementImports),
+    [transactions, statementImports]
+  );
   const monthSnapshot = useMemo(() => getDisplayedMonthSnapshot(transactions), [transactions]);
   const cashSummary = useMemo(() => getCashSummary(accounts, transactions), [accounts, transactions]);
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [transactions]);
 
   const recent = transactions.slice(0, 6);
+  const latestVisibleTransactions = useMemo(() => {
+    if (!dataFreshness.hasData) return [];
+    const focusDate = monthSnapshot.monthDate || dataFreshness.latestDate || new Date();
+    return transactions
+      .filter((transaction) => isTransactionInMonth(transaction, focusDate))
+      .slice(0, 5);
+  }, [transactions, dataFreshness.hasData, dataFreshness.latestDate, monthSnapshot.monthDate]);
 
   const debtStatusSummary = getDebtStatusSummary(debts, transactions);
   const investmentStatusSummary = getInvestmentStatusSummary(
@@ -512,13 +527,29 @@ function TodayPage({
     dataFreshness,
   });
 
-  const coachPrompts = getCoachPromptIdeas({
+  const defaultCoachPrompts = getCoachPromptIdeas({
     topCategories,
     cashSummary,
     houseGoal,
     debtSignals,
     investmentSignals,
   }).slice(0, 4);
+
+  const staleCoachPrompts = [
+    statementCoverage.hasCoverageGap
+      ? `My uploads suggest history should reach ${statementCoverage.latestStatementMonthLabel}, but the visible transactions stop at ${dataFreshness.latestMonthLabel}. What should I check first?`
+      : dataFreshness.hasData
+      ? "What gets more accurate if I upload my latest statement?"
+      : "What should I upload first to make Money Hub useful?",
+    "How many months of statements should I upload for the smartest read?",
+    subscriptionSummary.count > 0
+      ? "Which subscriptions should I check first?"
+      : dataFreshness.hasData
+      ? `Use ${monthSnapshot.monthName} and tell me the first thing to improve.`
+      : "How does Money Hub get smarter after 3 months of statements?",
+  ].filter(Boolean);
+
+  const coachPrompts = dataFreshness.needsUpload ? staleCoachPrompts : defaultCoachPrompts;
 
   const unlinkedDebtSignals = debtSignals.filter(
     (signal) => !hasMatchingDebt(signal, debts)
@@ -527,78 +558,156 @@ function TodayPage({
     (signal) => !hasMatchingInvestment(signal, investments)
   );
 
+  const subscriptionActionCard = {
+    key: "subscriptions",
+    label: "Subscription check",
+    headline:
+      subscriptionSummary.count > 0
+        ? `${subscriptionSummary.count} recurring charge${subscriptionSummary.count === 1 ? "" : "s"} worth checking`
+        : "No obvious subscription leaks right now",
+    body:
+      subscriptionSummary.count > 0
+        ? `${subscriptionSummary.topLine} Tap to see the likely subscriptions and ask AI which ones look dead weight.`
+        : "Once a few recurring charges show up, this becomes a quick review list instead of a guess.",
+    action: subscriptionSummary.count > 0 ? "Review subscriptions" : "Ask AI anyway",
+    onClick: () =>
+      onGoToCoach(
+        buildSubscriptionCoachPrompt(subscriptionSummary),
+        { autoSend: true }
+      ),
+  };
+
   const actionCards = [
+    subscriptionActionCard,
     {
-      key: 'subscriptions',
-      label: 'Subscription check',
-      headline:
-        subscriptionSummary.count > 0
-          ? `${subscriptionSummary.count} recurring charge${subscriptionSummary.count === 1 ? '' : 's'} worth checking`
-          : 'No obvious subscription leaks right now',
-      body:
-        subscriptionSummary.count > 0
-          ? `${subscriptionSummary.topLine} Tap to see the likely subscriptions and ask AI which ones look dead weight.`
-          : 'Once a few recurring charges show up, this becomes a quick review list instead of a guess.',
-      action: subscriptionSummary.count > 0 ? 'Review subscriptions' : 'Ask AI anyway',
-      onClick: () =>
-        onGoToCoach(
-          buildSubscriptionCoachPrompt(subscriptionSummary),
-          { autoSend: true }
-        ),
-    },
-    {
-      key: 'debts',
-      label: 'Debt watch',
+      key: "debts",
+      label: "Debt watch",
       headline:
         debts.length > 0
           ? debtStatusSummary.headline
           : unlinkedDebtSignals.length > 0
-          ? `${unlinkedDebtSignals.length} debt-looking stream${unlinkedDebtSignals.length === 1 ? '' : 's'} to confirm`
-          : 'No debt setup yet',
+          ? `${unlinkedDebtSignals.length} debt-looking stream${unlinkedDebtSignals.length === 1 ? "" : "s"} to confirm`
+          : "No debt setup yet",
       body:
         debts.length > 0
           ? debtStatusSummary.body
           : unlinkedDebtSignals.length > 0
-          ? 'Tap through and turn those repeated payments into proper debt tracking so the app can monitor them each month.'
-          : 'If you have cards or loans, add them once and the monthly watch becomes far more useful.',
-      action: debts.length > 0 || unlinkedDebtSignals.length > 0 ? 'Open debts' : 'Set up debts',
-      onClick: () => onNavigate('debts'),
+          ? "Tap through and turn those repeated payments into proper debt tracking so the app can monitor them each month."
+          : "If you have cards or loans, add them once and the monthly watch becomes far more useful.",
+      action: debts.length > 0 || unlinkedDebtSignals.length > 0 ? "Open debts" : "Set up debts",
+      onClick: () => onNavigate("debts"),
     },
     {
-      key: 'investments',
-      label: 'Investing watch',
+      key: "investments",
+      label: "Investing watch",
       headline:
         investments.length > 0
           ? investmentStatusSummary.headline
           : unlinkedInvestmentSignals.length > 0
-          ? `${unlinkedInvestmentSignals.length} investing stream${unlinkedInvestmentSignals.length === 1 ? '' : 's'} to confirm`
-          : 'No investment setup yet',
+          ? `${unlinkedInvestmentSignals.length} investing stream${unlinkedInvestmentSignals.length === 1 ? "" : "s"} to confirm`
+          : "No investment setup yet",
       body:
         investments.length > 0
           ? investmentStatusSummary.body
           : unlinkedInvestmentSignals.length > 0
-          ? 'Tap through and confirm those broker or crypto contributions so the app can track them properly.'
-          : 'Once your investing is set up, this becomes one of the most useful parts of the app.',
-      action: investments.length > 0 || unlinkedInvestmentSignals.length > 0 ? 'Open investments' : 'Set up investing',
-      onClick: () => onNavigate('investments'),
+          ? "Tap through and confirm those broker or crypto contributions so the app can track them properly."
+          : "Once your investing is set up, this becomes one of the most useful parts of the app.",
+      action: investments.length > 0 || unlinkedInvestmentSignals.length > 0 ? "Open investments" : "Set up investing",
+      onClick: () => onNavigate("investments"),
     },
   ];
 
   const refreshActionCard = dataFreshness.needsUpload
     ? {
-        key: 'fresh-statement',
-        label: 'Recent data needed',
-        headline: dataFreshness.hasData
-          ? `The latest visible month here is ${dataFreshness.latestMonthLabel}`
-          : 'Upload your first bank statement',
-        body: dataFreshness.hasData
-          ? 'Today only becomes trustworthy when the newest statement is loaded, otherwise this month can look empty or stale.'
-          : 'Once you import a statement, Money Hub can turn it into something useful straight away.',
-        action: 'Upload statement',
-        onClick: () => onNavigate('upload'),
+        key: "fresh-statement",
+        label: dataFreshness.hasData ? "Upload latest statement" : "Upload your first statement",
+        headline: statementCoverage.hasCoverageGap
+          ? `Uploads suggest ${statementCoverage.latestStatementMonthLabel}, but visible transactions stop at ${dataFreshness.latestMonthLabel}`
+          : dataFreshness.hasData
+          ? `Your useful data currently stops at ${dataFreshness.latestMonthLabel}`
+          : "Money Hub starts working after your first statement",
+        body: statementCoverage.hasCoverageGap
+          ? "That usually means the latest statement import needs checking or re-uploading. Money Hub should read what you loaded, not leave you guessing."
+          : dataFreshness.hasData
+          ? "Upload the newest statement to refresh the Today page, fix this month, and sharpen the calendar and AI advice."
+          : "One statement gives you a first read. Three or more months make recurring bills, subscriptions, and trends much smarter.",
+        action: "Go to upload",
+        onClick: () => onNavigate("upload"),
       }
     : null;
-  const prioritizedActionCards = [refreshActionCard, ...actionCards].filter(Boolean);
+
+  const statementHistoryCard = {
+    key: "history-strength",
+    label: "History strength",
+    headline: statementCoverage.headline,
+    body: statementCoverage.body,
+    action: dataFreshness.needsUpload ? "Upload statement" : "Open calendar",
+    onClick: () => (dataFreshness.needsUpload ? onNavigate("upload") : onNavigate("calendar")),
+  };
+
+  const aiSetupCard = {
+    key: "ai-setup",
+    label: "AI setup help",
+    headline: "Not sure what to upload next?",
+    body: "Ask the coach how much history to add and what gets smarter after 1, 3, and 6 months of statements.",
+    action: "Ask AI",
+    onClick: () =>
+      onGoToCoach(
+        "Explain how many bank statements I should upload and what gets smarter after 1, 3, and 6 months of history.",
+        { autoSend: true }
+      ),
+  };
+
+  const homeHeroPills = dataFreshness.needsUpload
+    ? [
+        { label: "History", value: statementCoverage.monthCountLabel },
+        { label: "Statements", value: `${statementCoverage.fileCount}` },
+        { label: "Latest visible", value: dataFreshness.latestMonthLabel || "None yet" },
+      ]
+    : [
+        {
+          label: monthSnapshot.pillLabel,
+          value: `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
+        },
+        { label: "Subscriptions", value: `${subscriptionSummary.count}` },
+        { label: "History", value: statementCoverage.monthCountLabel },
+      ];
+
+  const primaryActionCards = dataFreshness.needsUpload
+    ? [refreshActionCard, statementHistoryCard, subscriptionSummary.count > 0 ? subscriptionActionCard : aiSetupCard].filter(Boolean)
+    : actionCards.slice(0, 3);
+
+  const milestoneCards = [
+    {
+      label: "After 1 statement",
+      headline: "Money Hub gets its first real read",
+      body: "Categories, the calendar, and AI stop being blank guesses and start reading your real transactions.",
+      ctaLabel: dataFreshness.hasData ? "Upload another month" : "Upload your first statement",
+      onClick: () => onNavigate("upload"),
+    },
+    {
+      label: "After 3 months",
+      headline: "Recurring bills and subscriptions get much sharper",
+      body: "Salary rhythm, regular bills, and repeated merchants become believable enough to act on.",
+      ctaLabel: "Why 3 months?",
+      onClick: () =>
+        onGoToCoach(
+          "Explain why 3 months of statements makes recurring bills, salary rhythm, and subscriptions more accurate in Money Hub.",
+          { autoSend: true }
+        ),
+    },
+    {
+      label: "After 6 months",
+      headline: "Trends and AI advice start feeling grounded",
+      body: "Month-vs-month changes, unusual spending, and next-step suggestions become much more trustworthy.",
+      ctaLabel: "Ask AI what improves",
+      onClick: () =>
+        onGoToCoach(
+          "Explain what gets smarter after 6 months of uploaded statements in Money Hub and why that matters.",
+          { autoSend: true }
+        ),
+    },
+  ];
 
   return (
     <>
@@ -612,71 +721,154 @@ function TodayPage({
         <p style={styles.balanceSubcopy}>{cashSummary.body}</p>
 
         <div style={styles.balancePills}>
-          <StatPill label={monthSnapshot.pillLabel} value={`${monthSnapshot.net >= 0 ? '+' : '-'}${formatCurrency(Math.abs(monthSnapshot.net))}`} />
-          <StatPill label="Bills spotted" value={formatCurrency(totals.bills)} />
-          <StatPill label="Subscriptions" value={`${subscriptionSummary.count}`} />
+          {homeHeroPills.map((pill) => (
+            <StatPill key={pill.label} label={pill.label} value={pill.value} />
+          ))}
         </div>
       </section>
 
       <Section title={dataFreshness.needsUpload ? "Start Here" : "Do This Next"}>
         <div style={styles.aiInsightGrid}>
-          {(dataFreshness.needsUpload ? [refreshActionCard] : prioritizedActionCards.slice(0, 3))
-            .filter(Boolean)
-            .map((card) => (
-              <ActionCard
-                key={card.key}
-                label={card.label}
-                headline={card.headline}
-                body={card.body}
-                actionLabel={card.action}
-                onClick={card.onClick}
-              />
-            ))}
-        </div>
-      </Section>
-
-      <Section title={dataFreshness.needsUpload ? "What Still Works" : "Quick Read"}>
-        <div style={styles.aiInsightGrid}>
-          {!dataFreshness.needsUpload ? (
-            <InsightCard
-              label="Today"
-              headline={dailyBrief.headline}
-              body={dailyBrief.body}
-              ctaLabel="Ask AI about this"
-              onClick={() => onGoToCoach(`Use my current money data and explain this: ${dailyBrief.headline}`)}
+          {primaryActionCards.map((card) => (
+            <ActionCard
+              key={card.key}
+              label={card.label}
+              headline={card.headline}
+              body={card.body}
+              actionLabel={card.action}
+              onClick={card.onClick}
             />
-          ) : null}
-          <InsightCard
-            label="Trend"
-            headline={trendSummary.headline}
-            body={trendSummary.body}
-            ctaLabel="Why?"
-            onClick={() => onGoToCoach('Explain what changed in my recent spending trend and what is driving it.')}
-          />
-          <InsightCard
-            label={monthSnapshot.label}
-            headline={monthSnapshot.headline}
-            body={monthSnapshot.body}
-            ctaLabel={monthSnapshot.needsRefresh ? 'Upload statement' : 'Open calendar'}
-            onClick={() => (monthSnapshot.needsRefresh ? onNavigate('upload') : onNavigate('calendar'))}
-          />
+          ))}
         </div>
       </Section>
 
-      <Section title={monthSnapshot.sectionTitle}>
-        {monthSnapshot.needsRefresh ? (
-          <p style={styles.smallMuted}>
-            Showing {monthSnapshot.monthName}. Upload your latest statement to make the current month view accurate.
-          </p>
-        ) : null}
-        {!monthSnapshot.isCurrent ? <Row name="Period" value={monthSnapshot.monthName} /> : null}
-        <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
-        <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
-        <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
-        <Row name="Transactions on" value={`${monthSnapshot.activeDays} day${monthSnapshot.activeDays === 1 ? '' : 's'}`} />
-      </Section>
+      {dataFreshness.needsUpload ? (
+        <>
+          <Section
+            title="Why Uploading More Statements Helps"
+            right={
+              <button
+                style={styles.ghostBtn}
+                type="button"
+                onClick={() => onNavigate("upload")}
+              >
+                Upload statement
+              </button>
+            }
+          >
+            <div style={styles.aiInsightGrid}>
+              {milestoneCards.map((card) => (
+                <InsightCard
+                  key={card.label}
+                  label={card.label}
+                  headline={card.headline}
+                  body={card.body}
+                  ctaLabel={card.ctaLabel}
+                  onClick={card.onClick}
+                />
+              ))}
+            </div>
+          </Section>
 
-      {subscriptionSummary.items.length > 0 && (
+          <Section title="What Money Hub Can See Right Now">
+            <p style={styles.sectionIntro}>
+              If this page looks stale, it is because Today is designed to be about now. The app can still read your existing history, but it needs your newest statement to be sharp again.
+            </p>
+            <Row name="History loaded" value={statementCoverage.monthCountLabel} />
+            <Row name="Statements imported" value={`${statementCoverage.fileCount}`} />
+            <Row name="Visible range" value={statementCoverage.rangeLabel} />
+            <Row name="Latest visible month" value={dataFreshness.latestMonthLabel || "None yet"} />
+            {statementCoverage.latestStatementMonthLabel ? (
+              <Row name="Latest uploaded range" value={statementCoverage.latestStatementMonthLabel} />
+            ) : null}
+            {statementCoverage.hasCoverageGap ? (
+              <Row name="Needs checking" value="Visible transactions stop earlier than the latest uploaded statement range" />
+            ) : null}
+          </Section>
+
+          {dataFreshness.hasData ? (
+            <Section
+              title={statementCoverage.hasCoverageGap ? "Latest Visible Month" : "Latest Useful Month"}
+              right={
+                <button
+                  style={styles.ghostBtn}
+                  type="button"
+                  onClick={() => onNavigate("calendar")}
+                >
+                  Open calendar
+                </button>
+              }
+            >
+              <p style={styles.smallMuted}>
+                {statementCoverage.hasCoverageGap
+                  ? "This is the latest month the saved transactions can actually prove right now."
+                  : "Until you upload the newest statement, this is the last month the app can still talk about with confidence."}
+              </p>
+              <Row name="Period" value={monthSnapshot.monthName} />
+              <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
+              <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
+              <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
+              <Row name="Transactions on" value={`${monthSnapshot.activeDays} day${monthSnapshot.activeDays === 1 ? "" : "s"}`} />
+            </Section>
+          ) : (
+            <Section title="What Unlocks After Your First Statement">
+              <Row name="Categories" value="Auto-filled from your real spending" />
+              <Row name="Calendar" value="Built from your real transaction dates" />
+              <Row name="AI coach" value="Grounded in your money data, not guesses" />
+            </Section>
+          )}
+
+          {latestVisibleTransactions.length > 0 ? (
+            <Section title="Latest Visible Activity">
+              {latestVisibleTransactions.map((transaction) => (
+                <TransactionRow
+                  key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`}
+                  name={transaction.description || "Transaction"}
+                  meta={`${transaction.transaction_date || "No date"} - ${getMeaningfulCategory(transaction)}`}
+                  amount={Number(transaction.amount || 0)}
+                />
+              ))}
+            </Section>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <Section title="Quick Read">
+            <div style={styles.aiInsightGrid}>
+              <InsightCard
+                label="Today"
+                headline={dailyBrief.headline}
+                body={dailyBrief.body}
+                ctaLabel="Ask AI about this"
+                onClick={() => onGoToCoach(`Use my current money data and explain this: ${dailyBrief.headline}`)}
+              />
+              <InsightCard
+                label="Trend"
+                headline={trendSummary.headline}
+                body={trendSummary.body}
+                ctaLabel="Why?"
+                onClick={() => onGoToCoach("Explain what changed in my recent spending trend and what is driving it.")}
+              />
+              <InsightCard
+                label={monthSnapshot.label}
+                headline={monthSnapshot.headline}
+                body={monthSnapshot.body}
+                ctaLabel="Open calendar"
+                onClick={() => onNavigate("calendar")}
+              />
+            </div>
+          </Section>
+
+          <Section title="This Month">
+            <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
+            <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
+            <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
+            <Row name="Transactions on" value={`${monthSnapshot.activeDays} day${monthSnapshot.activeDays === 1 ? "" : "s"}`} />
+          </Section>
+        </>
+      )}
+
+      {subscriptionSummary.items.length > 0 ? (
         <Section
           title="Likely Subscriptions"
           right={
@@ -694,46 +886,32 @@ function TodayPage({
             <Row
               key={item.name}
               name={item.name}
-              value={`${formatCurrency(item.total)} - ${item.count} hit${item.count === 1 ? '' : 's'}`}
+              value={`${formatCurrency(item.total)} - ${item.count} hit${item.count === 1 ? "" : "s"}`}
             />
           ))}
         </Section>
-      )}
+      ) : null}
 
-      <Section title="Top Spending Areas">
-        {topCategories.length === 0 ? (
+      <Section title={dataFreshness.needsUpload ? "Visible Transactions" : "Recent Transactions"}>
+        {(dataFreshness.needsUpload ? latestVisibleTransactions : recent).length === 0 ? (
           <p style={styles.emptyText}>
-            Upload a statement to see where your money is going.
+            {dataFreshness.hasData
+              ? "Nothing useful is visible in that latest month yet."
+              : "No transactions yet. Upload your first statement to unlock this."}
           </p>
         ) : (
-          topCategories.map((item) => (
-            <Row
-              key={item.category}
-              name={item.category}
-              value={formatCurrency(item.total)}
-            />
-          ))
-        )}
-      </Section>
-
-      <Section title="Recent Transactions">
-        {recent.length === 0 ? (
-          <p style={styles.emptyText}>
-            No transactions yet. Upload your first CSV statement.
-          </p>
-        ) : (
-          recent.map((t) => (
+          (dataFreshness.needsUpload ? latestVisibleTransactions : recent).map((transaction) => (
             <TransactionRow
-              key={t.id}
-              name={t.description || "Transaction"}
-              meta={`${t.transaction_date || "No date"} - ${getMeaningfulCategory(t)}`}
-              amount={Number(t.amount || 0)}
+              key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`}
+              name={transaction.description || "Transaction"}
+              meta={`${transaction.transaction_date || "No date"} - ${getMeaningfulCategory(transaction)}`}
+              amount={Number(transaction.amount || 0)}
             />
           ))
         )}
       </Section>
 
-      <Section title="Ask AI Next">
+      <Section title={dataFreshness.needsUpload ? "Ask AI About Your Setup" : "Ask AI Next"}>
         <div style={styles.actionChipWrap}>
           {coachPrompts.map((prompt) => (
             <button
@@ -2552,7 +2730,7 @@ function CalendarPage({ transactions, screenWidth }) {
   const [viewDate, setViewDate] = useState(() => new Date());
   const [selectedDayKey, setSelectedDayKey] = useState("");
   const [calendarMode, setCalendarMode] = useState("history");
-  const [timeframe, setTimeframe] = useState("1m");
+  const [timeframe, setTimeframe] = useState("all");
   const [calendarAiBusy, setCalendarAiBusy] = useState(false);
   const [calendarAiText, setCalendarAiText] = useState("");
   const [calendarAiError, setCalendarAiError] = useState("");
@@ -2595,6 +2773,18 @@ function CalendarPage({ transactions, screenWidth }) {
     [transactions, activeShortEndDate, shortWindowSize]
   );
 
+  const timeframeOptions = [
+    ["1d", "1D"],
+    ["1w", "1W"],
+    ["2w", "2W"],
+    ["1m", "1M"],
+    ["3m", "3M"],
+    ["6m", "6M"],
+    ["12m", "12M"],
+    ["all", "All"],
+  ];
+  const timeframeLabel = timeframeOptions.find(([key]) => key === timeframe)?.[1] || timeframe.toUpperCase();
+
   const calendarDays =
     calendarMode === "history"
       ? usingShortHistoryView
@@ -2607,24 +2797,9 @@ function CalendarPage({ transactions, screenWidth }) {
   const patternSummary = getCalendarPatternSummary(transactions, timeframe);
   const monthlyBreakdown = getMonthlyBreakdown(transactions, shortTimeframe ? "1m" : timeframe).slice(0, 6);
   const visibleHistoryTransactions = calendarDays.flatMap((day) => day.transactions || []);
-  const timeframeLabel = timeframe.toUpperCase();
-  const timeframeOptions = [
-    ["1d", "1D"],
-    ["1w", "1W"],
-    ["2w", "2W"],
-    ["1m", "1M"],
-    ["3m", "3M"],
-    ["6m", "6M"],
-    ["12m", "12M"],
-    ["all", "All"],
-  ];
-  const selectedDay =
-    calendarDays.find((day) => day.key === selectedDayKey) ||
-    calendarDays.find((day) => {
-      const hasItems = (day.transactions?.length || 0) > 0 || (day.events?.length || 0) > 0;
-      return hasItems && !day.isFutureDay;
-    }) ||
-    null;
+  const selectedDay = selectedDayKey
+    ? calendarDays.find((day) => day.key === selectedDayKey) || null
+    : null;
   const canGoPrev = usingShortHistoryView
     ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, -1)
     : canShiftCalendarMonth(activeViewDate, calendarBounds, -1);
@@ -2634,9 +2809,18 @@ function CalendarPage({ transactions, screenWidth }) {
   const shortRangeTitle = usingShortHistoryView
     ? formatShortWindowTitle(rollingHistoryWindow.startDate, rollingHistoryWindow.endDate, timeframe)
     : `${MONTH_NAMES[activeViewDate.getMonth()]} ${activeViewDate.getFullYear()}`;
+  const allowHorizontalScroll = usingShortHistoryView
+    ? shortWindowSize > 7 || screenWidth <= 760
+    : screenWidth <= 760;
+
+  function clearCalendarAiRead() {
+    setCalendarAiText("");
+    setCalendarAiError("");
+  }
 
   function handleRangeShift(direction) {
     setSelectedDayKey("");
+    clearCalendarAiRead();
 
     if (usingShortHistoryView) {
       if ((direction < 0 && !canGoPrev) || (direction > 0 && !canGoNext)) return;
@@ -2660,11 +2844,12 @@ function CalendarPage({ transactions, screenWidth }) {
 
   function handleTimeframeChange(nextTimeframe) {
     const needsMonths = getTimeframeMonthCount(nextTimeframe);
-    const unavailable = needsMonths > 0 && availableMonthCount < needsMonths;
+    const unavailable = needsMonths > 0 && nextTimeframe !== "all" && availableMonthCount < needsMonths;
     if (unavailable) return;
 
     setTimeframe(nextTimeframe);
     setSelectedDayKey("");
+    clearCalendarAiRead();
 
     if (isShortTimeframe(nextTimeframe)) {
       setViewDate(latestHistoryDate);
@@ -2746,7 +2931,10 @@ function CalendarPage({ transactions, screenWidth }) {
               ...(canGoPrev ? null : styles.calendarNavBtnDisabled),
             }}
             type="button"
-            onClick={() => handleRangeShift(-1)}
+            onClick={(event) => {
+              event.currentTarget.blur();
+              handleRangeShift(-1);
+            }}
             disabled={!canGoPrev}
           >
             Prev
@@ -2756,10 +2944,10 @@ function CalendarPage({ transactions, screenWidth }) {
             <h4 style={styles.calendarTitle}>{shortRangeTitle}</h4>
             <p style={styles.smallMuted}>
               {usingShortHistoryView
-                ? "Short-window view for weekly and biweekly rhythm checks."
+                ? "Showing a rolling short window. Use Prev and Next to move through time."
                 : timeframe === "all"
-                ? "Showing your full history window, one month at a time."
-                : `Showing the latest month inside your ${timeframe.toUpperCase()} view.`}
+                ? "Showing your full history. Use Prev and Next to move month by month."
+                : `Showing the latest month inside your ${timeframeLabel} view.`}
             </p>
           </div>
 
@@ -2769,7 +2957,10 @@ function CalendarPage({ transactions, screenWidth }) {
               ...(canGoNext ? null : styles.calendarNavBtnDisabled),
             }}
             type="button"
-            onClick={() => handleRangeShift(1)}
+            onClick={(event) => {
+              event.currentTarget.blur();
+              handleRangeShift(1);
+            }}
             disabled={!canGoNext}
           >
             Next
@@ -2785,11 +2976,23 @@ function CalendarPage({ transactions, screenWidth }) {
               <button
                 key={key}
                 type="button"
-                onClick={() => {
+                aria-pressed={calendarMode === key}
+                onClick={(event) => {
+                  event.currentTarget.blur();
                   setCalendarMode(key);
                   setSelectedDayKey("");
+                  clearCalendarAiRead();
+                  if (key === "recurring" && isShortTimeframe(timeframe)) {
+                    const fallbackRange = "all";
+                    setTimeframe(fallbackRange);
+                    const nextBounds = getCalendarMonthBounds(transactions, fallbackRange);
+                    setViewDate(nextBounds.end);
+                  }
                 }}
-                style={{ ...styles.promptChip, ...(calendarMode === key ? styles.modeChipActive : null) }}
+                style={{
+                  ...styles.calendarModeChip,
+                  ...(calendarMode === key ? styles.calendarModeChipActive : null),
+                }}
               >
                 {label}
               </button>
@@ -2799,16 +3002,20 @@ function CalendarPage({ transactions, screenWidth }) {
           <div style={styles.modeChipRow}>
             {timeframeOptions.map(([key, label]) => {
               const needsMonths = getTimeframeMonthCount(key);
-              const unavailable = needsMonths > 0 && availableMonthCount < needsMonths;
+              const unavailable = needsMonths > 0 && key !== "all" && availableMonthCount < needsMonths;
               return (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => handleTimeframeChange(key)}
+                  aria-pressed={timeframe === key}
+                  onClick={(event) => {
+                    event.currentTarget.blur();
+                    handleTimeframeChange(key);
+                  }}
                   disabled={unavailable}
                   style={{
-                    ...styles.promptChip,
-                    ...(timeframe === key ? styles.modeChipActive : null),
+                    ...styles.calendarTimeframeChip,
+                    ...(timeframe === key ? styles.calendarTimeframeChipActive : null),
                     ...(unavailable ? styles.timeframeChipDisabled : null),
                   }}
                 >
@@ -2835,7 +3042,7 @@ function CalendarPage({ transactions, screenWidth }) {
         <div
           style={{
             ...styles.calendarGridViewport,
-            overflowX: screenWidth <= 768 ? "auto" : "hidden",
+            overflowX: allowHorizontalScroll ? "auto" : "hidden",
           }}
         >
           <div
@@ -2843,94 +3050,95 @@ function CalendarPage({ transactions, screenWidth }) {
               ...(shortTimeframe && calendarMode === "history"
                 ? getRollingDaysGridStyle(screenWidth, shortWindowSize)
                 : styles.calendarGrid),
-              width: "100%",
               minWidth:
-                shortTimeframe && calendarMode === "history"
-                  ? screenWidth <= 768
-                    ? `${Math.max(shortWindowSize, 2) * 112}px`
-                    : undefined
-                  : screenWidth <= 768
-                  ? "720px"
+                usingShortHistoryView && allowHorizontalScroll
+                  ? `${Math.max(shortWindowSize, 7) * 96}px`
+                  : !usingShortHistoryView && screenWidth <= 760
+                  ? "640px"
                   : undefined,
             }}
           >
-          {!usingShortHistoryView
-            ? DAY_NAMES.map((day) => (
-                <div key={day} style={styles.calendarDayHeader}>{day}</div>
-              ))
-            : null}
+            {!usingShortHistoryView
+              ? DAY_NAMES.map((day) => (
+                  <div key={day} style={styles.calendarDayHeader}>{day}</div>
+                ))
+              : null}
 
-          {calendarDays.map((day) => {
-            const isSelected = selectedDayKey === day.key;
-            const txCount = day.transactions?.length || 0;
-            const eventCount = day.events?.length || 0;
-            const firstLabel = day.previewLabels?.[0] || day.events?.[0]?.title || "";
-            const extraCount = calendarMode === "history" ? Math.max(txCount - 1, 0) : Math.max(eventCount - 1, 0);
-            const net = Number(day.net || 0);
+            {calendarDays.map((day) => {
+              const isSelected = selectedDayKey === day.key;
+              const txCount = day.transactions?.length || 0;
+              const eventCount = day.events?.length || 0;
+              const firstLabel = day.previewLabels?.[0] || day.events?.[0]?.title || "";
+              const extraCount = calendarMode === "history" ? Math.max(txCount - 1, 0) : Math.max(eventCount - 1, 0);
+              const net = Number(day.net || 0);
 
-            return (
-              <button
-                key={day.key}
-                type="button"
-                onClick={() => handleDayClick(day)}
-                disabled={calendarMode === "history" && day.isFutureDay}
-                style={{
-                  ...styles.calendarCell,
-                  ...(usingShortHistoryView ? styles.calendarCellShort : null),
-                  ...(day.inMonth === false ? styles.calendarCellMuted : null),
-                  ...(calendarMode === "history" && day.isFutureDay ? styles.calendarCellFuture : null),
-                  ...(isSelected ? styles.calendarCellSelected : null),
-                }}
-              >
-                <div style={styles.calendarDateRow}>
-                  <div>
-                    <div style={styles.calendarDate}>{day.date.getDate()}</div>
-                    {usingShortHistoryView && calendarMode === "history" ? (
-                      <div style={styles.calendarWeekdayMini}>{formatShortWeekday(day.date)}</div>
+              return (
+                <button
+                  key={day.key}
+                  type="button"
+                  onClick={() => handleDayClick(day)}
+                  disabled={calendarMode === "history" && day.isFutureDay}
+                  style={{
+                    ...styles.calendarCell,
+                    ...(usingShortHistoryView ? styles.calendarCellShort : null),
+                    ...(day.inMonth === false ? styles.calendarCellMuted : null),
+                    ...(calendarMode === "history" && day.isFutureDay ? styles.calendarCellFuture : null),
+                    ...(isSelected ? styles.calendarCellSelected : null),
+                  }}
+                >
+                  <div style={styles.calendarDateRow}>
+                    <div>
+                      <div style={styles.calendarDate}>{day.date.getDate()}</div>
+                      {usingShortHistoryView && calendarMode === "history" ? (
+                        <div style={styles.calendarWeekdayMini}>{formatShortWeekday(day.date)}</div>
+                      ) : null}
+                    </div>
+                    {calendarMode === "history" && txCount > 0 ? (
+                      <span style={styles.calendarCountTag}>{txCount}</span>
+                    ) : calendarMode === "recurring" && eventCount > 0 ? (
+                      <span style={styles.calendarCountTag}>{eventCount}</span>
                     ) : null}
                   </div>
-                  {calendarMode === "history" && txCount > 0 ? (
-                    <span style={styles.calendarCountTag}>{txCount}</span>
-                  ) : calendarMode === "recurring" && eventCount > 0 ? (
-                    <span style={styles.calendarCountTag}>{eventCount}</span>
-                  ) : null}
-                </div>
 
-                {calendarMode === "history" ? (
-                  <>
-                    {day.isFutureDay ? (
-                      <div style={styles.calendarFutureBlock} />
-                    ) : txCount > 0 ? (
-                      <div style={net >= 0 ? styles.calendarNetPillPositive : styles.calendarNetPillNegative}>
-                        {net >= 0 ? "+" : "-"}{formatCompactCurrency(Math.abs(net))}
-                      </div>
-                    ) : (
-                      <div style={styles.calendarEmptyHint}>Quiet day</div>
-                    )}
-                    {!day.isFutureDay && firstLabel ? <div style={styles.calendarSingleLabel}>{firstLabel}</div> : null}
-                    {!day.isFutureDay && extraCount > 0 ? <div style={styles.calendarMore}>{extraCount} more</div> : null}
-                  </>
-                ) : (
-                  <>
-                    {eventCount > 0 ? (
-                      <div style={styles.calendarRecurringStack}>
-                        {day.events.slice(0, 2).map((event) => (
-                          <div key={event.key} style={getCalendarEventStyle(event.kind)}>
-                            <span style={styles.calendarEventText}>{event.title}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={styles.calendarEmptyHint}>Nothing due</div>
-                    )}
-                    {extraCount > 0 ? <div style={styles.calendarMore}>{extraCount} more</div> : null}
-                  </>
-                )}
-              </button>
-            );
-          })}
+                  {calendarMode === "history" ? (
+                    <>
+                      {day.isFutureDay ? (
+                        <div style={styles.calendarFutureBlock} />
+                      ) : txCount > 0 ? (
+                        <div style={net >= 0 ? styles.calendarNetPillPositive : styles.calendarNetPillNegative}>
+                          {net >= 0 ? "+" : "-"}{formatCompactCurrency(Math.abs(net))}
+                        </div>
+                      ) : (
+                        <div style={styles.calendarEmptyHint}>Quiet day</div>
+                      )}
+                      {!day.isFutureDay && firstLabel ? <div style={styles.calendarSingleLabel}>{firstLabel}</div> : null}
+                      {!day.isFutureDay && extraCount > 0 ? <div style={styles.calendarMore}>{extraCount} more</div> : null}
+                    </>
+                  ) : (
+                    <>
+                      {eventCount > 0 ? (
+                        <div style={styles.calendarRecurringStack}>
+                          {day.events.slice(0, 2).map((event) => (
+                            <div key={event.key} style={getCalendarEventStyle(event.kind)}>
+                              <span style={styles.calendarEventText}>{event.title}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={styles.calendarEmptyHint}>Nothing due</div>
+                      )}
+                      {extraCount > 0 ? <div style={styles.calendarMore}>{extraCount} more</div> : null}
+                    </>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
+
+        {!selectedDay && calendarMode === "history" ? (
+          <p style={styles.calendarRangeHint}>Tap a day to open its transaction detail.</p>
+        ) : null}
 
         {selectedDay ? (
           <div style={styles.calendarInlinePanel}>
@@ -3183,14 +3391,18 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
 
     const merchantText = nextMerchant.toLowerCase();
     const receiptAmount = Number(nextTotal);
+    const parsedReceiptDate = nextDate ? parseAppDate(nextDate) : null;
 
     return transactions.find((transaction) => {
       const description = String(transaction.description || "").toLowerCase();
       const amount = Math.abs(Number(transaction.amount || 0));
+      const parsedTransactionDate = parseAppDate(transaction.transaction_date);
 
       const merchantMatches = description.includes(merchantText);
       const amountMatches = Math.abs(amount - receiptAmount) < 0.02;
-      const dateMatches = !nextDate || transaction.transaction_date === nextDate;
+      const dateMatches =
+        !parsedReceiptDate ||
+        (parsedTransactionDate && toIsoDate(parsedTransactionDate) === toIsoDate(parsedReceiptDate));
 
       return merchantMatches && amountMatches && dateMatches;
     });
@@ -3298,6 +3510,13 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
     onChange();
   }
 
+  const receiptCounts = {
+    all: receipts.length,
+    warranty: receipts.filter((receipt) => Boolean(receipt.file_url)).length,
+    matched: receipts.filter((receipt) => receipt.matched_status === "matched").length,
+    manual: receipts.filter((receipt) => receipt.matched_status !== "matched").length,
+  };
+  const hasActiveFilters = Boolean(searchQuery.trim()) || receiptFilter !== "all";
   const filteredReceipts = receipts.filter((receipt) => {
     const searchText = `${receipt.merchant || ""} ${receipt.ai_summary || ""} ${receipt.receipt_date || ""}`.toLowerCase();
     const matchesSearch = !searchQuery.trim() || searchText.includes(searchQuery.trim().toLowerCase());
@@ -3312,6 +3531,23 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
     return matchesSearch && matchesFilter;
   });
 
+  const emptyStateText = receipts.length === 0
+    ? "No receipts stored yet. Save one above and this becomes your warranty drawer."
+    : searchQuery.trim()
+    ? "No receipts match that search yet. Try a broader search or show all receipts."
+    : receiptFilter === "warranty"
+    ? "No warranty or kept-file receipts are stored yet."
+    : receiptFilter === "matched"
+    ? "No matched receipts yet. Once totals and dates line up, they show here."
+    : receiptFilter === "manual"
+    ? "No unmatched receipts right now."
+    : "No receipts match that view yet.";
+
+  function clearReceiptFilters() {
+    setSearchQuery("");
+    setReceiptFilter("all");
+  }
+
   return (
     <>
       <Section
@@ -3321,7 +3557,7 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
             style={styles.ghostBtn}
             onClick={() =>
               onGoToCoach(
-                'Help me set up a simple receipt system for warranties, returns, and tax-style record keeping using the app I already have.',
+                'Help me set up a simple receipt system for warranties, returns, and proof of purchase using the app I already have.',
                 { autoSend: true }
               )
             }
@@ -3346,7 +3582,7 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
           <div style={styles.receiptPreview}>
             <strong>{file.name}</strong>
             <p style={styles.transactionMeta}>
-              {file.type || "Unknown file type"} ? {(file.size / 1024).toFixed(1)} KB
+              {file.type || "Unknown file type"} - {(file.size / 1024).toFixed(1)} KB
             </p>
           </div>
         )}
@@ -3387,7 +3623,7 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
           <div style={styles.matchBox}>
             <strong>Matched transaction found</strong>
             <p style={styles.transactionMeta}>
-              {match.description} ? {match.transaction_date} ? {formatCurrency(Math.abs(Number(match.amount || 0)))}
+              {match.description} - {match.transaction_date} - {formatCurrency(Math.abs(Number(match.amount || 0)))}
             </p>
           </div>
         )}
@@ -3397,71 +3633,100 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
         </button>
       </Section>
 
-      <Section title="Find A Receipt Later">
-        <input
-          style={styles.input}
-          placeholder="Search by receipt name, merchant, or date"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-        <div style={styles.actionChipWrap}>
-          {[
-            ["all", "All receipts"],
-            ["warranty", "Warranty / kept files"],
-            ["matched", "Matched"],
-            ["manual", "Unmatched"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              style={{ ...styles.promptChip, ...(receiptFilter === key ? styles.modeChipActive : null) }}
-              onClick={() => setReceiptFilter(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Saved Receipts">
-        {filteredReceipts.length === 0 ? (
-          <p style={styles.emptyText}>No receipts match that search yet.</p>
-        ) : (
-          filteredReceipts.map((receipt) => (
-            <div key={receipt.id} style={styles.signalCard}>
-              <div style={styles.signalHeader}>
-                <div>
-                  <strong>{receipt.merchant || "Receipt"}</strong>
-                  <p style={styles.transactionMeta}>
-                    {receipt.receipt_date || "No date"} ? {receipt.matched_status === "matched" ? "Matched" : "Unmatched"} ? {receipt.file_url ? "File saved" : "Details only"}
-                  </p>
-                </div>
-                <strong>{formatCurrency(receipt.total || 0)}</strong>
-              </div>
-              {receipt.ai_summary ? <p style={styles.signalBody}>{receipt.ai_summary}</p> : null}
-              <div style={styles.inlineBtnRow}>
-                {receipt.file_url ? (
-                  <button style={styles.secondaryInlineBtn} type="button" onClick={() => window.open(receipt.file_url, '_blank', 'noopener,noreferrer')}>
-                    Open file
-                  </button>
-                ) : null}
+      {receipts.length > 0 ? (
+        <>
+          <Section title="Find A Receipt Later">
+            <input
+              style={styles.input}
+              placeholder="Search by receipt name, merchant, or date"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <p style={styles.smallMuted}>
+              Saved {receiptCounts.all} - Warranty kept {receiptCounts.warranty} - Matched {receiptCounts.matched}
+            </p>
+            <div style={styles.actionChipWrap}>
+              {[
+                ["all", "All receipts"],
+                ["warranty", "Warranty / kept files"],
+                ["matched", "Matched"],
+                ["manual", "Unmatched"],
+              ].map(([key, label]) => (
                 <button
-                  style={styles.secondaryInlineBtn}
+                  key={key}
                   type="button"
-                  onClick={() =>
-                    onGoToCoach(
-                      `Help me work out whether I should keep this receipt and what it is most useful for: ${receipt.merchant || 'Receipt'} for ${formatCurrency(receipt.total || 0)} on ${receipt.receipt_date || 'unknown date'}.`,
-                      { autoSend: true }
-                    )
-                  }
+                  style={{ ...styles.promptChip, ...(receiptFilter === key ? styles.modeChipActive : null) }}
+                  onClick={() => setReceiptFilter(key)}
                 >
-                  Ask AI
+                  {label}
                 </button>
-              </div>
+              ))}
             </div>
-          ))
-        )}
-      </Section>
+          </Section>
+
+          <Section
+            title={hasActiveFilters ? `Saved Receipts (${filteredReceipts.length} of ${receipts.length})` : `Saved Receipts (${receipts.length})`}
+            right={
+              hasActiveFilters ? (
+                <button style={styles.ghostBtn} type="button" onClick={clearReceiptFilters}>
+                  Show all receipts
+                </button>
+              ) : null
+            }
+          >
+            {filteredReceipts.length === 0 ? (
+              <div>
+                <p style={styles.emptyText}>{emptyStateText}</p>
+                {hasActiveFilters ? (
+                  <div style={styles.inlineBtnRow}>
+                    <button style={styles.secondaryInlineBtn} type="button" onClick={clearReceiptFilters}>
+                      Show all receipts
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              filteredReceipts.map((receipt) => (
+                <div key={receipt.id} style={styles.signalCard}>
+                  <div style={styles.signalHeader}>
+                    <div>
+                      <strong>{receipt.merchant || "Receipt"}</strong>
+                      <p style={styles.transactionMeta}>
+                        {receipt.receipt_date || "No date"} - {receipt.matched_status === "matched" ? "Matched" : "Unmatched"} - {receipt.file_url ? "File saved" : "Details only"}
+                      </p>
+                    </div>
+                    <strong>{formatCurrency(receipt.total || 0)}</strong>
+                  </div>
+                  {receipt.ai_summary ? <p style={styles.signalBody}>{receipt.ai_summary}</p> : null}
+                  <div style={styles.inlineBtnRow}>
+                    {receipt.file_url ? (
+                      <button style={styles.secondaryInlineBtn} type="button" onClick={() => window.open(receipt.file_url, '_blank', 'noopener,noreferrer')}>
+                        Open file
+                      </button>
+                    ) : null}
+                    <button
+                      style={styles.secondaryInlineBtn}
+                      type="button"
+                      onClick={() =>
+                        onGoToCoach(
+                          `Help me work out whether I should keep this receipt and what it is most useful for: ${receipt.merchant || 'Receipt'} for ${formatCurrency(receipt.total || 0)} on ${receipt.receipt_date || 'unknown date'}.`,
+                          { autoSend: true }
+                        )
+                      }
+                    >
+                      Ask AI
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </Section>
+        </>
+      ) : (
+        <Section title="Saved Receipts (0)">
+          <p style={styles.emptyText}>No receipts saved yet. Once you keep one, this becomes the place to find warranty proof, return receipts, and old purchases fast.</p>
+        </Section>
+      )}
     </>
   );
 }
@@ -3530,6 +3795,8 @@ function CoachPage({
     if (shouldAutoSend && draft.trim()) {
       sendMessage(draft);
     }
+    // This only consumes a one-shot draft left by navigation into the coach.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -4082,7 +4349,7 @@ function getCashSummary(accounts, transactions) {
       label: "Recent data needed",
       badge: "Refresh needed",
       body: freshness.hasData
-        ? `The latest visible transaction month here is ${freshness.latestMonthLabel}, so today's cash view should not be trusted until you upload a fresher statement.`
+        ? `The app can still read up to ${freshness.latestMonthLabel}, but today's view, calendar, and AI advice all get sharper once you upload your latest statement.`
         : "Upload your first statement so Money Hub can build a real picture instead of guessing.",
     };
   }
@@ -4093,8 +4360,8 @@ function getCashSummary(accounts, transactions) {
     hasLiveBalances: false,
     amount: monthSnapshot.net,
     primaryDisplay: formatCurrency(monthSnapshot.net),
-    label: monthSnapshot.sectionTitle,
-    badge: "Imported only",
+    label: `${monthSnapshot.monthName} net movement`,
+    badge: "Imported pattern",
     body:
       "This is based on imported statement history rather than a live bank balance, so treat it as a pattern read rather than spendable cash.",
   };
@@ -4199,11 +4466,90 @@ function getDisplayedMonthSnapshot(transactions) {
     ...base,
     isCurrent: false,
     needsRefresh: true,
-    label: "Latest imported month",
+    label: "Latest visible month",
     pillLabel: "Latest month",
-    sectionTitle: "Latest Imported Month",
-    headline: `${base.monthName} is the latest month loaded`,
+    sectionTitle: "Latest Visible Month",
+    headline: `${base.monthName} is the latest visible month`,
     body: "No current-month activity is visible here yet. Upload your latest statement so today's view stops looking empty.",
+  };
+}
+
+function getStatementCoverageSummary(transactions, statementImports = []) {
+  const validDates = transactions
+    .map((transaction) => parseAppDate(transaction.transaction_date))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+  const statementEndDates = (Array.isArray(statementImports) ? statementImports : [])
+    .map((item) => parseAppDate(item?.end_date || item?.endDate || item?.start_date || item?.created_at))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+  const importedFileCount = Array.isArray(statementImports) && statementImports.length > 0
+    ? statementImports.length
+    : new Set(transactions.map((transaction) => transaction.import_id).filter(Boolean)).size;
+
+  if (validDates.length === 0) {
+    return {
+      hasData: false,
+      monthCount: 0,
+      monthCountLabel: "0 months",
+      fileCount: importedFileCount,
+      rangeLabel: "No history yet",
+      headline: "Upload your first statement",
+      body: "One statement gives Money Hub a first read. Three or more months unlock better recurring bills, trend reads, and AI advice.",
+      nextUnlock: "Your first statement unlocks categories, calendar history, and AI reads.",
+      latestStatementMonthLabel: statementEndDates.length ? formatMonthYear(statementEndDates[statementEndDates.length - 1]) : "",
+      latestTransactionMonthLabel: "",
+      hasCoverageGap: false,
+    };
+  }
+
+  const monthKeys = [...new Set(validDates.map((date) => `${date.getFullYear()}-${date.getMonth() + 1}`))];
+  const monthCount = monthKeys.length;
+  const earliestDate = validDates[0];
+  const latestDate = validDates[validDates.length - 1];
+  const latestStatementDate = statementEndDates[statementEndDates.length - 1] || null;
+  const coverageGapDays = latestStatementDate
+    ? Math.round((startOfDay(latestStatementDate).getTime() - startOfDay(latestDate).getTime()) / 86400000)
+    : 0;
+  const hasCoverageGap = coverageGapDays > 14;
+
+  let headline = "Strong history loaded";
+  let body = "You already have enough history for believable pattern reads, so new uploads mostly keep the app fresh.";
+  let nextUnlock = "Keep adding the newest statement so the current month stays accurate.";
+
+  if (monthCount === 1) {
+    headline = "One month loaded so far";
+    body = "A second and third month will make recurring bills, salary rhythm, and subscription checks much sharper.";
+    nextUnlock = "Two more months should unlock much better recurring payment detection.";
+  } else if (monthCount < 3) {
+    headline = `${monthCount} months loaded so far`;
+    body = "You are past the first read now. One more month should make trends, recurring charges, and AI advice feel far less flimsy.";
+    nextUnlock = "One more month should make recurring reads and trends much steadier.";
+  } else if (monthCount < 6) {
+    headline = `${monthCount} months of history is a good base`;
+    body = "Recurring bills, subscriptions, and month-vs-month changes are believable now. More months will make salary rhythm and unusual-spend reads steadier.";
+    nextUnlock = "More history now mostly sharpens pattern confidence and calendar reads.";
+  }
+
+  if (hasCoverageGap) {
+    headline = "One of your latest uploads may need checking";
+    body = `The uploaded statement range reaches ${formatMonthYear(latestStatementDate)}, but the saved visible transactions currently stop at ${formatMonthYear(latestDate)}.`;
+    nextUnlock = "Re-upload or check the latest CSV mapping so the visible history catches up with the uploaded statement range.";
+  }
+
+  return {
+    hasData: true,
+    monthCount,
+    monthCountLabel: `${monthCount} month${monthCount === 1 ? "" : "s"}`,
+    fileCount: importedFileCount,
+    rangeLabel: `${formatMonthYear(earliestDate)} to ${formatMonthYear(latestDate)}`,
+    headline,
+    body,
+    nextUnlock,
+    latestStatementMonthLabel: latestStatementDate ? formatMonthYear(latestStatementDate) : "",
+    latestTransactionMonthLabel: formatMonthYear(latestDate),
+    hasCoverageGap,
+    coverageGapDays,
   };
 }
 
@@ -4566,6 +4912,20 @@ function getRollingDaysGridStyle(screenWidth, dayCount) {
 
 function parseAppDate(value) {
   if (!value) return null;
+
+  function buildDate(year, month, day) {
+    const next = new Date(Number(year), Number(month) - 1, Number(day));
+    if (
+      Number.isNaN(next.getTime()) ||
+      next.getFullYear() !== Number(year) ||
+      next.getMonth() !== Number(month) - 1 ||
+      next.getDate() !== Number(day)
+    ) {
+      return null;
+    }
+    return new Date(next.getFullYear(), next.getMonth(), next.getDate());
+  }
+
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : new Date(value.getFullYear(), value.getMonth(), value.getDate());
   }
@@ -4573,19 +4933,48 @@ function parseAppDate(value) {
   const raw = String(value).trim();
   if (!raw) return null;
 
-  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const normalized = raw.replace(/,/g, " ").replace(/\s+/g, " ").trim();
+
+  const isoMatch = normalized.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (isoMatch) {
     const [, year, month, day] = isoMatch;
-    return new Date(Number(year), Number(month) - 1, Number(day));
+    return buildDate(year, month, day);
   }
 
-  const ukMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (ukMatch) {
-    const [, day, month, year] = ukMatch;
-    return new Date(Number(year), Number(month) - 1, Number(day));
+  const compactMatch = normalized.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactMatch) {
+    const [, year, month, day] = compactMatch;
+    return buildDate(year, month, day);
   }
 
-  const parsed = new Date(raw);
+  const slashMatch = normalized.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (slashMatch) {
+    let [, first, second, year] = slashMatch;
+    const firstNum = Number(first);
+    const secondNum = Number(second);
+    const yearNum = year.length === 2 ? 2000 + Number(year) : Number(year);
+
+    if (firstNum > 12 && secondNum <= 12) {
+      return buildDate(yearNum, secondNum, firstNum);
+    }
+
+    if (secondNum > 12 && firstNum <= 12) {
+      return buildDate(yearNum, firstNum, secondNum);
+    }
+
+    return buildDate(yearNum, secondNum, firstNum);
+  }
+
+  const monthNameMatch = normalized.match(/^(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})$/);
+  if (monthNameMatch) {
+    const [, day, monthName, year] = monthNameMatch;
+    const parsed = new Date(`${day} ${monthName} ${year.length === 2 ? `20${year}` : year}`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+    }
+  }
+
+  const parsed = new Date(normalized);
   return Number.isNaN(parsed.getTime()) ? null : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
 }
 
@@ -4867,8 +5256,8 @@ function getCalendarPatternSummary(transactions, timeframe) {
   const weekdayTotals = Array.from({ length: 7 }, () => 0);
   filtered.forEach((transaction) => {
     if (Number(transaction.amount) >= 0) return;
-    const date = new Date(transaction.transaction_date);
-    if (Number.isNaN(date.getTime())) return;
+    const date = parseAppDate(transaction.transaction_date);
+    if (!date) return;
     weekdayTotals[date.getDay()] += Math.abs(Number(transaction.amount || 0));
   });
 
@@ -5024,13 +5413,9 @@ function hasMeaningfulExtraction(extracted) {
 function getHistorySummary(transactions) {
   const months = new Set(
     transactions
-      .map((t) => {
-        if (!t.transaction_date) return null;
-        const date = new Date(t.transaction_date);
-        if (Number.isNaN(date.getTime())) return null;
-        return `${date.getFullYear()}-${date.getMonth() + 1}`;
-      })
+      .map((t) => parseAppDate(t.transaction_date))
       .filter(Boolean)
+      .map((date) => `${date.getFullYear()}-${date.getMonth() + 1}`)
   );
 
   const count = months.size;
@@ -5151,7 +5536,7 @@ function buildDailyBrief({
 
   return {
     headline: "Steady, not sloppy",
-    body: `Net position is £${totals.net.toFixed(2)} and safe-to-spend is still holding up.`,
+    body: `Income and spending are broadly balanced at ${formatCurrency(Math.abs(totals.net))} net, and nothing in the latest read looks wildly out of control.`,
   };
 }
 
@@ -5520,8 +5905,8 @@ function getRecurringCalendarEvents(transactions) {
     if (!text) return;
 
     const key = `${text}|${transaction.amount > 0 ? "in" : "out"}`;
-    const date = new Date(transaction.transaction_date);
-    if (Number.isNaN(date.getTime())) return;
+    const date = parseAppDate(transaction.transaction_date);
+    if (!date) return;
 
     if (!grouped[key]) {
       grouped[key] = {
@@ -6731,7 +7116,7 @@ const styles = {
 
   calendarGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(7, minmax(84px, 1fr))",
     gap: "8px",
     width: "100%",
   },
@@ -6954,6 +7339,14 @@ const styles = {
     marginTop: "12px",
   },
 };
+
+
+
+
+
+
+
+
 
 
 

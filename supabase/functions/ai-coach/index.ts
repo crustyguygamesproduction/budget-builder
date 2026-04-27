@@ -11,7 +11,7 @@ function cleanReply(text: string) {
     .replace(/\*(.*?)\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
     .replace(/`(.*?)`/g, "$1")
-    .replace(/£/g, "£")
+    .replace(/\u00c2\u00a3/g, "\u00a3")
     .trim();
 }
 
