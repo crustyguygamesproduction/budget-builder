@@ -590,6 +590,12 @@ function TodayPage({
         </div>
       </Section>
 
+      <Section title="Right Now">
+        <Row name="Best next move" value={dailyBrief.headline} />
+        <Row name="Watch point" value={outlierSummary.headline} />
+        <Row name="Statement strength" value={historySummary.label} />
+      </Section>
+
       <Section title="Ask AI Next">
         <p style={styles.sectionIntro}>
           Quick money reads based on your imported statement history.
@@ -667,12 +673,29 @@ function UploadPage({
   const [saving, setSaving] = useState(false);
 
   function cleanAmount(value) {
-    return Number(
-      String(value || "")
-        .replace(/£/g, "")
-        .replace(/,/g, "")
-        .trim()
-    );
+    const raw = String(value ?? "").trim();
+    if (!raw) return Number.NaN;
+
+    const isNegative =
+      raw.startsWith("-") ||
+      raw.endsWith("-") ||
+      /^\(.*\)$/.test(raw) ||
+      /\bdr\b/i.test(raw) ||
+      /money out/i.test(raw);
+
+    const cleaned = raw
+      .replace(/[\u00A3$?,]/g, "")
+      .replace(/[()]/g, "")
+      .replace(/\bcr\b/gi, "")
+      .replace(/\bdr\b/gi, "")
+      .replace(/[^0-9.-]/g, "")
+      .trim();
+
+    if (!cleaned) return Number.NaN;
+
+    const parsed = Number(cleaned);
+    if (Number.isNaN(parsed)) return Number.NaN;
+    return isNegative ? -Math.abs(parsed) : parsed;
   }
 
   function guessAccountName(name) {
@@ -703,29 +726,202 @@ function UploadPage({
   }
 
   function normalizeDescription(text) {
-    return String(text || "").trim();
+    return String(text || "").replace(/\s+/g, " ").trim();
   }
 
-  function detectCategory(description, amount) {
-    const text = String(description || "").toLowerCase();
-
-    if (amount > 0 && /salary|payroll|wage|paye/.test(text)) return "Income";
-    if (/rent|council|electric|gas|water|mortgage|broadband|internet/.test(text)) return "Bill";
-    if (/netflix|spotify|prime|apple|google|disney|adobe|icloud/.test(text)) return "Subscription";
-    if (/tesco|aldi|lidl|asda|sainsbury/.test(text)) return "Groceries";
-    if (/shell|bp|esso/.test(text)) return "Fuel";
-    if (/costa|mcdonald|kfc/.test(text)) return "Treats";
-    if (/deliveroo|uber eats|just eat/.test(text)) return "Takeaway";
-    if (/amazon/.test(text)) return "Shopping";
-    if (/uber|trainline|tfl|national rail/.test(text)) return "Transport";
-    if (/transfer|faster payment|to savings|from savings|standing order to/.test(text)) {
-      return "Internal Transfer";
+  function getFirstRowValue(row, ...keys) {
+    for (const key of keys) {
+      if (!key) continue;
+      const value = row[key];
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        return value;
+      }
     }
 
+    return "";
+  }
+
+  function detectHeaderRowIndex(chunk) {
+    const lines = chunk.split(/\r?\n/);
+
+    return lines.findIndex((line) => {
+      const lower = line.toLowerCase();
+      return (
+        lower.includes("date") &&
+        (lower.includes("description") || lower.includes("merchant") || lower.includes("payee")) &&
+        (lower.includes("amount") || lower.includes("money in") || lower.includes("money out"))
+      );
+    });
+  }
+
+  async function requestCsvMapping(headers, sampleRows) {
+    try {
+      const { data, error } = await supabase.functions.invoke("swift-worker", {
+        body: { headers, sampleRows },
+      });
+
+      if (error) {
+        console.error("AI mapping failed:", error);
+        return null;
+      }
+
+      return data || null;
+    } catch (error) {
+      console.error("AI mapping request failed:", error);
+      return null;
+    }
+  }
+
+  function resolveImportedAmount(row, mapping) {
+    const signedAmount = getFirstRowValue(
+      row,
+      mapping?.amount,
+      "Amount",
+      "amount",
+      "Transaction Amount"
+    );
+
+    if (signedAmount !== "") {
+      return cleanAmount(signedAmount);
+    }
+
+    const moneyIn = getFirstRowValue(
+      row,
+      mapping?.money_in,
+      "Money In",
+      "money_in",
+      "Credit",
+      "Paid In"
+    );
+    const moneyOut = getFirstRowValue(
+      row,
+      mapping?.money_out,
+      "Money Out",
+      "money_out",
+      "Debit",
+      "Paid Out"
+    );
+
+    if (moneyIn !== "") {
+      return Math.abs(cleanAmount(moneyIn));
+    }
+
+    if (moneyOut !== "") {
+      return -Math.abs(cleanAmount(moneyOut));
+    }
+
+    return Number.NaN;
+  }
+
+  const categoryRules = [
+    { category: "Income", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus|hmrc/.test(text) },
+    { category: "Internal Transfer", test: ({ text }) => /transfer|faster payment|to savings|from savings|standing order to|between accounts/.test(text) },
+    { category: "Bill", test: ({ text }) => /rent|council|electric|gas|water|mortgage|broadband|internet|virgin media|sky|bt/.test(text) },
+    { category: "Subscription", test: ({ text }) => /netflix|spotify|prime|apple|google|disney|adobe|icloud|youtube premium/.test(text) },
+    { category: "Groceries", test: ({ text }) => /tesco|aldi|lidl|asda|sainsbury|waitrose|morrisons|co-op/.test(text) },
+    { category: "Fuel", test: ({ text }) => /shell|bp|esso|texaco/.test(text) },
+    { category: "Treats", test: ({ text }) => /costa|mcdonald|kfc|greggs|starbucks/.test(text) },
+    { category: "Takeaway", test: ({ text }) => /deliveroo|uber eats|just eat|domino/.test(text) },
+    { category: "Shopping", test: ({ text }) => /amazon|etsy|ebay|argos/.test(text) },
+    { category: "Transport", test: ({ text }) => /uber|trainline|tfl|national rail|bus|petrol station/.test(text) },
+  ];
+
+  function detectCategory(description, amount) {
+    const text = normalizeDescription(description).toLowerCase();
+    const matchedRule = categoryRules.find((rule) => rule.test({ text, amount }));
+    if (matchedRule) return matchedRule.category;
     return amount > 0 ? "Income" : "Spending";
   }
 
-  function buildFileCard(file, rows) {
+  function summarizeMappingQuality(headers, mapping) {
+    if (!headers.length) {
+      return {
+        label: "Fallback only",
+        headline: "No header shape detected yet",
+        body: "The import will rely on generic fallbacks until a usable header row is found.",
+        confidence: 0.4,
+      };
+    }
+
+    const matchedFields = ["date", "description", "amount", "money_in", "money_out"].filter(
+      (field) => mapping?.[field] && headers.includes(mapping[field])
+    );
+    const coreFields = ["date", "description"].filter(
+      (field) => mapping?.[field] && headers.includes(mapping[field])
+    ).length;
+    const amountFields = ["amount", "money_in", "money_out"].filter(
+      (field) => mapping?.[field] && headers.includes(mapping[field])
+    ).length;
+
+    if (coreFields === 2 && amountFields >= 1) {
+      return {
+        label: "AI + fallback",
+        headline: `Mapped ${matchedFields.length} useful columns cleanly`,
+        body: "The file shape looks understandable, so the import should land with strong field coverage.",
+        confidence: 0.9,
+      };
+    }
+
+    if (coreFields >= 1 || amountFields >= 1) {
+      return {
+        label: "Mixed confidence",
+        headline: `Some key columns mapped, some will fall back`,
+        body: "The app can still import this, but a few fields are being inferred from generic bank-statement fallbacks.",
+        confidence: 0.68,
+      };
+    }
+
+    return {
+      label: "Fallback only",
+      headline: "AI mapping was weak on this file",
+      body: "The import can still continue, but it is leaning on fallback header guesses rather than a confident mapping.",
+      confidence: 0.45,
+    };
+  }
+
+  function normalizeImportedRow(row, mapping) {
+    const amount = resolveImportedAmount(row, mapping);
+    const date = getFirstRowValue(
+      row,
+      mapping?.date,
+      "Date",
+      "date",
+      "TransactionDate",
+      "Transaction Date",
+      "Posted Date"
+    );
+    const description = getFirstRowValue(
+      row,
+      mapping?.description,
+      "Transaction Description",
+      "Description",
+      "description",
+      "Payee",
+      "Reference",
+      "Merchant",
+      "Details"
+    );
+
+    if (!date || !description || Number.isNaN(amount)) {
+      return null;
+    }
+
+    const category = detectCategory(description, amount);
+
+    return {
+      date,
+      description: normalizeDescription(description),
+      amount,
+      direction: amount >= 0 ? "in" : "out",
+      category,
+      is_bill: category === "Bill",
+      is_subscription: category === "Subscription",
+      is_internal_transfer: category === "Internal Transfer",
+      is_income: category === "Income",
+    };
+  }
+
+  function buildFileCard(file, rows, mappingMeta = null) {
     const guessedName = guessAccountName(file.name);
     const matchingAccount = accounts.find(
       (account) =>
@@ -752,6 +948,7 @@ function UploadPage({
         fingerprint,
         duplicateImport,
         overlapSummary,
+        mappingMeta,
       },
     };
   }
@@ -762,99 +959,34 @@ function UploadPage({
 
     selectedFiles.forEach((file) => {
       Papa.parse(file, {
-  header: true,
-  skipEmptyLines: true,
+        header: true,
+        skipEmptyLines: true,
+        beforeFirstChunk(chunk) {
+          const headerIndex = detectHeaderRowIndex(chunk);
+          if (headerIndex <= 0) return chunk;
 
-  beforeFirstChunk: function (chunk) {
-    const lines = chunk.split(/\r?\n/);
-
-    const headerIndex = lines.findIndex((line) => {
-      const lower = line.toLowerCase();
-      return (
-        lower.includes("date") &&
-        (lower.includes("description") || lower.includes("merchant") || lower.includes("payee")) &&
-        (lower.includes("amount") || lower.includes("money in") || lower.includes("money out"))
-      );
-    });
-
-    if (headerIndex > 0) {
-      return lines.slice(headerIndex).join("\n");
-    }
-
-    return chunk;
-  },
-
-  complete: async function (results) {
+          const lines = chunk.split(/\r?\n/);
+          return lines.slice(headerIndex).join("\n");
+        },
+        complete: async function (results) {
           const headers = Object.keys(results.data[0] || {});
-const sampleRows = results.data.slice(0, 5);
-
-const { data: mapping, error: mappingError } = await supabase.functions.invoke(
-  "swift-worker",
-  {
-    body: { headers, sampleRows },
-  }
-);
-
-if (mappingError) {
-  console.error("AI mapping failed:", mappingError);
-  alert("AI mapping failed: " + JSON.stringify(mappingError));
-  return;
-}
-
+          const sampleRows = results.data.slice(0, 5);
+          const mapping = await requestCsvMapping(headers, sampleRows);
+          const mappingMeta = summarizeMappingQuality(headers, mapping);
 
           const cleaned = results.data
-            .map((row) => {
-              const amount = Number(
-  cleanAmount(
-    (mapping.amount && row[mapping.amount]) ||
-      (mapping.money_in && row[mapping.money_in]) ||
-      (mapping.money_out && row[mapping.money_out]
-        ? -Math.abs(cleanAmount(row[mapping.money_out]))
-        : "") ||
-      row.Amount ||
-      row.amount ||
-      row["Amount"] ||
-      row["Transaction Amount"] ||
-      row["Money In"] ||
-      (row["Money Out"] ? -Math.abs(cleanAmount(row["Money Out"])) : "")
-  )
-);
-              const date =
-  (mapping.date && row[mapping.date]) ||
-  row.Date ||
-  row.date ||
-  row.TransactionDate ||
-  row["Transaction Date"] ||
-  row["Posted Date"] ||
-  row["Transaction Date"] ||
-  "";
-
-const description =
-  (mapping.description && row[mapping.description]) ||
-  row["Transaction Description"] ||
-  row.Description ||
-  row.description ||
-  row.Payee ||
-  row.Reference ||
-  row.Merchant ||
-  row["Details"] ||
-  "";
-
-              return {
-                date,
-                description: normalizeDescription(description),
-                amount,
-                direction: amount >= 0 ? "in" : "out",
-                category: detectCategory(description || "", amount),
-              };
-            })
-            .filter(row => row.date && row.description && row.amount !== "" && row.amount !== null)
+            .map((row) => normalizeImportedRow(row, mapping))
+            .filter(Boolean);
 
           setFiles((prev) => {
-            const nextCard = buildFileCard(file, cleaned);
+            const nextCard = buildFileCard(file, cleaned, mappingMeta);
             const withoutDuplicate = prev.filter((item) => item.id !== nextCard.id);
             return [...withoutDuplicate, nextCard].sort((a, b) => a.fileName.localeCompare(b.fileName));
           });
+        },
+        error(parseError) {
+          console.error("CSV parse failed:", parseError);
+          alert(`Could not read ${file.name}. Please check the file format and try again.`);
         },
       });
     });
@@ -955,10 +1087,10 @@ const description =
           amount: row.amount,
           direction: row.direction,
           category: row.category,
-          is_internal_transfer: row.category === "Internal Transfer",
-          is_income: row.category === "Income",
-          is_bill: row.category === "Bill",
-          is_subscription: row.category === "Subscription",
+          is_internal_transfer: row.is_internal_transfer,
+          is_income: row.is_income,
+          is_bill: row.is_bill,
+          is_subscription: row.is_subscription,
           ai_confidence: getTransactionConfidence(row),
           duplicate_key: makeDuplicateKey(row, accountId),
         }));
@@ -1001,10 +1133,10 @@ const description =
       category: row.category,
       transaction_date: row.date,
       description: row.description,
-      is_bill: row.category === "Bill",
-      is_subscription: row.category === "Subscription",
-      is_internal_transfer: row.category === "Internal Transfer",
-      is_income: row.category === "Income",
+      is_bill: row.is_bill,
+      is_subscription: row.is_subscription,
+      is_internal_transfer: row.is_internal_transfer,
+      is_income: row.is_income,
     })),
     []
   );
@@ -1061,6 +1193,11 @@ const description =
                 label="Transfer read"
                 headline={previewTransfers.headline}
                 body={previewTransfers.body}
+              />
+              <InsightCard
+                label="Mapping quality"
+                headline={files[0]?.importMeta?.mappingMeta?.headline || "Fallbacks are ready"}
+                body={files[0]?.importMeta?.mappingMeta?.body || "If AI misses anything, the import still falls back to common bank column names."}
               />
             </div>
           </Section>
@@ -6192,25 +6329,4 @@ const styles = {
     marginTop: "12px",
   },
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
