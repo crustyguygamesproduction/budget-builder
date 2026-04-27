@@ -2,6 +2,7 @@
 import Papa from "papaparse";
 import { supabase } from "./supabase";
 import { buildGoalSuggestions } from "./lib/goalInsights";
+import { buildUploadGuidance } from "./lib/uploadGuidance";
 
 const PAGE_TITLES = {
   today: "Today",
@@ -274,6 +275,7 @@ export default function App() {
             statementImports={statementImports}
             existingTransactions={smartTransactions}
             onImportDone={loadAllData}
+            onGoToCoach={openCoachWithPrompt}
             screenWidth={screenWidth}
           />
         )}
@@ -935,10 +937,15 @@ function UploadPage({
   statementImports,
   existingTransactions,
   onImportDone,
+  onGoToCoach,
   screenWidth,
 }) {
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
+  const uploadGuidance = useMemo(
+    () => buildUploadGuidance({ statementImports, existingTransactions }),
+    [statementImports, existingTransactions]
+  );
 
   function cleanAmount(value) {
     const raw = String(value ?? "").trim();
@@ -1426,7 +1433,18 @@ function UploadPage({
 
   return (
     <>
-      <Section title="Bulk Statement Upload">
+      <Section
+        title="Bulk Statement Upload"
+        right={
+          <button
+            style={styles.ghostBtn}
+            type="button"
+            onClick={() => onGoToCoach(uploadGuidance.aiPrompt, { autoSend: true })}
+          >
+            Ask AI what to upload
+          </button>
+        }
+      >
         <p style={styles.sectionIntro}>
           Add multiple CSV statements at once. The app will now read date ranges,
           spot likely duplicate imports before saving, ignore more fake transfer income,
@@ -1434,12 +1452,37 @@ function UploadPage({
         </p>
 
         <input
+          id="statement-upload-input"
           type="file"
           accept=".csv"
           multiple
           onChange={handleFiles}
           style={styles.input}
         />
+      </Section>
+
+      <Section title="Upload Plan">
+        <div style={styles.aiInsightGrid}>
+          <InsightCard
+            label={uploadGuidance.status}
+            headline={uploadGuidance.headline}
+            body={uploadGuidance.body}
+            ctaLabel="Ask AI"
+            onClick={() => onGoToCoach(uploadGuidance.aiPrompt, { autoSend: true })}
+          />
+          <ActionCard
+            label="Next best upload"
+            headline={uploadGuidance.nextBestUpload}
+            body="This keeps setup focused so the app gets smarter without making you do needless admin."
+            actionLabel="Choose CSV files"
+            onClick={() => document.getElementById("statement-upload-input")?.click()}
+          />
+        </div>
+        <div style={styles.inlineInfoBlock}>
+          {uploadGuidance.checklist.map((item) => (
+            <Row key={item} name="Check" value={item} />
+          ))}
+        </div>
       </Section>
 
       {files.length > 0 && (

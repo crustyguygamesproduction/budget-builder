@@ -762,15 +762,83 @@ function UploadPage({
 
     selectedFiles.forEach((file) => {
       Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: function (results) {
+  header: true,
+  skipEmptyLines: true,
+
+  beforeFirstChunk: function (chunk) {
+    const lines = chunk.split(/\r?\n/);
+
+    const headerIndex = lines.findIndex((line) => {
+      const lower = line.toLowerCase();
+      return (
+        lower.includes("date") &&
+        (lower.includes("description") || lower.includes("merchant") || lower.includes("payee")) &&
+        (lower.includes("amount") || lower.includes("money in") || lower.includes("money out"))
+      );
+    });
+
+    if (headerIndex > 0) {
+      return lines.slice(headerIndex).join("\n");
+    }
+
+    return chunk;
+  },
+
+  complete: async function (results) {
+          const headers = Object.keys(results.data[0] || {});
+const sampleRows = results.data.slice(0, 5);
+
+const { data: mapping, error: mappingError } = await supabase.functions.invoke(
+  "swift-worker",
+  {
+    body: { headers, sampleRows },
+  }
+);
+
+if (mappingError) {
+  console.error("AI mapping failed:", mappingError);
+  alert("AI mapping failed: " + JSON.stringify(mappingError));
+  return;
+}
+
+
           const cleaned = results.data
             .map((row) => {
-              const amount = cleanAmount(row.Amount ?? row.amount ?? row.VALUE ?? row.Value);
-              const date = row.Date ?? row.date ?? row.TransactionDate ?? row["Transaction Date"];
-              const description =
-                row.Description ?? row.description ?? row.Payee ?? row.Reference ?? row.Merchant;
+              const amount = Number(
+  cleanAmount(
+    (mapping.amount && row[mapping.amount]) ||
+      (mapping.money_in && row[mapping.money_in]) ||
+      (mapping.money_out && row[mapping.money_out]
+        ? -Math.abs(cleanAmount(row[mapping.money_out]))
+        : "") ||
+      row.Amount ||
+      row.amount ||
+      row["Amount"] ||
+      row["Transaction Amount"] ||
+      row["Money In"] ||
+      (row["Money Out"] ? -Math.abs(cleanAmount(row["Money Out"])) : "")
+  )
+);
+              const date =
+  (mapping.date && row[mapping.date]) ||
+  row.Date ||
+  row.date ||
+  row.TransactionDate ||
+  row["Transaction Date"] ||
+  row["Posted Date"] ||
+  row["Transaction Date"] ||
+  "";
+
+const description =
+  (mapping.description && row[mapping.description]) ||
+  row["Transaction Description"] ||
+  row.Description ||
+  row.description ||
+  row.Payee ||
+  row.Reference ||
+  row.Merchant ||
+  row["Details"] ||
+  "";
 
               return {
                 date,
@@ -780,7 +848,7 @@ function UploadPage({
                 category: detectCategory(description || "", amount),
               };
             })
-            .filter((row) => row.date && row.description && !Number.isNaN(row.amount));
+            .filter(row => row.date && row.description && row.amount !== "" && row.amount !== null)
 
           setFiles((prev) => {
             const nextCard = buildFileCard(file, cleaned);

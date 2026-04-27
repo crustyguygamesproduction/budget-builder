@@ -7,8 +7,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   globalIgnores([
     'dist',
-    'src/App-BEFORE-SUPER-BUNDLE.jsx',
-    'src/App-STABLE.jsx',
+    'src/archive/**',
   ]),
   {
     files: ['**/*.{js,jsx}'],
