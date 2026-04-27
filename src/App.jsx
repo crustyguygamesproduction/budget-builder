@@ -1,6 +1,13 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { supabase } from "./supabase";
+import {
+  ActionCard as BaseActionCard,
+  InsightCard as BaseInsightCard,
+  MiniCard as BaseMiniCard,
+  Row as BaseRow,
+  Section as BaseSection,
+} from "./components/ui";
 import { buildGoalSuggestions } from "./lib/goalInsights";
 import { buildUploadGuidance } from "./lib/uploadGuidance";
 
@@ -4414,33 +4421,15 @@ function BottomNav({ page, setPage, screenWidth }) {
 }
 
 function Section({ title, children, right, sectionStyle }) {
-  return (
-    <section style={{ ...styles.section, ...sectionStyle }}>
-      <div style={styles.sectionHeader}>
-        <h3 style={styles.sectionTitle}>{title}</h3>
-        {right ? right : null}
-      </div>
-      {children}
-    </section>
-  );
+  return <BaseSection title={title} right={right} sectionStyle={sectionStyle} styles={styles}>{children}</BaseSection>;
 }
 
 function MiniCard({ title, value }) {
-  return (
-    <div style={styles.miniCard}>
-      <p style={styles.cardLabel}>{title}</p>
-      <h4 style={styles.cardValue}>{value}</h4>
-    </div>
-  );
+  return <BaseMiniCard title={title} value={value} styles={styles} />;
 }
 
 function Row({ name, value }) {
-  return (
-    <div style={styles.row}>
-      <span>{name}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+  return <BaseRow name={name} value={value} styles={styles} />;
 }
 
 function TransactionRow({ name, meta, amount }) {
@@ -4468,27 +4457,11 @@ function StatPill({ label, value }) {
 }
 
 function InsightCard({ label, headline, body, onClick, ctaLabel }) {
-  const cardStyle = onClick ? { ...styles.insightCard, ...styles.insightCardInteractive } : styles.insightCard;
-
-  return (
-    <button type="button" style={cardStyle} onClick={onClick} disabled={!onClick}>
-      <p style={styles.insightLabel}>{label}</p>
-      <h4 style={styles.insightHeadline}>{headline}</h4>
-      <p style={styles.insightBody}>{body}</p>
-      {ctaLabel ? <span style={styles.insightCta}>{ctaLabel}</span> : null}
-    </button>
-  );
+  return <BaseInsightCard label={label} headline={headline} body={body} onClick={onClick} ctaLabel={ctaLabel} styles={styles} />;
 }
 
 function ActionCard({ label, headline, body, actionLabel, onClick }) {
-  return (
-    <button type="button" style={styles.actionCard} onClick={onClick}>
-      <p style={styles.insightLabel}>{label}</p>
-      <h4 style={styles.insightHeadline}>{headline}</h4>
-      <p style={styles.insightBody}>{body}</p>
-      <span style={styles.insightCta}>{actionLabel}</span>
-    </button>
-  );
+  return <BaseActionCard label={label} headline={headline} body={body} actionLabel={actionLabel} onClick={onClick} styles={styles} />;
 }
 
 function ChatMessage({ msg }) {
