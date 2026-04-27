@@ -681,18 +681,83 @@ function TodayPage({
 
   const homeHeroPills = dataFreshness.needsUpload
     ? [
-        { label: "History", value: statementCoverage.monthCountLabel },
-        { label: "Statements", value: `${statementCoverage.fileCount}` },
-        { label: "Latest visible", value: dataFreshness.latestMonthLabel || "None yet" },
+        { label: "History loaded", value: statementCoverage.monthCountLabel },
+        { label: "Statements read", value: `${statementCoverage.fileCount}` },
+        { label: "Latest reliable month", value: dataFreshness.latestMonthLabel || "None yet" },
       ]
     : [
         {
-          label: monthSnapshot.pillLabel,
+          label: "Net movement",
           value: `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
         },
-        { label: "Subscriptions", value: `${subscriptionSummary.count}` },
-        { label: "History", value: statementCoverage.monthCountLabel },
+        { label: "Real income", value: formatCurrency(monthSnapshot.income) },
+        { label: "Real spending", value: formatCurrency(monthSnapshot.spending) },
       ];
+  const topCategory = topCategories[0] || null;
+  const transferSummary = getTransferSummary(transactions);
+  const homeConfidence = !dataFreshness.hasData
+    ? {
+        label: "No read yet",
+        headline: "Money Hub needs a statement first",
+        body: "Once a CSV is uploaded, this page can explain what is income, what is spending, and what is just money moving around.",
+      }
+    : dataFreshness.needsUpload
+    ? {
+        label: "Stale read",
+        headline: `Last reliable month is ${dataFreshness.latestMonthLabel}`,
+        body: "The app can still analyse the history it has, but Today should not pretend to know what is happening now until the newest statement is uploaded.",
+      }
+    : statementCoverage.monthCount < 3
+    ? {
+        label: "Early read",
+        headline: `${statementCoverage.monthCountLabel} is enough for a first read`,
+        body: "Useful, but still young. Three months makes recurring bills, salary rhythm, and subscriptions much more trustworthy.",
+      }
+    : {
+        label: "Useful read",
+        headline: `${statementCoverage.monthCountLabel} gives the app a proper base`,
+        body: "The numbers below are statement-based: transfers are stripped out where detected, then real income and real spending are compared.",
+      };
+  const moneyStoryCards = [
+    {
+      label: "Main read",
+      headline: monthSnapshot.net >= 0
+        ? `${formatCurrency(monthSnapshot.net)} ahead in ${monthSnapshot.monthName}`
+        : `${formatCurrency(Math.abs(monthSnapshot.net))} behind in ${monthSnapshot.monthName}`,
+      body: `${formatCurrency(monthSnapshot.income)} real income against ${formatCurrency(monthSnapshot.spending)} real spending. Transfers are treated separately when the app can identify them.`,
+      ctaLabel: "Ask AI why",
+      onClick: () =>
+        onGoToCoach(
+          `Explain my ${monthSnapshot.monthName} money read. Income is ${formatCurrency(monthSnapshot.income)}, spending is ${formatCurrency(monthSnapshot.spending)}, net is ${formatCurrency(monthSnapshot.net)}, and transfers detected are ${transferSummary.transfers.length}. Tell me what is driving it.`,
+          { autoSend: true }
+        ),
+    },
+    {
+      label: "Confidence",
+      headline: homeConfidence.headline,
+      body: homeConfidence.body,
+      ctaLabel: dataFreshness.needsUpload ? "What should I upload?" : "Check my data",
+      onClick: () =>
+        onGoToCoach(
+          dataFreshness.needsUpload
+            ? "Tell me exactly what statement I should upload next so the Today page becomes accurate."
+            : "Check whether my Money Hub data looks reliable. Focus on transfers, income, missing accounts, and stale statements.",
+          { autoSend: true }
+        ),
+    },
+    {
+      label: topCategory ? "Biggest pressure" : "Spending pattern",
+      headline: topCategory ? `${topCategory.category} is the loudest category` : "No spending pressure found yet",
+      body: topCategory
+        ? `${formatCurrency(topCategory.total)} of visible non-transfer spending sits here. That does not automatically mean bad; it means this is where the app should look first.`
+        : "Once statement history is loaded, this becomes the first place to spot leaks, bills, and repeated habits.",
+      ctaLabel: topCategory ? "Ask AI what to do" : "Upload data",
+      onClick: () =>
+        topCategory
+          ? onGoToCoach(`Look at my ${topCategory.category} spending and tell me whether it is normal, risky, or worth cutting.`, { autoSend: true })
+          : onNavigate("upload"),
+    },
+  ];
 
   const primaryActionCards = dataFreshness.needsUpload
     ? [refreshActionCard, statementHistoryCard, subscriptionSummary.count > 0 ? subscriptionActionCard : aiSetupCard].filter(Boolean)
@@ -734,12 +799,15 @@ function TodayPage({
     <>
       <section style={styles.balanceCard}>
         <div style={styles.balanceTopRow}>
-          <p style={styles.smallWhite}>{cashSummary.label}</p>
-          <span style={styles.pulseTag}>{cashSummary.badge}</span>
+          <p style={styles.smallWhite}>Statement intelligence</p>
+          <span style={styles.pulseTag}>{homeConfidence.label}</span>
         </div>
 
         <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.primaryDisplay}</h1>
-        <p style={styles.balanceSubcopy}>{cashSummary.body}</p>
+        <p style={styles.balanceSubcopy}>
+          {cashSummary.body} This is not a random budget total: it is the app's current read from uploaded statements,
+          with transfers ignored where detected.
+        </p>
 
         <div style={styles.balancePills}>
           {homeHeroPills.map((pill) => (
@@ -747,6 +815,37 @@ function TodayPage({
           ))}
         </div>
       </section>
+
+      <Section
+        title="What Money Hub Thinks"
+        right={
+          <button
+            style={styles.ghostBtn}
+            type="button"
+            onClick={() =>
+              onGoToCoach(
+                "Give me the clearest possible read of my uploaded statement data. Explain the headline number, confidence level, transfer handling, and what I should do next.",
+                { autoSend: true }
+              )
+            }
+          >
+            Full AI read
+          </button>
+        }
+      >
+        <div style={styles.aiInsightGrid}>
+          {moneyStoryCards.map((card) => (
+            <InsightCard
+              key={card.label}
+              label={card.label}
+              headline={card.headline}
+              body={card.body}
+              ctaLabel={card.ctaLabel}
+              onClick={card.onClick}
+            />
+          ))}
+        </div>
+      </Section>
 
       <Section title={dataFreshness.needsUpload ? "Start Here" : "Do This Next"}>
         <div style={styles.aiInsightGrid}>
@@ -4347,15 +4446,25 @@ function getCashSummary(accounts, transactions) {
   }
 
   if (freshness.needsUpload) {
+    const monthSnapshot = getDisplayedMonthSnapshot(transactions);
+    if (freshness.hasData) {
+      return {
+        hasLiveBalances: false,
+        amount: monthSnapshot.net,
+        primaryDisplay: `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
+        label: `${monthSnapshot.monthName} reliable read`,
+        badge: "Needs latest statement",
+        body: `This is the latest month Money Hub can explain properly. It shows ${formatCurrency(monthSnapshot.income)} real income against ${formatCurrency(monthSnapshot.spending)} real spending, after detected transfers are stripped out.`,
+      };
+    }
+
     return {
       hasLiveBalances: false,
       amount: 0,
       primaryDisplay: "Needs refresh",
       label: "Recent data needed",
       badge: "Refresh needed",
-      body: freshness.hasData
-        ? `The app can still read up to ${freshness.latestMonthLabel}, but today's view, calendar, and AI advice all get sharper once you upload your latest statement.`
-        : "Upload your first statement so Money Hub can build a real picture instead of guessing.",
+      body: "Upload your first statement so Money Hub can build a real picture instead of guessing.",
     };
   }
 
