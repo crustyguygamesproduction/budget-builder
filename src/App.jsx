@@ -228,8 +228,6 @@ export default function App() {
   const debtSignals = getDebtSignals(smartTransactions);
   const investmentSignals = getInvestmentSignals(smartTransactions);
   const trendSummary = getTrendSummary(smartTransactions);
-  const historySummary = getHistorySummary(smartTransactions);
-  const recurringSummary = getRecurringSummary(smartTransactions);
 
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
   if (!session) return <AuthPage screenWidth={screenWidth} />;
@@ -249,15 +247,13 @@ export default function App() {
             transactions={smartTransactions}
             accounts={accounts}
             goals={goals}
-            receipts={receipts}
             debts={debts}
             investments={investments}
             debtSignals={debtSignals}
             investmentSignals={investmentSignals}
             trendSummary={trendSummary}
-            historySummary={historySummary}
-            recurringSummary={recurringSummary}
             onGoToCoach={openCoachWithPrompt}
+            onNavigate={setPage}
             screenWidth={screenWidth}
           />
         )}
@@ -459,31 +455,24 @@ function TodayPage({
   transactions,
   accounts,
   goals,
-  receipts,
   debts,
   investments,
   debtSignals,
   investmentSignals,
   trendSummary,
-  historySummary,
-  recurringSummary,
   onGoToCoach,
+  onNavigate,
   screenWidth,
 }) {
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
   const monthSnapshot = useMemo(() => getCurrentMonthSnapshot(transactions), [transactions]);
-  const spendingPulse = useMemo(() => getSpendingPulse(transactions), [transactions]);
-  const categoryCoverage = useMemo(() => getCategoryCoverageSummary(transactions), [transactions]);
+  const cashSummary = useMemo(() => getCashSummary(accounts, transactions), [accounts, transactions]);
+  const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [transactions]);
 
   const recent = transactions.slice(0, 6);
-  const subscriptions = transactions.filter((t) => t.is_subscription).length;
-  const matchedReceipts = receipts.filter(
-    (receipt) => receipt.matched_status === "matched"
-  ).length;
 
   const debtStatusSummary = getDebtStatusSummary(debts, transactions);
-  const outlierSummary = getOutlierSummary(transactions);
   const investmentStatusSummary = getInvestmentStatusSummary(
     investments,
     transactions
@@ -504,26 +493,18 @@ function TodayPage({
     transactionCount: transactions.length,
     totals,
     topCategories,
-    subscriptions,
+    subscriptions: subscriptionSummary.count,
     goalPercent,
-  });
-
-  const focusItems = getHomeFocusItems({
-    dailyBrief,
-    spendingPulse,
-    debtStatusSummary,
-    monthSnapshot,
-    outlierSummary,
-    historySummary,
+    cashSummary,
   });
 
   const coachPrompts = getCoachPromptIdeas({
     topCategories,
-    totals,
+    cashSummary,
     houseGoal,
     debtSignals,
     investmentSignals,
-  }).slice(0, 5);
+  }).slice(0, 4);
 
   const unlinkedDebtSignals = debtSignals.filter(
     (signal) => !hasMatchingDebt(signal, debts)
@@ -532,127 +513,153 @@ function TodayPage({
     (signal) => !hasMatchingInvestment(signal, investments)
   );
 
+  const actionCards = [
+    {
+      key: 'subscriptions',
+      label: 'Subscription check',
+      headline:
+        subscriptionSummary.count > 0
+          ? `${subscriptionSummary.count} recurring charge${subscriptionSummary.count === 1 ? '' : 's'} worth checking`
+          : 'No obvious subscription leaks right now',
+      body:
+        subscriptionSummary.count > 0
+          ? `${subscriptionSummary.topLine} Tap to see the likely subscriptions and ask AI which ones look dead weight.`
+          : 'Once a few recurring charges show up, this becomes a quick review list instead of a guess.',
+      action: subscriptionSummary.count > 0 ? 'Review subscriptions' : 'Ask AI anyway',
+      onClick: () =>
+        onGoToCoach(
+          subscriptionSummary.count > 0
+            ? 'Review my subscription-style payments, list the biggest ones, and tell me which look worth cancelling first.'
+            : 'Do I have any subscription-style payments hiding in my imported statements?'
+        ),
+    },
+    {
+      key: 'debts',
+      label: 'Debt watch',
+      headline:
+        debts.length > 0
+          ? debtStatusSummary.headline
+          : unlinkedDebtSignals.length > 0
+          ? `${unlinkedDebtSignals.length} debt-looking stream${unlinkedDebtSignals.length === 1 ? '' : 's'} to confirm`
+          : 'No debt setup yet',
+      body:
+        debts.length > 0
+          ? debtStatusSummary.body
+          : unlinkedDebtSignals.length > 0
+          ? 'Tap through and turn those repeated payments into proper debt tracking so the app can monitor them each month.'
+          : 'If you have cards or loans, add them once and the monthly watch becomes far more useful.',
+      action: debts.length > 0 || unlinkedDebtSignals.length > 0 ? 'Open debts' : 'Set up debts',
+      onClick: () => onNavigate('debts'),
+    },
+    {
+      key: 'investments',
+      label: 'Investing watch',
+      headline:
+        investments.length > 0
+          ? investmentStatusSummary.headline
+          : unlinkedInvestmentSignals.length > 0
+          ? `${unlinkedInvestmentSignals.length} investing stream${unlinkedInvestmentSignals.length === 1 ? '' : 's'} to confirm`
+          : 'No investment setup yet',
+      body:
+        investments.length > 0
+          ? investmentStatusSummary.body
+          : unlinkedInvestmentSignals.length > 0
+          ? 'Tap through and confirm those broker or crypto contributions so the app can track them properly.'
+          : 'Once your investing is set up, this becomes one of the most useful parts of the app.',
+      action: investments.length > 0 || unlinkedInvestmentSignals.length > 0 ? 'Open investments' : 'Set up investing',
+      onClick: () => onNavigate('investments'),
+    },
+  ];
+
   return (
     <>
       <section style={styles.balanceCard}>
         <div style={styles.balanceTopRow}>
-          <p style={styles.smallWhite}>Safe to spend estimate</p>
-          <span style={styles.pulseTag}>Live signal</span>
+          <p style={styles.smallWhite}>{cashSummary.label}</p>
+          <span style={styles.pulseTag}>{cashSummary.badge}</span>
         </div>
 
-        <h1 style={getBigMoneyStyle(screenWidth)}>{formatCurrency(totals.safeToSpend)}</h1>
-        <p style={styles.balanceSubcopy}>
-          Built from imported income, bills, spending and transfers already detected.
-        </p>
+        <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.amountLabel}</h1>
+        <p style={styles.balanceSubcopy}>{cashSummary.body}</p>
 
         <div style={styles.balancePills}>
-          <StatPill label="Net" value={formatCurrency(totals.net)} />
-          <StatPill label="Bills" value={formatCurrency(totals.bills)} />
-          <StatPill label="Accounts" value={`${accounts.length}`} />
+          <StatPill label="This month" value={formatCurrency(monthSnapshot.net)} />
+          <StatPill label="Bills spotted" value={formatCurrency(totals.bills)} />
+          <StatPill label="Subscriptions" value={`${subscriptionSummary.count}`} />
         </div>
       </section>
 
-      <div style={getGridStyle(screenWidth)}>
-        <MiniCard title="Income" value={formatCurrency(totals.income)} />
-        <MiniCard title="Spending" value={formatCurrency(totals.spending)} />
-        <MiniCard title="Debts" value={`${debts.length || unlinkedDebtSignals.length}`} />
-        <MiniCard
-          title="Investments"
-          value={`${investments.length || unlinkedInvestmentSignals.length}`}
-        />
-      </div>
+      <Section title="Do This Next">
+        <div style={styles.aiInsightGrid}>
+          {actionCards.map((card) => (
+            <ActionCard
+              key={card.key}
+              label={card.label}
+              headline={card.headline}
+              body={card.body}
+              actionLabel={card.action}
+              onClick={card.onClick}
+            />
+          ))}
+        </div>
+      </Section>
 
-      <Section title="What Matters Now">
+      <Section title="Quick Read">
         <div style={styles.aiInsightGrid}>
           <InsightCard
-            label="Best next move"
+            label="Today"
             headline={dailyBrief.headline}
             body={dailyBrief.body}
-          />
-          <InsightCard
-            label="This month"
-            headline={monthSnapshot.headline}
-            body={monthSnapshot.body}
+            ctaLabel="Ask AI about this"
+            onClick={() => onGoToCoach(`Use my current money data and explain this: ${dailyBrief.headline}`)}
           />
           <InsightCard
             label="Trend"
             headline={trendSummary.headline}
             body={trendSummary.body}
+            ctaLabel="Why?"
+            onClick={() => onGoToCoach('Explain what changed in my recent spending trend and what is driving it.')}
           />
           <InsightCard
-            label="Momentum"
-            headline={spendingPulse.headline}
-            body={spendingPulse.body}
-          />
-          <InsightCard
-            label="Category confidence"
-            headline={categoryCoverage.headline}
-            body={categoryCoverage.body}
-          />
-          <InsightCard
-            label="Debt watch"
-            headline={debtStatusSummary.headline}
-            body={debtStatusSummary.body}
-          />
-          <InsightCard
-            label="Investing watch"
-            headline={investmentStatusSummary.headline}
-            body={investmentStatusSummary.body}
-          />
-          <InsightCard
-            label="Unusual spending"
-            headline={outlierSummary.headline}
-            body={outlierSummary.body}
-          />
-          <InsightCard
-            label="Statement health"
-            headline={historySummary.headline}
-            body={historySummary.body}
+            label="This month"
+            headline={monthSnapshot.headline}
+            body={monthSnapshot.body}
+            ctaLabel="Open calendar"
+            onClick={() => onNavigate('calendar')}
           />
         </div>
-      </Section>
-
-      <Section title="Focus This Week">
-        {focusItems.map((item) => (
-          <Row key={item.name} name={item.name} value={item.value} />
-        ))}
       </Section>
 
       <Section title="This Month">
         <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
         <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
-        <Row name="Net so far" value={formatCurrency(monthSnapshot.net)} />
         <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
+        <Row name="Transactions on" value={`${monthSnapshot.activeDays} day${monthSnapshot.activeDays === 1 ? '' : 's'}`} />
       </Section>
 
-      <Section title="Ask AI Next">
-        <p style={styles.sectionIntro}>
-          Quick money reads based on your imported statement history.
-        </p>
-
-        <div style={styles.actionChipWrap}>
-          {coachPrompts.map((prompt) => (
+      {subscriptionSummary.items.length > 0 && (
+        <Section
+          title="Likely Subscriptions"
+          right={
             <button
-              key={prompt}
-              style={styles.actionChip}
-              onClick={() => onGoToCoach(prompt)}
+              style={styles.ghostBtn}
+              onClick={() =>
+                onGoToCoach('List my subscription-style transactions, group them by merchant, and tell me which are the easiest wins to cancel.')
+              }
             >
-              {prompt}
+              Review with AI
             </button>
+          }
+        >
+          {subscriptionSummary.items.slice(0, 4).map((item) => (
+            <Row
+              key={item.name}
+              name={item.name}
+              value={`${formatCurrency(item.total)} - ${item.count} hit${item.count === 1 ? '' : 's'}`}
+            />
           ))}
-        </div>
-      </Section>
-
-      <Section title="Auto-Filled Signals">
-        <Row name="Receipts matched" value={`${matchedReceipts}`} />
-        <Row name="Subscriptions spotted" value={`${subscriptions}`} />
-        <Row name="Likely debt streams" value={`${unlinkedDebtSignals.length}`} />
-        <Row
-          name="Likely investing streams"
-          value={`${unlinkedInvestmentSignals.length}`}
-        />
-        <Row name="Recurring confidence" value={recurringSummary.label} />
-      </Section>
+        </Section>
+      )}
 
       <Section title="Top Spending Areas">
         {topCategories.length === 0 ? (
@@ -685,6 +692,20 @@ function TodayPage({
             />
           ))
         )}
+      </Section>
+
+      <Section title="Ask AI Next">
+        <div style={styles.actionChipWrap}>
+          {coachPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              style={styles.actionChip}
+              onClick={() => onGoToCoach(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
       </Section>
     </>
   );
@@ -3736,13 +3757,27 @@ function StatPill({ label, value }) {
   );
 }
 
-function InsightCard({ label, headline, body }) {
+function InsightCard({ label, headline, body, onClick, ctaLabel }) {
+  const cardStyle = onClick ? { ...styles.insightCard, ...styles.insightCardInteractive } : styles.insightCard;
+
   return (
-    <div style={styles.insightCard}>
+    <button type="button" style={cardStyle} onClick={onClick} disabled={!onClick}>
       <p style={styles.insightLabel}>{label}</p>
       <h4 style={styles.insightHeadline}>{headline}</h4>
       <p style={styles.insightBody}>{body}</p>
-    </div>
+      {ctaLabel ? <span style={styles.insightCta}>{ctaLabel}</span> : null}
+    </button>
+  );
+}
+
+function ActionCard({ label, headline, body, actionLabel, onClick }) {
+  return (
+    <button type="button" style={styles.actionCard} onClick={onClick}>
+      <p style={styles.insightLabel}>{label}</p>
+      <h4 style={styles.insightHeadline}>{headline}</h4>
+      <p style={styles.insightBody}>{body}</p>
+      <span style={styles.insightCta}>{actionLabel}</span>
+    </button>
   );
 }
 
@@ -3776,6 +3811,72 @@ function getMeaningfulCategory(transaction) {
   return transaction?._smart_category || transaction?.category || (Number(transaction?.amount || 0) > 0 ? "Income" : "Spending");
 }
 
+function getCashSummary(accounts, transactions) {
+  const balanceFields = ["available_balance", "current_balance", "balance", "available", "current"];
+  const balances = accounts
+    .map((account) => {
+      for (const field of balanceFields) {
+        const value = account?.[field];
+        if (value === null || value === undefined || value === "") continue;
+        const parsed = Number(value);
+        if (!Number.isNaN(parsed)) return parsed;
+      }
+      return null;
+    })
+    .filter((value) => value !== null);
+
+  if (balances.length > 0) {
+    const total = balances.reduce((sum, value) => sum + Number(value || 0), 0);
+
+    return {
+      hasLiveBalances: true,
+      amount: total,
+      amountLabel: formatCurrency(total),
+      label: "Cash in your accounts",
+      badge: total <= 25 ? "Tight right now" : "Balance-based",
+      body:
+        total <= 25
+          ? "This is the money your accounts say you have right now, so spending room looks genuinely tight today."
+          : "This is the latest balance we know across your linked accounts, so it is more honest than a guess from historic spending alone.",
+    };
+  }
+
+  const monthSnapshot = getCurrentMonthSnapshot(transactions);
+
+  return {
+    hasLiveBalances: false,
+    amount: monthSnapshot.net,
+    amountLabel: formatCurrency(monthSnapshot.net),
+    label: "Imported money picture",
+    badge: "Not live cash",
+    body:
+      "We do not have live account balances here yet, so this number is only based on imported statement history and should not be treated as money you can safely spend today.",
+  };
+}
+
+function getSubscriptionSummary(transactions) {
+  const groups = {};
+
+  transactions.forEach((transaction) => {
+    if (Number(transaction.amount) >= 0 || !transaction.is_subscription) return;
+    const name = cleanEventTitle(transaction.description || "Subscription");
+    if (!groups[name]) {
+      groups[name] = { name, total: 0, count: 0 };
+    }
+
+    groups[name].total += Math.abs(Number(transaction.amount || 0));
+    groups[name].count += 1;
+  });
+
+  const items = Object.values(groups).sort((a, b) => b.total - a.total);
+
+  return {
+    count: items.length,
+    items,
+    topLine: items.length > 0 ? `${items[0].name} is the biggest obvious one at ${formatCurrency(items[0].total)}.` : "",
+  };
+}
+
 function getCurrentMonthSnapshot(transactions) {
   const monthTransactions = transactions.filter((transaction) => isThisMonth(transaction.transaction_date));
   const income = monthTransactions
@@ -3802,99 +3903,6 @@ function getCurrentMonthSnapshot(transactions) {
   };
 }
 
-function getSpendingPulse(transactions) {
-  const spend = transactions.filter(
-    (transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction)
-  );
-
-  const recent = spend.slice(0, 14);
-  const previous = spend.slice(14, 28);
-
-  if (recent.length < 5 || previous.length < 5) {
-    return {
-      headline: "Early read on spending pace",
-      body: "A bit more history will make the short-term pulse much more trustworthy.",
-    };
-  }
-
-  const recentTotal = recent.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
-  const previousTotal = previous.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
-  const change = recentTotal - previousTotal;
-  const pct = previousTotal > 0 ? change / previousTotal : 0;
-
-  if (pct >= 0.15) {
-    return {
-      headline: "Recent spending is running hotter",
-      body: `${formatCurrency(recentTotal)} has gone out in your latest window, which is noticeably above the one before it.`,
-    };
-  }
-
-  if (pct <= -0.15) {
-    return {
-      headline: "Recent spending has cooled a bit",
-      body: `Your latest spending window looks lighter than the previous one, which is a good sign if that was intentional.`,
-    };
-  }
-
-  return {
-    headline: "Spending pace looks fairly steady",
-    body: `The last two spending windows are close enough that nothing dramatic is jumping out.`,
-  };
-}
-
-function getCategoryCoverageSummary(transactions) {
-  const spendTransactions = transactions.filter(
-    (transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction)
-  );
-
-  if (!spendTransactions.length) {
-    return {
-      headline: "No spend data to sort yet",
-      body: "Once some outgoing transactions land, the app can learn what belongs where.",
-    };
-  }
-
-  const genericCount = spendTransactions.filter((transaction) => isGenericCategory(getMeaningfulCategory(transaction))).length;
-  const ratio = genericCount / spendTransactions.length;
-
-  if (ratio <= 0.1) {
-    return {
-      headline: "Most spending is landing in sensible buckets",
-      body: `Only ${genericCount} of ${spendTransactions.length} outgoing transactions still look too generic to trust blindly.`,
-    };
-  }
-
-  if (ratio <= 0.3) {
-    return {
-      headline: "Categorisation is decent but still has cleanup left",
-      body: `${genericCount} spending line${genericCount === 1 ? "" : "s"} still need a better bucket, so the totals are useful but not perfect yet.`,
-    };
-  }
-
-  return {
-    headline: "A lot of spend still looks too generic",
-    body: `${genericCount} outgoing transactions are still sitting in broad buckets, so this is the next thing worth improving.`,
-  };
-}
-
-function getHomeFocusItems({
-  dailyBrief,
-  spendingPulse,
-  debtStatusSummary,
-  monthSnapshot,
-  outlierSummary,
-  historySummary,
-}) {
-  return [
-    { name: "Best next move", value: dailyBrief.headline },
-    { name: "This month", value: monthSnapshot.headline },
-    { name: "Watch point", value: outlierSummary.headline },
-    { name: "Spending pace", value: spendingPulse.headline },
-    { name: "Debt status", value: debtStatusSummary.headline },
-    { name: "Statement strength", value: historySummary.label },
-  ].slice(0, 6);
-}
-
 function getTotals(transactions) {
   const income = transactions
     .filter((t) => Number(t.amount) > 0 && !isInternalTransferLike(t))
@@ -3909,9 +3917,8 @@ function getTotals(transactions) {
     .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
 
   const net = income - spending;
-  const safeToSpend = Math.max(net - bills * 0.25, 0);
 
-  return { income, spending, bills, net, safeToSpend };
+  return { income, spending, bills, net, safeToSpend: 0 };
 }
 
 function getTopCategories(transactions) {
@@ -4704,6 +4711,7 @@ function buildDailyBrief({
   topCategories,
   subscriptions,
   goalPercent,
+  cashSummary,
 }) {
   if (transactionCount === 0) {
     return {
@@ -4712,10 +4720,17 @@ function buildDailyBrief({
     };
   }
 
-  if (totals.safeToSpend === 0) {
+  if (cashSummary?.hasLiveBalances && cashSummary.amount <= 25) {
     return {
-      headline: "Caution mode is on",
-      body: "Safe-to-spend is tight right now, so this is a good time to pause optional spending.",
+      headline: "Cash is tight today",
+      body: "Your live account balance is low enough that this is more of a protect-cash day than a spend-freely day.",
+    };
+  }
+
+  if (!cashSummary?.hasLiveBalances) {
+    return {
+      headline: "Live balance still needed",
+      body: "The app can read your patterns already, but it should not promise spending room until it has a real account balance to work from.",
     };
   }
 
@@ -4751,7 +4766,7 @@ function buildDailyBrief({
 
 function getCoachPromptIdeas({
   topCategories,
-  totals,
+  cashSummary,
   houseGoal,
   debtSignals,
   investmentSignals,
@@ -4773,8 +4788,8 @@ function getCoachPromptIdeas({
     prompts.push("Does my investing activity look sensible?");
   }
 
-  if (totals.safeToSpend > 0) {
-    prompts.push(`Can I spend £${Math.min(totals.safeToSpend, 40).toFixed(0)} this week?`);
+  if (cashSummary?.hasLiveBalances && cashSummary.amount > 0) {
+    prompts.push(`What can I safely spend with about ${formatCurrency(cashSummary.amount)} in my accounts?`);
   }
 
   if (houseGoal) {
@@ -4782,34 +4797,6 @@ function getCoachPromptIdeas({
   }
 
   return [...new Set(prompts)].slice(0, 6);
-}
-
-function getOutlierSummary(transactions) {
-  const spending = transactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction))
-    .map((transaction) => Math.abs(Number(transaction.amount || 0)));
-
-  if (spending.length < 8) {
-    return {
-      headline: "Need more history for anomaly reads",
-      body: "Once more statements are loaded, the app can flag unusually large spend with more confidence.",
-    };
-  }
-
-  const average = spending.reduce((sum, amount) => sum + amount, 0) / spending.length;
-  const biggest = Math.max(...spending);
-
-  if (biggest >= average * 2.5) {
-    return {
-      headline: "A few bigger spends stick out",
-      body: `Your biggest recent outgoing is around £${biggest.toFixed(2)}, which is well above your usual transaction size.` ,
-    };
-  }
-
-  return {
-    headline: "Nothing too rogue stands out",
-    body: "Your spending is more repetitive than chaotic right now, which makes the recurring reads more reliable.",
-  };
 }
 
 function getTrendSummary(transactions) {
@@ -6217,6 +6204,30 @@ const styles = {
     color: "#475569",
     lineHeight: 1.6,
     fontSize: "14px",
+  },
+  insightCardInteractive: {
+    border: "1px solid #cfe0ff",
+    cursor: "pointer",
+    textAlign: "left",
+    width: "100%",
+  },
+
+  actionCard: {
+    background: "#f8fbff",
+    border: "1px solid #cfe0ff",
+    borderRadius: "18px",
+    padding: "14px",
+    textAlign: "left",
+    width: "100%",
+    cursor: "pointer",
+  },
+
+  insightCta: {
+    display: "inline-block",
+    marginTop: "10px",
+    color: "#2563eb",
+    fontWeight: "800",
+    fontSize: "13px",
   },
 
   signalCard: {
