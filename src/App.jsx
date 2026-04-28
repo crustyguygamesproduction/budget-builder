@@ -9,11 +9,13 @@ import {
   Section as BaseSection,
 } from "./components/ui";
 import BottomNav from "./components/BottomNav";
+import TopBar from "./components/TopBar";
 import { buildUploadGuidance } from "./lib/uploadGuidance";
 import GoalsPage from "./pages/GoalsPage";
 import CoachPage from "./pages/CoachPage";
 import SettingsPage from "./pages/SettingsPage";
 import TodayPage from "./pages/TodayPage";
+import AuthPage from "./pages/AuthPage";
 import {
   addDays,
   compareDayDates,
@@ -273,7 +275,7 @@ export default function App() {
   const trendSummary = getTrendSummary(smartTransactions);
 
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
-  if (!session) return <AuthPage screenWidth={screenWidth} />;
+  if (!session) return <AuthPage screenWidth={screenWidth} styles={styles} />;
 
   return (
     <div style={styles.app}>
@@ -282,6 +284,7 @@ export default function App() {
         title={PAGE_TITLES[page] || "Money Hub"}
         page={page}
         screenWidth={screenWidth}
+        styles={styles}
       />
 
       <main style={getMainStyle(screenWidth, page)}>
@@ -434,113 +437,6 @@ export default function App() {
 
       <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
     </div>
-  );
-}
-
-function AuthPage({ screenWidth }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  async function login() {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) alert(error.message);
-  }
-
-  async function signup() {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    alert("Account created. You can now log in.");
-  }
-
-  return (
-    <div style={styles.authWrap}>
-      <section style={getHeroCardStyle(screenWidth)}>
-        <div style={styles.authBadgeRow}>
-          <span style={styles.authBadge}>Money Hub</span>
-          <span style={styles.authMuted}>Budget Builder</span>
-        </div>
-
-        <h1 style={getHeroTitleStyle(screenWidth)}>Money that builds itself.</h1>
-        <p style={styles.subText}>
-          Upload statements, let the app do the hard bit, and get a cleaner
-          money setup without spreadsheet energy.
-        </p>
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            login();
-          }}
-        >
-          <input
-            style={styles.input}
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-          />
-
-          <input
-            style={styles.input}
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-
-          <button style={styles.primaryBtn} type="submit">
-            Login
-          </button>
-        </form>
-
-        <button style={styles.secondaryBtn} onClick={signup} type="button">
-          Create Account
-        </button>
-      </section>
-    </div>
-  );
-}
-
-function TopBar({ email, title, page, screenWidth }) {
-  async function logout() {
-    await supabase.auth.signOut();
-  }
-
-  return (
-    <header style={getTopBarStyle(screenWidth)}>
-      <div style={styles.topBarText}>
-        <p style={styles.kicker}>Money Hub</p>
-        <h2 style={getTopTitleStyle(screenWidth)}>{title}</h2>
-        <p style={styles.topEmail}>
-          {page === "coach"
-            ? "Ask, sanity-check, plan and reset"
-            : page === "debts"
-            ? "Debt tracking from imported statements"
-            : page === "investments"
-            ? "Investing activity detected automatically"
-            : page === "calendar"
-            ? "Recurring money events, properly visualised"
-            : email}
-        </p>
-      </div>
-
-      <button style={styles.logoutBtn} onClick={logout}>
-        Logout
-      </button>
-    </header>
   );
 }
 
@@ -5154,35 +5050,6 @@ function getMainStyle(screenWidth, page) {
         ? "0 14px"
         : "0 16px",
     paddingBottom: page === "coach" ? "18px" : undefined,
-  };
-}
-
-function getHeroCardStyle(screenWidth) {
-  return {
-    ...styles.heroCard,
-    padding: screenWidth <= 480 ? "20px" : "24px",
-    borderRadius: screenWidth <= 480 ? "26px" : "32px",
-  };
-}
-
-function getHeroTitleStyle(screenWidth) {
-  return {
-    ...styles.heroTitle,
-    fontSize: screenWidth <= 480 ? "32px" : screenWidth <= 768 ? "36px" : "40px",
-  };
-}
-
-function getTopBarStyle(screenWidth) {
-  return {
-    ...styles.topBar,
-    padding: screenWidth <= 480 ? "12px 12px 10px" : "16px 16px 12px",
-  };
-}
-
-function getTopTitleStyle(screenWidth) {
-  return {
-    ...styles.topTitle,
-    fontSize: screenWidth <= 480 ? "22px" : screenWidth <= 768 ? "26px" : "30px",
   };
 }
 
