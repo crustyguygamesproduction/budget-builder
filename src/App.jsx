@@ -3920,6 +3920,7 @@ function CoachPage({
   const totals = useMemo(() => getTotals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [transactions]);
+  const dataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
 
   const houseGoal =
     goals.find((goal) =>
@@ -3996,14 +3997,21 @@ function CoachPage({
         platform: investment.platform,
         status: getInvestmentMonthlyStatus(investment, transactions).label,
       }));
+      const statementIntelligence = getStatementIntelligenceContext(transactions);
 
       const context = {
         totals,
         transaction_count: transactions.length,
         recent_transactions: transactions.slice(0, 10),
+        searchable_transactions: statementIntelligence.searchableTransactions,
+        searchable_transaction_count: statementIntelligence.searchableTransactions.length,
+        searchable_transaction_note: statementIntelligence.searchableTransactionNote,
+        statement_intelligence: statementIntelligence.summary,
         top_categories: topCategories.slice(0, 5),
         monthly_breakdown: getMonthlyBreakdown(transactions, "6m").slice(0, 6),
+        monthly_breakdown_all: getMonthlyBreakdown(transactions, "all"),
         calendar_pattern_summary: getCalendarPatternSummary(transactions, "6m"),
+        data_freshness: dataFreshness,
         transfer_summary: getTransferSummary(transactions),
         debts: debts.slice(0, 6),
         investments: investments.slice(0, 6),
@@ -4534,6 +4542,180 @@ function getSubscriptionSummary(transactions) {
     count: items.length,
     items,
     topLine: items.length > 0 ? `${items[0].name} is the biggest obvious one at ${formatCurrency(items[0].total)}.` : "",
+  };
+}
+
+function getStatementIntelligenceContext(transactions) {
+  const settled = transactions.filter((transaction) => !isInternalTransferLike(transaction));
+  const spending = settled.filter((transaction) => Number(transaction.amount) < 0);
+  const income = settled.filter((transaction) => Number(transaction.amount) > 0);
+  const transfers = transactions.filter((transaction) => isInternalTransferLike(transaction));
+  const dateRange = getTransactionDateRange(transactions);
+  const merchantGroups = buildTransactionGroups(spending, (transaction) =>
+    cleanEventTitle(transaction.description || "Unknown merchant")
+  );
+  const incomeGroups = buildTransactionGroups(income, (transaction) =>
+    cleanEventTitle(transaction.description || "Income")
+  );
+  const categoryGroups = buildTransactionGroups(spending, (transaction) =>
+    getMeaningfulCategory(transaction) || "Spending"
+  );
+  const accountGroups = buildTransactionGroups(transactions, (transaction) =>
+    transaction.accounts?.name || transaction.account_name || transaction.account || "Unassigned account"
+  );
+  const recurringOutgoings = merchantGroups
+    .filter((group) => group.count >= 2)
+    .sort((a, b) => b.count - a.count || b.total - a.total)
+    .slice(0, 20);
+  const largeOutgoings = spending
+    .slice()
+    .sort((a, b) => Math.abs(Number(b.amount || 0)) - Math.abs(Number(a.amount || 0)))
+    .slice(0, 30)
+    .map(toCoachTransaction);
+  const largeIncome = income
+    .slice()
+    .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))
+    .slice(0, 20)
+    .map(toCoachTransaction);
+  const unusualTransactions = getUnusualTransactions(spending, merchantGroups).slice(0, 30);
+  const searchableTransactions = transactions
+    .slice()
+    .sort((a, b) =>
+      String(b.transaction_date || "").localeCompare(String(a.transaction_date || ""))
+    )
+    .slice(0, 350)
+    .map(toCoachTransaction);
+
+  return {
+    searchableTransactions,
+    searchableTransactionNote:
+      transactions.length > searchableTransactions.length
+        ? `Most recent ${searchableTransactions.length} transactions are included individually. Full-history summaries use all ${transactions.length} transactions.`
+        : `All ${transactions.length} transactions are included individually.`,
+    summary: {
+      date_range: dateRange,
+      totals: getTotals(transactions),
+      total_transactions: transactions.length,
+      settled_transaction_count: settled.length,
+      transfer_transaction_count: transfers.length,
+      category_totals: categoryGroups.slice(0, 20),
+      merchant_totals: merchantGroups.slice(0, 30),
+      income_streams: incomeGroups.slice(0, 20),
+      account_activity: accountGroups.slice(0, 20),
+      recurring_outgoings: recurringOutgoings,
+      large_outgoings: largeOutgoings,
+      large_income: largeIncome,
+      unusual_transactions: unusualTransactions,
+    },
+  };
+}
+
+function getTransactionDateRange(transactions) {
+  const dates = transactions
+    .map((transaction) => parseAppDate(transaction.transaction_date))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+
+  if (!dates.length) {
+    return {
+      start: "",
+      end: "",
+      label: "No statement history",
+      months: 0,
+    };
+  }
+
+  const start = dates[0];
+  const end = dates[dates.length - 1];
+  const monthKeys = new Set(
+    dates.map((date) => `${date.getFullYear()}-${date.getMonth()}`)
+  );
+
+  return {
+    start: toIsoDate(start),
+    end: toIsoDate(end),
+    label: `${formatDateShort(start)} to ${formatDateShort(end)}`,
+    months: monthKeys.size,
+  };
+}
+
+function buildTransactionGroups(transactions, getLabel) {
+  const groups = new Map();
+
+  transactions.forEach((transaction) => {
+    const label = String(getLabel(transaction) || "Unknown").trim() || "Unknown";
+    const key = normalizeText(label) || "unknown";
+    const amount = Number(transaction.amount || 0);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        label,
+        count: 0,
+        total: 0,
+        money_in: 0,
+        money_out: 0,
+        average: 0,
+        first_date: transaction.transaction_date || "",
+        last_date: transaction.transaction_date || "",
+        example: transaction.description || "",
+      });
+    }
+
+    const group = groups.get(key);
+    group.count += 1;
+    group.total += Math.abs(amount);
+    if (amount > 0) group.money_in += amount;
+    if (amount < 0) group.money_out += Math.abs(amount);
+    group.average = group.total / group.count;
+
+    if (transaction.transaction_date) {
+      if (!group.first_date || transaction.transaction_date < group.first_date) {
+        group.first_date = transaction.transaction_date;
+      }
+      if (!group.last_date || transaction.transaction_date > group.last_date) {
+        group.last_date = transaction.transaction_date;
+      }
+    }
+  });
+
+  return [...groups.values()].sort((a, b) => b.total - a.total);
+}
+
+function getUnusualTransactions(spending, merchantGroups) {
+  const merchantAverages = new Map(
+    merchantGroups.map((group) => [normalizeText(group.label), group.average])
+  );
+
+  return spending
+    .map((transaction) => {
+      const label = cleanEventTitle(transaction.description || "Unknown merchant");
+      const average = merchantAverages.get(normalizeText(label)) || 0;
+      const amount = Math.abs(Number(transaction.amount || 0));
+      const ratio = average > 0 ? amount / average : 0;
+      return {
+        ...toCoachTransaction(transaction),
+        usual_amount: average,
+        unusual_ratio: ratio,
+      };
+    })
+    .filter((transaction) => transaction.amount_abs >= 25 && transaction.unusual_ratio >= 1.75)
+    .sort((a, b) => b.unusual_ratio - a.unusual_ratio);
+}
+
+function toCoachTransaction(transaction) {
+  const amount = Number(transaction.amount || 0);
+  return {
+    date: transaction.transaction_date || "",
+    description: transaction.description || "",
+    merchant: cleanEventTitle(transaction.description || "Transaction"),
+    amount,
+    amount_abs: Math.abs(amount),
+    direction: amount > 0 ? "in" : amount < 0 ? "out" : "zero",
+    category: getMeaningfulCategory(transaction),
+    account: transaction.accounts?.name || transaction.account_name || transaction.account || "",
+    is_bill: Boolean(transaction.is_bill),
+    is_subscription: Boolean(transaction.is_subscription),
+    is_internal_transfer: isInternalTransferLike(transaction),
   };
 }
 

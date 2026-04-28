@@ -287,6 +287,14 @@ Money rules:
 - Assume the user's currency is GBP.
 - Prefer practical actions over abstract advice.
 - Give easy, realistic next moves.
+
+Statement intelligence rules:
+- The client may provide statement_intelligence, searchable_transactions, and monthly_breakdown_all.
+- statement_intelligence summaries are built from the full uploaded statement history.
+- searchable_transactions is the transaction-level ledger the model can inspect directly. If it is capped, use the supplied note and say when more source rows may be needed.
+- When the user asks about a merchant, category, income stream, subscription, debt, investment, account, transfer, or pattern, first use the relevant all-history summary, then inspect searchable_transactions for examples.
+- Distinguish real spending/income from internal transfers whenever that flag is provided.
+- Do not treat broker deposits as current investment value. They are cash flows unless an investment record or document provides a value.
 `;
 
       userPrompt = `
@@ -299,6 +307,10 @@ ${JSON.stringify(
     totals: context?.totals || {},
     transaction_count: context?.transaction_count || 0,
     recent_transactions: context?.recent_transactions || [],
+    searchable_transaction_note: context?.searchable_transaction_note || null,
+    searchable_transaction_count: context?.searchable_transaction_count || 0,
+    searchable_transactions: context?.searchable_transactions || [],
+    statement_intelligence: context?.statement_intelligence || null,
     top_categories: context?.top_categories || [],
     subscription_summary: context?.subscription_summary || null,
     debts: context?.debts || [],
@@ -312,6 +324,7 @@ ${JSON.stringify(
     calendar_summary: context?.calendar_summary || null,
     data_freshness: context?.data_freshness || null,
     monthly_breakdown: context?.monthly_breakdown || [],
+    monthly_breakdown_all: context?.monthly_breakdown_all || [],
     visible_transactions: context?.visible_transactions || [],
     visible_transaction_count: context?.visible_transaction_count || 0,
     selected_day: context?.selected_day || null,
