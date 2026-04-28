@@ -512,7 +512,7 @@ function TodayPage({
   const cashSummary = useMemo(() => getCashSummary(accounts, transactions), [accounts, transactions]);
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [transactions]);
 
-  const recent = transactions.slice(0, 6);
+  const recent = transactions.slice(0, 3);
   const latestVisibleTransactions = useMemo(() => {
     if (!dataFreshness.hasData) return [];
     const focusDate = monthSnapshot.monthDate || dataFreshness.latestDate || new Date();
@@ -625,13 +625,13 @@ function TodayPage({
         investments.length > 0
           ? investmentStatusSummary.headline
           : unlinkedInvestmentSignals.length > 0
-          ? `${unlinkedInvestmentSignals.length} investing stream${unlinkedInvestmentSignals.length === 1 ? "" : "s"} to confirm`
+          ? `${unlinkedInvestmentSignals.length} broker stream${unlinkedInvestmentSignals.length === 1 ? "" : "s"} to confirm`
           : "No investment setup yet",
       body:
         investments.length > 0
           ? investmentStatusSummary.body
           : unlinkedInvestmentSignals.length > 0
-          ? "Tap through and confirm those broker or crypto contributions so the app can track them properly."
+          ? "Tap through and confirm whether these are deposits, withdrawals, or both before the app treats them as investing."
           : "Once your investing is set up, this becomes one of the most useful parts of the app.",
       action: investments.length > 0 || unlinkedInvestmentSignals.length > 0 ? "Open investments" : "Set up investing",
       onClick: () => onNavigate("investments"),
@@ -742,7 +742,9 @@ function TodayPage({
       headline: monthSnapshot.net >= 0
         ? `${formatCurrency(monthSnapshot.net)} ahead in ${monthSnapshot.monthName}`
         : `${formatCurrency(Math.abs(monthSnapshot.net))} behind in ${monthSnapshot.monthName}`,
-      body: `${formatCurrency(monthSnapshot.income)} came in and ${formatCurrency(monthSnapshot.spending)} went out in the visible statement data.`,
+      body: monthSnapshot.net >= 0
+        ? `${formatCurrency(monthSnapshot.income)} came in against ${formatCurrency(monthSnapshot.spending)} going out.`
+        : `${formatCurrency(monthSnapshot.spending)} went out against ${formatCurrency(monthSnapshot.income)} coming in.`,
       ctaLabel: "Ask AI why",
       onClick: () =>
         onGoToCoach(
@@ -767,7 +769,7 @@ function TodayPage({
       label: topCategory ? "Biggest pressure" : "Spending pattern",
       headline: topCategory ? `${topCategory.category} is the loudest category` : "No spending pressure found yet",
       body: topCategory
-        ? `${formatCurrency(topCategory.total)} sits here. That does not automatically mean bad; it means this is where the app should look first.`
+        ? `${formatCurrency(topCategory.total)} is the biggest visible pressure point this month.`
         : "Once statement history is loaded, this becomes the first place to spot leaks, bills, and repeated habits.",
       ctaLabel: topCategory ? "Ask AI what to do" : "Upload data",
       onClick: () =>
@@ -779,7 +781,7 @@ function TodayPage({
 
   const primaryActionCards = dataFreshness.needsUpload
     ? [refreshActionCard, statementHistoryCard, subscriptionSummary.count > 0 ? subscriptionActionCard : aiSetupCard].filter(Boolean)
-    : actionCards.slice(0, 3);
+    : actionCards.slice(0, 2);
 
   const milestoneCards = [
     {
@@ -847,7 +849,7 @@ function TodayPage({
       </section>
 
       <Section
-        title="What Money Hub Thinks"
+        title="Money Hub Read"
         right={
           <button
             style={styles.ghostBtn}
@@ -863,8 +865,8 @@ function TodayPage({
           </button>
         }
       >
-        <div style={styles.aiInsightGrid}>
-          {moneyStoryCards.map((card) => (
+        <div style={styles.compactInsightGrid}>
+          {moneyStoryCards.slice(0, 2).map((card) => (
             <InsightCard
               key={card.label}
               label={card.label}
@@ -877,8 +879,8 @@ function TodayPage({
         </div>
       </Section>
 
-      <Section title={dataFreshness.needsUpload ? "Start Here" : "Do This Next"}>
-        <div style={styles.aiInsightGrid}>
+      <Section title={dataFreshness.needsUpload ? "Start Here" : "Next Best Moves"}>
+        <div style={styles.compactInsightGrid}>
           {primaryActionCards.map((card) => (
             <ActionCard
               key={card.key}
@@ -983,37 +985,22 @@ function TodayPage({
         </>
       ) : (
         <>
-          <Section title="Quick Read">
-            <div style={styles.aiInsightGrid}>
-              <InsightCard
-                label="Today"
-                headline={dailyBrief.headline}
-                body={dailyBrief.body}
-                ctaLabel="Ask AI about this"
-                onClick={() => onGoToCoach(`Use my current money data and explain this: ${dailyBrief.headline}`)}
-              />
-              <InsightCard
-                label="Trend"
-                headline={trendSummary.headline}
-                body={trendSummary.body}
-                ctaLabel="Why?"
-                onClick={() => onGoToCoach("Explain what changed in my recent spending trend and what is driving it.")}
-              />
-              <InsightCard
-                label={monthSnapshot.label}
-                headline={monthSnapshot.headline}
-                body={monthSnapshot.body}
-                ctaLabel="Open calendar"
+          <Section
+            title="This Month"
+            right={
+              <button
+                style={styles.ghostBtn}
+                type="button"
                 onClick={() => onNavigate("calendar")}
-              />
-            </div>
-          </Section>
-
-          <Section title="This Month">
+              >
+                Calendar
+              </button>
+            }
+          >
+            <p style={styles.smallMuted}>{dailyBrief.headline}. {trendSummary.headline}.</p>
             <Row name="Money in" value={formatCurrency(monthSnapshot.income)} />
             <Row name="Money out" value={formatCurrency(monthSnapshot.spending)} />
             <Row name="Biggest spend" value={monthSnapshot.biggestSpendLabel} />
-            <Row name="Transactions on" value={`${monthSnapshot.activeDays} day${monthSnapshot.activeDays === 1 ? "" : "s"}`} />
           </Section>
         </>
       )}
@@ -1032,7 +1019,7 @@ function TodayPage({
             </button>
           }
         >
-          {subscriptionSummary.items.slice(0, 4).map((item) => (
+          {subscriptionSummary.items.slice(0, 3).map((item) => (
             <Row
               key={item.name}
               name={item.name}
@@ -2300,7 +2287,7 @@ function InvestmentsPage({
     (signal) => !hasMatchingInvestment(signal, investments)
   );
   const totalDetectedInvesting = investmentSignals.reduce(
-    (sum, item) => sum + item.total,
+    (sum, item) => sum + Math.max(Number(item.netContributed ?? item.total ?? 0), 0),
     0
   );
   const investmentSnapshot = getInvestmentPortfolioSnapshot(investments);
@@ -2315,9 +2302,10 @@ function InvestmentsPage({
       risk_level: "",
       ticker_symbol: "",
       units_owned: "",
-      total_contributed: signal.total.toFixed(2),
+      total_contributed:
+        signal.netContributed > 0 ? signal.netContributed.toFixed(2) : "",
       cost_basis: "",
-      notes: `Created from imported statement signal: ${signal.label}`,
+      notes: getInvestmentSignalNote(signal),
     });
   }
 
@@ -2596,12 +2584,13 @@ function InvestmentsPage({
   }
 
   async function saveSignalAsInvestment(signal) {
+    const netContributed = Math.max(Number(signal.netContributed ?? signal.total ?? 0), 0);
     await saveInvestment({
       name: signal.label,
       platform: signal.label,
       monthly_contribution: signal.average.toFixed(2),
-      total_contributed: signal.total.toFixed(2),
-      notes: `Created from statement signal. ${signal.count} matching contribution(s) detected.`,
+      total_contributed: netContributed > 0 ? netContributed.toFixed(2) : null,
+      notes: getInvestmentSignalNote(signal),
       source: "statement_signal",
       detection_confidence: 0.82,
       contribution_keywords: [normalizeText(signal.label)],
@@ -2620,10 +2609,7 @@ function InvestmentsPage({
       <div style={styles.grid}>
         <MiniCard title="Investments" value={`${investments.length}`} />
         <MiniCard title="Signals" value={`${unlinkedSignals.length}`} />
-        <MiniCard
-          title="Detected Contributions"
-          value={`£${totalDetectedInvesting.toFixed(2)}`}
-        />
+        <MiniCard title="Net Put In" value={formatCurrency(totalDetectedInvesting)} />
         <MiniCard title="Status" value={investments.length ? "Tracking" : "Building"} />
       </div>
 
@@ -2683,10 +2669,10 @@ function InvestmentsPage({
         </button>
       </Section>
 
-      <Section title="AI Detected Investing Streams">
+      <Section title="Statement-Detected Broker Activity">
         {unlinkedSignals.length === 0 ? (
           <p style={styles.emptyText}>
-            No unconfirmed investing signals right now.
+            No unconfirmed broker activity right now.
           </p>
         ) : (
           unlinkedSignals.map((signal) => (
@@ -2695,12 +2681,14 @@ function InvestmentsPage({
                 <div>
                   <strong>{signal.label}</strong>
                   <p style={styles.transactionMeta}>
-                    {signal.count} contribution{signal.count === 1 ? "" : "s"} spotted · avg £
-                    {signal.average.toFixed(2)} · last seen {signal.lastDate || "unknown"}
+                    {formatInvestmentSignalMeta(signal)}
                   </p>
                 </div>
-                <strong>£{signal.total.toFixed(2)}</strong>
+                <strong>{formatInvestmentSignalNet(signal)}</strong>
               </div>
+              <p style={styles.signalBody}>
+                This is money flow found in statements, not the current value of the investment.
+              </p>
 
               <div style={styles.inlineBtnRow}>
                 <button
@@ -4473,9 +4461,9 @@ function getCashSummary(accounts, transactions) {
 
   if (balances.length > 0) {
     const total = balances.reduce((sum, value) => sum + Number(value || 0), 0);
-    const looksStale = Math.abs(total) < 0.01 && freshness.hasData && !freshness.hasCurrentMonthData;
+    const looksLikePlaceholder = Math.abs(total) < 0.01 && freshness.hasData;
 
-    if (!looksStale) {
+    if (!looksLikePlaceholder) {
       return {
         hasLiveBalances: true,
         amount: total,
@@ -5840,7 +5828,7 @@ function getInvestmentSignals(transactions) {
     ["investengine", "InvestEngine"],
   ];
 
-  return buildSignalGroups(transactions, keywords);
+  return buildInvestmentSignalGroups(transactions, keywords);
 }
 
 function buildSignalGroups(transactions, keywords) {
@@ -5883,6 +5871,104 @@ function buildSignalGroups(transactions, keywords) {
   return Object.values(groups)
     .sort((a, b) => b.total - a.total)
     .slice(0, 6);
+}
+
+function buildInvestmentSignalGroups(transactions, keywords) {
+  const groups = {};
+
+  transactions.forEach((transaction) => {
+    if (isInternalTransferLike(transaction)) return;
+
+    const amount = Number(transaction.amount || 0);
+    if (!amount) return;
+
+    const text = normalizeText(transaction.description);
+    const match = keywords.find(([keyword]) => text.includes(keyword));
+
+    if (!match) return;
+
+    const [, label] = match;
+    const key = label.toLowerCase();
+
+    if (!groups[key]) {
+      groups[key] = {
+        key,
+        label,
+        count: 0,
+        contributionCount: 0,
+        withdrawalCount: 0,
+        total: 0,
+        withdrawals: 0,
+        netContributed: 0,
+        average: 0,
+        lastDate: transaction.transaction_date || "",
+      };
+    }
+
+    groups[key].count += 1;
+
+    if (amount < 0) {
+      groups[key].contributionCount += 1;
+      groups[key].total += Math.abs(amount);
+    } else {
+      groups[key].withdrawalCount += 1;
+      groups[key].withdrawals += amount;
+    }
+
+    groups[key].netContributed = groups[key].total - groups[key].withdrawals;
+    groups[key].average =
+      groups[key].contributionCount > 0
+        ? groups[key].total / groups[key].contributionCount
+        : 0;
+
+    if (
+      transaction.transaction_date &&
+      (!groups[key].lastDate || transaction.transaction_date > groups[key].lastDate)
+    ) {
+      groups[key].lastDate = transaction.transaction_date;
+    }
+  });
+
+  return Object.values(groups)
+    .filter((group) => group.contributionCount > 0 || group.withdrawalCount > 0)
+    .sort((a, b) => Math.abs(b.netContributed) - Math.abs(a.netContributed))
+    .slice(0, 6);
+}
+
+function formatInvestmentSignalNet(signal) {
+  const net = Number(signal.netContributed ?? signal.total ?? 0);
+  if (net > 0) return formatCurrency(net);
+  if (net < 0) return `-${formatCurrency(Math.abs(net))}`;
+  return "Even";
+}
+
+function formatInvestmentSignalMeta(signal) {
+  const contributions = Number(signal.contributionCount ?? signal.count ?? 0);
+  const withdrawals = Number(signal.withdrawalCount || 0);
+  const parts = [];
+
+  if (contributions > 0) {
+    parts.push(`${contributions} deposit${contributions === 1 ? "" : "s"}`);
+  }
+
+  if (withdrawals > 0) {
+    parts.push(`${withdrawals} withdrawal${withdrawals === 1 ? "" : "s"}`);
+  }
+
+  if (signal.average > 0) {
+    parts.push(`avg deposit ${formatCurrency(signal.average)}`);
+  }
+
+  parts.push(`last seen ${signal.lastDate || "unknown"}`);
+
+  return parts.join(" · ");
+}
+
+function getInvestmentSignalNote(signal) {
+  const deposited = formatCurrency(Number(signal.total || 0));
+  const withdrawn = formatCurrency(Number(signal.withdrawals || 0));
+  const net = formatInvestmentSignalNet(signal);
+  return `Created from statement activity for ${signal.label}. Deposits spotted: ${deposited}. Withdrawals spotted: ${withdrawn}. Net put in: ${net}. Check this against the broker before treating it as portfolio value.`;
 }
 
 function getDebtMatchSummary(debt, transactions) {
@@ -7166,11 +7252,16 @@ const styles = {
     gap: "10px",
   },
 
+  compactInsightGrid: {
+    display: "grid",
+    gap: "8px",
+  },
+
   insightCard: {
     background: "#f8fbff",
     border: "1px solid #e2e8f0",
     borderRadius: "18px",
-    padding: "14px",
+    padding: "12px",
   },
 
   insightLabel: {
@@ -7184,15 +7275,15 @@ const styles = {
 
   insightHeadline: {
     margin: "0 0 6px",
-    fontSize: "16px",
+    fontSize: "15px",
     letterSpacing: "-0.02em",
   },
 
   insightBody: {
     margin: 0,
     color: "#475569",
-    lineHeight: 1.6,
-    fontSize: "14px",
+    lineHeight: 1.45,
+    fontSize: "13px",
   },
   insightCardInteractive: {
     border: "1px solid #cfe0ff",
@@ -7205,7 +7296,7 @@ const styles = {
     background: "#f8fbff",
     border: "1px solid #cfe0ff",
     borderRadius: "18px",
-    padding: "14px",
+    padding: "12px",
     textAlign: "left",
     width: "100%",
     cursor: "pointer",
