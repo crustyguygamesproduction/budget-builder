@@ -697,26 +697,44 @@ function TodayPage({
   const transferSummary = getTransferSummary(transactions);
   const homeConfidence = !dataFreshness.hasData
     ? {
-        label: "No read yet",
+        label: "Set up",
+        tone: "neutral",
         headline: "Money Hub needs a statement first",
-        body: "Once a CSV is uploaded, this page can explain what is income, what is spending, and what is just money moving around.",
+        body: "Upload one statement and Money Hub can start turning raw transactions into a useful read.",
       }
     : dataFreshness.needsUpload
     ? {
-        label: "Stale read",
+        label: "Needs update",
+        tone: "warn",
         headline: `Last reliable month is ${dataFreshness.latestMonthLabel}`,
-        body: "The app can still analyse the history it has, but Today should not pretend to know what is happening now until the newest statement is uploaded.",
+        body: "The app can still analyse the history it has, but the newest statement will make today's read sharper.",
+      }
+    : monthSnapshot.net < -500
+    ? {
+        label: "Attention",
+        tone: "bad",
+        headline: `${monthSnapshot.monthName} needs attention`,
+        body: "Spending is running materially ahead of income in the visible statement data.",
+      }
+    : monthSnapshot.net < 0
+    ? {
+        label: "Watch",
+        tone: "warn",
+        headline: `${monthSnapshot.monthName} is slightly behind`,
+        body: "You are behind for the visible month, but this may be normal if income lands later than bills.",
       }
     : statementCoverage.monthCount < 3
     ? {
-        label: "Early read",
+        label: "Learning",
+        tone: "neutral",
         headline: `${statementCoverage.monthCountLabel} is enough for a first read`,
-        body: "Useful, but still young. Three months makes recurring bills, salary rhythm, and subscriptions much more trustworthy.",
+        body: "Useful, but still young. Three months makes recurring bills and salary rhythm much more trustworthy.",
       }
     : {
-        label: "Useful read",
+        label: "Healthy",
+        tone: "good",
         headline: `${statementCoverage.monthCountLabel} gives the app a proper base`,
-        body: "The numbers below are statement-based: transfers are stripped out where detected, then real income and real spending are compared.",
+        body: "The app has enough statement history to give this page a proper read.",
       };
   const moneyStoryCards = [
     {
@@ -724,7 +742,7 @@ function TodayPage({
       headline: monthSnapshot.net >= 0
         ? `${formatCurrency(monthSnapshot.net)} ahead in ${monthSnapshot.monthName}`
         : `${formatCurrency(Math.abs(monthSnapshot.net))} behind in ${monthSnapshot.monthName}`,
-      body: `${formatCurrency(monthSnapshot.income)} real income against ${formatCurrency(monthSnapshot.spending)} real spending. Transfers are treated separately when the app can identify them.`,
+      body: `${formatCurrency(monthSnapshot.income)} came in and ${formatCurrency(monthSnapshot.spending)} went out in the visible statement data.`,
       ctaLabel: "Ask AI why",
       onClick: () =>
         onGoToCoach(
@@ -749,7 +767,7 @@ function TodayPage({
       label: topCategory ? "Biggest pressure" : "Spending pattern",
       headline: topCategory ? `${topCategory.category} is the loudest category` : "No spending pressure found yet",
       body: topCategory
-        ? `${formatCurrency(topCategory.total)} of visible non-transfer spending sits here. That does not automatically mean bad; it means this is where the app should look first.`
+        ? `${formatCurrency(topCategory.total)} sits here. That does not automatically mean bad; it means this is where the app should look first.`
         : "Once statement history is loaded, this becomes the first place to spot leaks, bills, and repeated habits.",
       ctaLabel: topCategory ? "Ask AI what to do" : "Upload data",
       onClick: () =>
@@ -799,8 +817,19 @@ function TodayPage({
     <>
       <section style={styles.balanceCard}>
         <div style={styles.balanceTopRow}>
-          <p style={styles.smallWhite}>Statement intelligence</p>
-          <span style={styles.pulseTag}>{homeConfidence.label}</span>
+          <p style={styles.smallWhite}>{monthSnapshot.isCurrent ? "This month" : monthSnapshot.monthName}</p>
+          <button
+            type="button"
+            style={getHomeStatusPillStyle(homeConfidence.tone)}
+            onClick={() =>
+              onGoToCoach(
+                `Explain my home screen status: ${homeConfidence.label}. ${homeConfidence.headline}. Use my statement data and tell me what it means in plain English.`,
+                { autoSend: true }
+              )
+            }
+          >
+            {homeConfidence.label}
+          </button>
         </div>
 
         <h1 style={getBigMoneyStyle(screenWidth)}>{cashSummary.primaryDisplay}</h1>
@@ -6450,6 +6479,36 @@ function getStatusPillStyle(tone) {
   };
 }
 
+function getHomeStatusPillStyle(tone) {
+  const map = {
+    good: {
+      background: "rgba(220, 252, 231, 0.95)",
+      color: "#14532d",
+      border: "1px solid rgba(187, 247, 208, 0.95)",
+    },
+    warn: {
+      background: "rgba(254, 243, 199, 0.96)",
+      color: "#78350f",
+      border: "1px solid rgba(253, 230, 138, 0.95)",
+    },
+    bad: {
+      background: "rgba(254, 226, 226, 0.96)",
+      color: "#7f1d1d",
+      border: "1px solid rgba(254, 202, 202, 0.95)",
+    },
+    neutral: {
+      background: "rgba(255, 255, 255, 0.18)",
+      color: "white",
+      border: "1px solid rgba(255,255,255,0.28)",
+    },
+  };
+
+  return {
+    ...styles.pulseTag,
+    ...(map[tone] || map.neutral),
+  };
+}
+
 function getCalendarEventStyle(kind) {
   return {
     ...styles.calendarEvent,
@@ -6615,6 +6674,7 @@ const styles = {
     borderRadius: "999px",
     fontSize: "12px",
     fontWeight: "700",
+    cursor: "pointer",
   },
 
   smallWhite: {
