@@ -16,6 +16,7 @@ import CoachPage from "./pages/CoachPage";
 import SettingsPage from "./pages/SettingsPage";
 import TodayPage from "./pages/TodayPage";
 import AuthPage from "./pages/AuthPage";
+import AccountsPage from "./pages/AccountsPage";
 import {
   addDays,
   compareDayDates,
@@ -360,7 +361,7 @@ export default function App() {
         )}
 
         {page === "accounts" && (
-          <AccountsPage accounts={accounts} transactions={smartTransactions} />
+          <AccountsPage accounts={accounts} transactions={smartTransactions} styles={styles} />
         )}
 
         {page === "calendar" && (
@@ -2235,84 +2236,6 @@ function InvestmentsPage({
           ))}
         </Section>
       ) : null}
-    </>
-  );
-}
-
-function AccountsPage({ accounts, transactions }) {
-  const accountInsights = accounts.map((account) => {
-    const accountTransactions = transactions.filter((t) => t.account_id === account.id);
-    const totals = getTotals(accountTransactions);
-    const incomeCount = accountTransactions.filter((t) => Number(t.amount) > 0 && !isInternalTransferLike(t)).length;
-    const outgoingCount = accountTransactions.filter((t) => Number(t.amount) < 0 && !isInternalTransferLike(t)).length;
-    const transferCount = accountTransactions.filter((t) => isInternalTransferLike(t)).length;
-    const salaryCount = accountTransactions.filter((t) => /salary|payroll|wage|paye/i.test(t.description || "")).length;
-    const billCount = accountTransactions.filter((t) => t.is_bill || t.is_subscription).length;
-    const latestDate = accountTransactions
-      .map((t) => parseAppDate(t.transaction_date))
-      .filter(Boolean)
-      .sort((a, b) => b - a)[0];
-    const role = salaryCount > 0 && billCount > 0
-      ? "Main spending account"
-      : salaryCount > 0
-      ? "Income account"
-      : transferCount > outgoingCount
-      ? "Savings or transfer account"
-      : billCount > 0
-      ? "Bills account"
-      : "Statement account";
-
-    return {
-      account,
-      accountTransactions,
-      totals,
-      incomeCount,
-      outgoingCount,
-      transferCount,
-      salaryCount,
-      billCount,
-      latestDate,
-      role,
-    };
-  });
-  const unassignedTransactions = transactions.filter((t) => !t.account_id).length;
-
-  return (
-    <>
-      <Section title="Accounts">
-        {accounts.length === 0 ? (
-          <p style={styles.emptyText}>
-            No accounts yet. Upload a statement and I'll create one.
-          </p>
-        ) : (
-          accountInsights.map((insight) => {
-            const { account, accountTransactions, totals } = insight;
-            return (
-              <div key={account.id} style={styles.accountCard}>
-                <div>
-                  <strong>{account.name}</strong>
-                  <p style={styles.transactionMeta}>
-                    {insight.role} - {accountTransactions.length} transaction{accountTransactions.length === 1 ? "" : "s"} - {insight.latestDate ? `latest ${formatDateShort(insight.latestDate)}` : "no dates yet"}
-                  </p>
-                  <p style={styles.transactionMeta}>
-                    Income {formatCurrency(totals.income)} - spending {formatCurrency(totals.spending)} - transfers ignored {insight.transferCount}
-                  </p>
-                </div>
-                <strong>{formatCurrency(totals.net)}</strong>
-              </div>
-            );
-          })
-        )}
-      </Section>
-
-      <Section title="Statement Separation">
-        <p style={styles.sectionIntro}>
-          Accounts are inferred from the statement file name and saved import account. The key is keeping each CSV tied to the correct account so transfers can be ignored and real income/spending stays clean.
-        </p>
-        <Row name="Accounts found" value={`${accounts.length}`} />
-        <Row name="Unassigned transactions" value={`${unassignedTransactions}`} />
-        <Row name="Transfer handling" value="Excluded from income/spend when detected" />
-      </Section>
     </>
   );
 }
