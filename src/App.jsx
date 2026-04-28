@@ -8,6 +8,7 @@ import {
   Row as BaseRow,
   Section as BaseSection,
 } from "./components/ui";
+import BottomNav from "./components/BottomNav";
 import { buildUploadGuidance } from "./lib/uploadGuidance";
 import GoalsPage from "./pages/GoalsPage";
 import CoachPage from "./pages/CoachPage";
@@ -412,7 +413,7 @@ export default function App() {
         )}
       </main>
 
-      <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} />
+      <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
     </div>
   );
 }
@@ -3927,42 +3928,6 @@ function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach }) {
   );
 }
 
-function BottomNav({ page, setPage, screenWidth }) {
-  const items = [
-    ["today", "Home"],
-    ["upload", "Upload"],
-    ["debts", "Debts"],
-    ["investments", "Invest"],
-    ["accounts", "Accounts"],
-    ["calendar", "Cal"],
-    ["goals", "Goals"],
-    ["receipts", "Receipts"],
-    ["coach", "AI"],
-    ["settings", "More"],
-  ];
-
-  return (
-    <nav style={getNavStyle(screenWidth)}>
-      {items.map((item) => {
-        const isActive = page === item[0];
-
-        return (
-          <button
-            key={item[0]}
-            onClick={() => setPage(item[0])}
-            style={{
-              ...styles.navBtn,
-              ...(isActive ? styles.navBtnActive : {}),
-            }}
-          >
-            {item[1]}
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
 function Section({ title, children, right, sectionStyle }) {
   return <BaseSection title={title} right={right} sectionStyle={sectionStyle} styles={styles}>{children}</BaseSection>;
 }
@@ -5800,15 +5765,6 @@ function getGridStyle(screenWidth) {
   return {
     ...styles.grid,
     gridTemplateColumns: screenWidth <= 480 ? "1fr" : "1fr 1fr",
-  };
-}
-
-function getNavStyle(screenWidth) {
-  return {
-    ...styles.nav,
-    left: screenWidth <= 480 ? "8px" : "12px",
-    right: screenWidth <= 480 ? "8px" : "12px",
-    bottom: screenWidth <= 480 ? "8px" : "12px",
   };
 }
 
