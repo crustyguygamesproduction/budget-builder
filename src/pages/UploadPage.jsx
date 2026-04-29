@@ -158,20 +158,10 @@ export default function UploadPage({
   }
 
   function resolveImportedAmount(row, mapping) {
-    const signedAmount = getFirstRowValue(
-      row,
-      mapping?.amount,
-      "Amount",
-      "amount",
-      "Transaction Amount",
-      "TransactionAmount",
-      "Value",
-      "Transaction Value",
-      "Signed Amount"
-    );
+    const mappedSignedAmount = getFirstRowValue(row, mapping?.amount);
 
-    if (signedAmount !== "") {
-      return cleanAmount(signedAmount);
+    if (mappedSignedAmount !== "") {
+      return cleanAmount(mappedSignedAmount);
     }
 
     const moneyIn = getFirstRowValue(
@@ -211,6 +201,21 @@ export default function UploadPage({
 
     if (moneyOut !== "") {
       return -Math.abs(cleanAmount(moneyOut));
+    }
+
+    const signedAmount = getFirstRowValue(
+      row,
+      "Amount",
+      "amount",
+      "Transaction Amount",
+      "TransactionAmount",
+      "Signed Amount",
+      "Value",
+      "Transaction Value"
+    );
+
+    if (signedAmount !== "") {
+      return cleanAmount(signedAmount);
     }
 
     return Number.NaN;
