@@ -12,6 +12,7 @@ export function buildCoachContext({
   dataFreshness,
   baseMessages,
   helpers,
+  userMessage,
 }) {
   const {
     getDebtMonthlyStatus,
@@ -33,7 +34,7 @@ export function buildCoachContext({
     status: getInvestmentMonthlyStatus(investment, transactions).label,
   }));
 
-  const statementIntelligence = getStatementIntelligenceContext(transactions);
+  const statementIntelligence = getStatementIntelligenceContext(transactions, userMessage);
 
   return {
     totals,
@@ -42,6 +43,7 @@ export function buildCoachContext({
     searchable_transactions: statementIntelligence.searchableTransactions,
     searchable_transaction_count: statementIntelligence.searchableTransactions.length,
     searchable_transaction_note: statementIntelligence.searchableTransactionNote,
+    query_focus: statementIntelligence.queryFocus,
     statement_intelligence: statementIntelligence.summary,
     top_categories: topCategories.slice(0, 5),
     monthly_breakdown: getMonthlyBreakdown(transactions, "6m").slice(0, 6),

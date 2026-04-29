@@ -1,9 +1,10 @@
-export function getStatementIntelligenceContext(transactions) {
+export function getStatementIntelligenceContext(transactions, query = "") {
   const settled = transactions.filter((transaction) => !isInternalTransferLike(transaction));
   const spending = settled.filter((transaction) => Number(transaction.amount) < 0);
   const income = settled.filter((transaction) => Number(transaction.amount) > 0);
   const transfers = transactions.filter((transaction) => isInternalTransferLike(transaction));
   const dateRange = getTransactionDateRange(transactions);
+  const queryFocus = getQueryFocus(transactions, query);
   const merchantGroups = buildTransactionGroups(spending, (transaction) =>
     cleanEventTitle(transaction.description || "Unknown merchant")
   );
@@ -16,6 +17,7 @@ export function getStatementIntelligenceContext(transactions) {
   const accountGroups = buildTransactionGroups(transactions, (transaction) =>
     transaction.accounts?.name || transaction.account_name || transaction.account || "Unassigned account"
   );
+  const personalPaymentGroups = buildPersonalPaymentGroups(transactions).slice(0, 40);
   const recurringOutgoings = merchantGroups
     .filter((group) => group.count >= 2)
     .sort((a, b) => b.count - a.count || b.total - a.total)
@@ -41,6 +43,7 @@ export function getStatementIntelligenceContext(transactions) {
 
   return {
     searchableTransactions,
+    queryFocus,
     searchableTransactionNote:
       transactions.length > searchableTransactions.length
         ? `Most recent ${searchableTransactions.length} transactions are included individually. Full-history summaries use all ${transactions.length} transactions.`
@@ -55,12 +58,153 @@ export function getStatementIntelligenceContext(transactions) {
       merchant_totals: merchantGroups.slice(0, 30),
       income_streams: incomeGroups.slice(0, 20),
       account_activity: accountGroups.slice(0, 20),
+      personal_payment_groups: personalPaymentGroups,
       recurring_outgoings: recurringOutgoings,
       large_outgoings: largeOutgoings,
       large_income: largeIncome,
       unusual_transactions: unusualTransactions,
     },
   };
+}
+
+function getQueryFocus(transactions, query) {
+  const terms = getSearchTerms(query);
+
+  if (terms.length === 0) {
+    return null;
+  }
+
+  const scoredMatches = transactions
+    .map((transaction) => ({
+      transaction,
+      score: scoreTransactionForTerms(transaction, terms),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || String(b.transaction.transaction_date || "").localeCompare(String(a.transaction.transaction_date || "")));
+  const matches = scoredMatches.map((item) => item.transaction);
+  const moneyIn = matches
+    .filter((transaction) => Number(transaction.amount) > 0)
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const moneyOut = matches
+    .filter((transaction) => Number(transaction.amount) < 0)
+    .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+
+  return {
+    original_query: query,
+    search_terms: terms,
+    direct_match_count: matches.length,
+    direct_money_in: moneyIn,
+    direct_money_out: moneyOut,
+    direct_net: moneyIn - moneyOut,
+    grouped_matches: buildTransactionGroups(matches, (transaction) =>
+      cleanEventTitle(transaction.description || "Transaction")
+    ).slice(0, 20),
+    direct_matches: matches.slice(0, 120).map(toCoachTransaction),
+    direct_match_note:
+      matches.length > 120
+        ? `Showing 120 of ${matches.length} direct full-history matches. Totals use all direct matches.`
+        : `Showing all ${matches.length} direct full-history matches.`,
+  };
+}
+
+function getSearchTerms(query) {
+  const stopWords = new Set([
+    "about",
+    "all",
+    "and",
+    "any",
+    "brother",
+    "dad",
+    "did",
+    "does",
+    "from",
+    "gave",
+    "give",
+    "have",
+    "how",
+    "into",
+    "money",
+    "much",
+    "mum",
+    "paid",
+    "pay",
+    "payment",
+    "payments",
+    "sent",
+    "send",
+    "sister",
+    "the",
+    "them",
+    "this",
+    "to",
+    "transfer",
+    "transfers",
+    "what",
+    "when",
+    "with",
+  ]);
+
+  return [...new Set(normalizeText(query).split(" "))]
+    .filter((term) => term.length >= 3 && !stopWords.has(term))
+    .slice(0, 8);
+}
+
+function scoreTransactionForTerms(transaction, terms) {
+  const haystack = normalizeText(
+    [
+      transaction.description,
+      transaction.merchant,
+      transaction.category,
+      getMeaningfulCategory(transaction),
+      transaction.accounts?.name,
+      transaction.account_name,
+      transaction.account,
+    ].join(" ")
+  );
+
+  if (!haystack) return 0;
+
+  return terms.reduce((score, term) => {
+    const exactWord = new RegExp(`(^|\\s)${escapeRegExp(term)}(\\s|$)`).test(haystack);
+    if (exactWord) return score + 4;
+    if (haystack.includes(term)) return score + 2;
+    return score;
+  }, 0);
+}
+
+function buildPersonalPaymentGroups(transactions) {
+  const candidates = transactions.filter((transaction) => {
+    if (Number(transaction.amount) >= 0) return false;
+    const description = normalizeText(transaction.description);
+    return /transfer|faster payment|fpi|payment to|bank transfer|standing order|mobile payment|online payment/.test(description);
+  });
+
+  return buildTransactionGroups(candidates, (transaction) =>
+    getPersonalPaymentLabel(transaction.description)
+  ).filter((group) => group.label !== "Unlabelled personal transfer");
+}
+
+function getPersonalPaymentLabel(description) {
+  const noise = new Set([
+    "bank",
+    "faster",
+    "fpi",
+    "from",
+    "mobile",
+    "online",
+    "payment",
+    "ref",
+    "reference",
+    "standing",
+    "to",
+    "transfer",
+  ]);
+  const tokens = normalizeText(description)
+    .split(" ")
+    .filter((token) => token.length > 1 && !noise.has(token) && !/^\d+$/.test(token));
+
+  if (!tokens.length) return "Unlabelled personal transfer";
+  return toTitleCase(tokens.slice(0, 6).join(" "));
 }
 
 function getTotals(transactions) {
@@ -211,6 +355,17 @@ function normalizeText(value) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toTitleCase(value) {
+  return String(value || "")
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function parseAppDate(value) {

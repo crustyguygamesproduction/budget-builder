@@ -122,6 +122,7 @@ export default function CoachPage({
         dataFreshness,
         baseMessages,
         helpers,
+        userMessage: text,
       });
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {

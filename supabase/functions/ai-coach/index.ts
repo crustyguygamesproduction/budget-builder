@@ -292,7 +292,9 @@ Statement intelligence rules:
 - The client may provide statement_intelligence, searchable_transactions, and monthly_breakdown_all.
 - statement_intelligence summaries are built from the full uploaded statement history.
 - searchable_transactions is the transaction-level ledger the model can inspect directly. If it is capped, use the supplied note and say when more source rows may be needed.
+- query_focus is built from the user's exact message against the full uploaded statement history. For questions like "how much did I send Ben?", use query_focus first because it can include older/smaller direct matches that are not in recent_transactions.
 - When the user asks about a merchant, category, income stream, subscription, debt, investment, account, transfer, or pattern, first use the relevant all-history summary, then inspect searchable_transactions for examples.
+- For people/payee questions, use query_focus.direct_matches and query_focus.grouped_matches for the total. If query_focus has only partial direct matches, say that the app can only count transactions where the statement text contains that name/reference; do not pretend unlabelled transfers belong to that person.
 - Distinguish real spending/income from internal transfers whenever that flag is provided.
 - Do not treat broker deposits as current investment value. They are cash flows unless an investment record or document provides a value.
 `;
@@ -310,6 +312,7 @@ ${JSON.stringify(
     searchable_transaction_note: context?.searchable_transaction_note || null,
     searchable_transaction_count: context?.searchable_transaction_count || 0,
     searchable_transactions: context?.searchable_transactions || [],
+    query_focus: context?.query_focus || null,
     statement_intelligence: context?.statement_intelligence || null,
     top_categories: context?.top_categories || [],
     subscription_summary: context?.subscription_summary || null,

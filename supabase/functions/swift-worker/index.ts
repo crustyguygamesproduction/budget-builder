@@ -36,6 +36,8 @@ Format exactly like this:
 {
   "date": "column_name_or_null",
   "description": "column_name_or_null",
+  "payee": "column_name_or_null",
+  "reference": "column_name_or_null",
   "amount": "column_name_or_null",
   "money_in": "column_name_or_null",
   "money_out": "column_name_or_null"
@@ -44,6 +46,8 @@ Format exactly like this:
 Rules:
 - If there is one signed amount column, use "amount"
 - If there are separate columns, use "money_in" and "money_out"
+- If there are columns naming the person, shop, recipient, sender, beneficiary, or counterparty, use "payee"
+- If there is a payment reference, memo, note, narrative, or extra detail column, use "reference"
 - Use null if missing
 - Use exact header names from the CSV headers provided
 

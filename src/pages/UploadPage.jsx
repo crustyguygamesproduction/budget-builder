@@ -216,6 +216,49 @@ export default function UploadPage({
     return Number.NaN;
   }
 
+  function getUniqueRowParts(row, ...keys) {
+    const seen = new Set();
+    return keys
+      .map((key) => getFirstRowValue(row, key))
+      .map((value) => normalizeDescription(value))
+      .filter((value) => {
+        if (!value) return false;
+        const normalized = normalizeHeaderKey(value);
+        if (seen.has(normalized)) return false;
+        seen.add(normalized);
+        return true;
+      });
+  }
+
+  function buildImportedDescription(row, mapping) {
+    const parts = getUniqueRowParts(
+      row,
+      mapping?.description,
+      "Transaction Description",
+      "Description",
+      "description",
+      "Details",
+      "Narrative",
+      "Transaction Narrative",
+      "Payee",
+      "Recipient",
+      "Beneficiary",
+      "Counterparty",
+      "Counter Party",
+      "Counterparty Name",
+      "Name",
+      "Paid To",
+      "Paid From",
+      "Reference",
+      "Payment Reference",
+      "Customer Reference",
+      "Memo",
+      "Notes"
+    );
+
+    return parts.join(" | ");
+  }
+
   const categoryRules = [
     { category: "Income", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus|hmrc/.test(text) },
     { category: "Internal Transfer", test: ({ text }) => /transfer to|transfer from|to savings|from savings|standing order to|between accounts|own account/.test(text) },
@@ -293,17 +336,7 @@ export default function UploadPage({
       "Transaction Date",
       "Posted Date"
     );
-    const description = getFirstRowValue(
-      row,
-      mapping?.description,
-      "Transaction Description",
-      "Description",
-      "description",
-      "Payee",
-      "Reference",
-      "Merchant",
-      "Details"
-    );
+    const description = buildImportedDescription(row, mapping);
 
     if (!date || !description || Number.isNaN(amount)) {
       return null;
