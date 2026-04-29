@@ -2,6 +2,13 @@
 import Papa from "papaparse";
 import { supabase } from "../supabase";
 import { ActionCard, InsightCard, MiniCard, Row, Section } from "../components/ui";
+import {
+  formatDateRange,
+  getImportFingerprint,
+  getImportOverlapSummary,
+  getTransactionConfidence,
+  summariseRowsForImport,
+} from "../lib/importAnalysis";
 import { buildUploadGuidance } from "../lib/uploadGuidance";
 import { getTotals, normalizeText } from "../lib/finance";
 
@@ -17,16 +24,11 @@ export default function UploadPage({
 }) {
   const {
     enhanceTransactions,
-    formatDateRange,
     getGridStyle,
     getHistorySummary,
-    getImportFingerprint,
-    getImportOverlapSummary,
     getRecurringSummary,
     getStatusPillStyle,
-    getTransactionConfidence,
     getTransferSummary,
-    summariseRowsForImport,
   } = helpers;
 
   const [files, setFiles] = useState([]);
