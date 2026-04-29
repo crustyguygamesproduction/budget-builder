@@ -234,6 +234,8 @@ export default function UploadPage({
     const parts = getUniqueRowParts(
       row,
       mapping?.description,
+      mapping?.payee,
+      mapping?.reference,
       "Transaction Description",
       "Description",
       "description",
@@ -595,6 +597,7 @@ export default function UploadPage({
   return (
     <>
       <Section
+        styles={styles}
         title="Bulk Statement Upload"
         right={
           <button
