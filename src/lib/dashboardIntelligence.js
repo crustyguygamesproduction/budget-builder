@@ -393,7 +393,7 @@ export function enhanceTransactions(transactions) {
       });
 
       const description = normalizeText(transaction.description);
-      const forcedByText = /transfer|faster payment|standing order|to savings|from savings|own account|between accounts|bank transfer/.test(description);
+      const forcedByText = /transfer to|transfer from|standing order to|to savings|from savings|own account|between accounts|bank transfer/.test(description);
       smartInternalTransfer = forcedByText || Boolean(match);
     }
 

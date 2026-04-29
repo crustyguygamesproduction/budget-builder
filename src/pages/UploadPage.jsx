@@ -50,7 +50,7 @@ export default function UploadPage({
       /money out/i.test(raw);
 
     const cleaned = raw
-      .replace(/[\\u00A3$€,]/g, "")
+      .replace(/[£$€,]/g, "")
       .replace(/[()]/g, "")
       .replace(/\bcr\b/gi, "")
       .replace(/\bdr\b/gi, "")
@@ -95,10 +95,29 @@ export default function UploadPage({
     return String(text || "").replace(/\s+/g, " ").trim();
   }
 
+  function normalizeHeaderKey(key) {
+    return String(key || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  }
+
   function getFirstRowValue(row, ...keys) {
+    const rowEntries = Object.entries(row || {});
+    const normalizedEntries = rowEntries.map(([key, value]) => [
+      normalizeHeaderKey(key),
+      value,
+    ]);
+
     for (const key of keys) {
       if (!key) continue;
-      const value = row[key];
+      const directValue = row[key];
+      if (directValue !== undefined && directValue !== null && String(directValue).trim() !== "") {
+        return directValue;
+      }
+
+      const normalizedKey = normalizeHeaderKey(key);
+      const matched = normalizedEntries.find(([candidateKey]) => candidateKey === normalizedKey);
+      const value = matched?.[1];
       if (value !== undefined && value !== null && String(value).trim() !== "") {
         return value;
       }
@@ -144,7 +163,11 @@ export default function UploadPage({
       mapping?.amount,
       "Amount",
       "amount",
-      "Transaction Amount"
+      "Transaction Amount",
+      "TransactionAmount",
+      "Value",
+      "Transaction Value",
+      "Signed Amount"
     );
 
     if (signedAmount !== "") {
@@ -155,17 +178,31 @@ export default function UploadPage({
       row,
       mapping?.money_in,
       "Money In",
+      "Money in",
       "money_in",
       "Credit",
-      "Paid In"
+      "Credit Amount",
+      "CreditAmount",
+      "Paid In",
+      "Paid in",
+      "PaidIn",
+      "In",
+      "Deposit"
     );
     const moneyOut = getFirstRowValue(
       row,
       mapping?.money_out,
       "Money Out",
+      "Money out",
       "money_out",
       "Debit",
-      "Paid Out"
+      "Debit Amount",
+      "DebitAmount",
+      "Paid Out",
+      "Paid out",
+      "PaidOut",
+      "Out",
+      "Withdrawal"
     );
 
     if (moneyIn !== "") {
@@ -181,7 +218,7 @@ export default function UploadPage({
 
   const categoryRules = [
     { category: "Income", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus|hmrc/.test(text) },
-    { category: "Internal Transfer", test: ({ text }) => /transfer|faster payment|to savings|from savings|standing order to|between accounts/.test(text) },
+    { category: "Internal Transfer", test: ({ text }) => /transfer to|transfer from|to savings|from savings|standing order to|between accounts|own account/.test(text) },
     { category: "Bill", test: ({ text }) => /rent|council|electric|gas|water|mortgage|broadband|internet|virgin media|sky|bt/.test(text) },
     { category: "Subscription", test: ({ text }) => /netflix|spotify|prime|apple|google|disney|adobe|icloud|youtube premium/.test(text) },
     { category: "Groceries", test: ({ text }) => /tesco|aldi|lidl|asda|sainsbury|waitrose|morrisons|co-op/.test(text) },
