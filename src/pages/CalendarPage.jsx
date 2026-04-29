@@ -10,6 +10,32 @@ import {
   startOfDay,
   toIsoDate,
 } from "../lib/finance";
+import {
+  buildCalendarMonth,
+  buildHistoricalCalendarMonth,
+  buildRollingHistoryWindow,
+  canShiftCalendarMonth,
+  canShiftShortWindow,
+  clampDayToRange,
+  clampMonthToRange,
+  downloadCalendarEvent,
+  formatShortWeekday,
+  formatShortWindowTitle,
+  getCalendarMonthBounds,
+  getCalendarPatternSummary,
+  getCalendarSummaryGridStyle,
+  getEarliestHistoryDate,
+  getLatestHistoryDate,
+  getMonthlyBreakdown,
+  getMonthlyHistorySummary,
+  getRecurringCalendarEvents,
+  getRollingDaysGridStyle,
+  getRollingWindowSummary,
+  getTimeframeDayCount,
+  getTimeframeMonthCount,
+  isShortTimeframe,
+} from "../lib/calendarIntelligence";
+import { getCalendarEventStyle } from "../lib/styleHelpers";
 
 const MONTH_NAMES = [
   "January",
@@ -28,33 +54,7 @@ const MONTH_NAMES = [
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export default function CalendarPage({ transactions, screenWidth, styles, helpers }) {
-  const {
-    buildCalendarMonth,
-    buildHistoricalCalendarMonth,
-    buildRollingHistoryWindow,
-    canShiftCalendarMonth,
-    canShiftShortWindow,
-    clampDayToRange,
-    clampMonthToRange,
-    downloadCalendarEvent,
-    formatShortWeekday,
-    formatShortWindowTitle,
-    getCalendarEventStyle,
-    getCalendarMonthBounds,
-    getCalendarPatternSummary,
-    getCalendarSummaryGridStyle,
-    getDataFreshness,
-    getEarliestHistoryDate,
-    getLatestHistoryDate,
-    getMonthlyBreakdown,
-    getMonthlyHistorySummary,
-    getRecurringCalendarEvents,
-    getRollingDaysGridStyle,
-    getRollingWindowSummary,
-    getTimeframeDayCount,
-    getTimeframeMonthCount,
-    isShortTimeframe,
-  } = helpers;
+  const { getDataFreshness } = helpers;
 
   const [viewDate, setViewDate] = useState(() => new Date());
   const [selectedDayKey, setSelectedDayKey] = useState("");
@@ -66,11 +66,11 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
 
   const recurringEvents = useMemo(
     () => getRecurringCalendarEvents(transactions),
-    [getRecurringCalendarEvents, transactions]
+    [transactions]
   );
   const allHistoryMonths = useMemo(
     () => getMonthlyBreakdown(transactions, "all"),
-    [getMonthlyBreakdown, transactions]
+    [transactions]
   );
   const availableMonthCount = allHistoryMonths.length;
   const shortTimeframe = isShortTimeframe(timeframe);
@@ -78,11 +78,11 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
   const shortWindowSize = getTimeframeDayCount(timeframe);
   const earliestHistoryDate = useMemo(
     () => getEarliestHistoryDate(transactions),
-    [getEarliestHistoryDate, transactions]
+    [transactions]
   );
   const latestHistoryDate = useMemo(
     () => getLatestHistoryDate(transactions),
-    [getLatestHistoryDate, transactions]
+    [transactions]
   );
   const shortWindowBounds = useMemo(
     () => ({ start: earliestHistoryDate, end: startOfDay(new Date()) }),
@@ -90,28 +90,28 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
   );
   const activeShortEndDate = useMemo(
     () => clampDayToRange(viewDate, shortWindowBounds),
-    [clampDayToRange, viewDate, shortWindowBounds]
+    [viewDate, shortWindowBounds]
   );
   const calendarBounds = useMemo(
     () => getCalendarMonthBounds(transactions, timeframe),
-    [getCalendarMonthBounds, transactions, timeframe]
+    [transactions, timeframe]
   );
   const activeViewDate = useMemo(
     () => clampMonthToRange(viewDate, calendarBounds),
-    [clampMonthToRange, viewDate, calendarBounds]
+    [viewDate, calendarBounds]
   );
 
   const historicalCalendar = useMemo(
     () => buildHistoricalCalendarMonth(activeViewDate, transactions, recurringEvents),
-    [activeViewDate, buildHistoricalCalendarMonth, transactions, recurringEvents]
+    [activeViewDate, transactions, recurringEvents]
   );
   const recurringCalendar = useMemo(
     () => buildCalendarMonth(activeViewDate, recurringEvents),
-    [activeViewDate, buildCalendarMonth, recurringEvents]
+    [activeViewDate, recurringEvents]
   );
   const rollingHistoryWindow = useMemo(
     () => buildRollingHistoryWindow(transactions, activeShortEndDate, shortWindowSize),
-    [buildRollingHistoryWindow, transactions, activeShortEndDate, shortWindowSize]
+    [transactions, activeShortEndDate, shortWindowSize]
   );
 
   const timeframeOptions = [
