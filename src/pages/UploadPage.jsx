@@ -195,12 +195,23 @@ export default function UploadPage({
       "Withdrawal"
     );
 
-    if (moneyIn !== "") {
-      return Math.abs(cleanAmount(moneyIn));
+    const parsedMoneyIn = moneyIn !== "" ? Math.abs(cleanAmount(moneyIn)) : Number.NaN;
+    const parsedMoneyOut = moneyOut !== "" ? Math.abs(cleanAmount(moneyOut)) : Number.NaN;
+
+    if (!Number.isNaN(parsedMoneyIn) && parsedMoneyIn > 0) {
+      return parsedMoneyIn;
     }
 
-    if (moneyOut !== "") {
-      return -Math.abs(cleanAmount(moneyOut));
+    if (!Number.isNaN(parsedMoneyOut) && parsedMoneyOut > 0) {
+      return -parsedMoneyOut;
+    }
+
+    if (!Number.isNaN(parsedMoneyIn)) {
+      return parsedMoneyIn;
+    }
+
+    if (!Number.isNaN(parsedMoneyOut)) {
+      return -parsedMoneyOut;
     }
 
     const signedAmount = getFirstRowValue(
