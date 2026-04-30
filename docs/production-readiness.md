@@ -60,6 +60,8 @@
 - Phone-camera images are resized client-side to a maximum 1600px edge and converted to WebP before upload when that reduces file size.
 - Existing public `file_url` rows should be migrated or re-uploaded before launch if the bucket was public while testing.
 - Keep signed document links short-lived. The browser should not store permanent public URLs for receipts, debts, investments, statements, or bank-feed exports.
+- `src/pages/PrivacyPage.jsx` explains financial data use, AI context, private storage, and user control in product language.
+- Supabase Edge Functions support `ALLOWED_ORIGINS` for tighter CORS. Set it to the production and preview app origins before public launch.
 
 ## Bundle Size
 

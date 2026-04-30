@@ -15,6 +15,7 @@ export default function SettingsPage({
   subscriptionStatus,
   bankFeedReadiness,
   bankConnections,
+  onShowPrivacy,
   styles,
 }) {
   const [viewerEmail, setViewerEmail] = useState("");
@@ -139,6 +140,9 @@ export default function SettingsPage({
         <Row name="Before saving goals" value="Check estimates" styles={styles} />
         <button style={styles.ghostBtn} type="button" onClick={() => replayOnboarding(userId)}>
           Replay setup tips
+        </button>
+        <button style={styles.ghostBtn} type="button" onClick={onShowPrivacy}>
+          Privacy
         </button>
       </Section>
 

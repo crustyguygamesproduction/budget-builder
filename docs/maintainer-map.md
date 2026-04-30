@@ -24,6 +24,7 @@ Use this first when making changes so future work does not start by rereading th
 - `src/pages/CalendarPage.jsx` owns spending calendar, recurring event calendar, and calendar AI analysis.
 - `src/pages/SettingsPage.jsx` owns viewer mode, viewer access, and settings/admin surfaces.
 - `src/pages/AuthPage.jsx` owns login/signup.
+- `src/pages/PrivacyPage.jsx` owns the human-readable privacy and data-use explanation for users.
 
 ## Money Logic
 

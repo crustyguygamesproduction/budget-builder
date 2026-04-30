@@ -23,6 +23,7 @@ This repo has been refactored to keep future work cheap and focused. Start here 
 - Investments: `src/pages/InvestmentsPage.jsx`, `src/lib/statementSignals.js`, `src/lib/dashboardIntelligence.js`.
 - Calendar: `src/pages/CalendarPage.jsx`, `src/lib/calendarIntelligence.js`.
 - Settings/viewer mode: `src/pages/SettingsPage.jsx`.
+- Privacy and user trust copy: `src/pages/PrivacyPage.jsx`, with entry points from auth, onboarding, and settings.
 
 ## Token-Saving Rules
 

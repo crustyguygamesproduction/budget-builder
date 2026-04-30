@@ -370,6 +370,14 @@
   color: rgba(15, 23, 42, 0.68);
 }
 
+.mh-ob-trust-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 @media (max-width: 680px) {
   .mh-ob-trust-line {
     text-align: center;

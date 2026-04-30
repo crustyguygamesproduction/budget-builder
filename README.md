@@ -59,6 +59,18 @@ Runs linting and a production build.
 
 ---
 
+## Privacy And Trust
+
+Money Hub handles sensitive financial data: statements, receipts, documents, transactions, and AI money context.
+
+- The app includes a user-facing Privacy page in `src/pages/PrivacyPage.jsx`.
+- Uploaded receipt and document files should use private Supabase storage paths and short-lived signed links.
+- AI features receive focused financial context so answers can be useful without exposing unrelated app state.
+- User financial data is not positioned for advertising or resale.
+- Supabase service-role keys must never be exposed in Vite client env vars.
+
+---
+
 ## 🧠 Architecture Overview
 
 ### Core App

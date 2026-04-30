@@ -71,6 +71,7 @@ const DebtsPage = lazy(() => import("./pages/DebtsPage"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
 const InvestmentsPage = lazy(() => import("./pages/InvestmentsPage"));
 const OnboardingTutorial = lazy(() => import("./components/OnboardingTutorial"));
+const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const ReceiptsPage = lazy(() => import("./pages/ReceiptsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const TodayPage = lazy(() => import("./pages/TodayPage"));
@@ -87,6 +88,7 @@ const PAGE_TITLES = {
   receipts: "Receipts",
   coach: "AI Coach",
   settings: "Settings",
+  privacy: "Privacy",
 };
 
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
@@ -328,7 +330,19 @@ export default function App() {
   const bankFeedReadiness = getBankFeedReadiness(subscriptionStatus, bankConnections);
 
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
-  if (!session) return <AuthPage screenWidth={screenWidth} styles={styles} />;
+  if (!session) {
+    return page === "privacy" ? (
+      <div style={styles.app}>
+        <main style={getMainStyle(screenWidth, "privacy")}>
+          <Suspense fallback={<div style={styles.loading}>Opening Privacy...</div>}>
+            <PrivacyPage onBack={() => setPage("today")} styles={styles} />
+          </Suspense>
+        </main>
+      </div>
+    ) : (
+      <AuthPage screenWidth={screenWidth} styles={styles} onShowPrivacy={() => setPage("privacy")} />
+    );
+  }
 
   return (
     <div style={styles.app}>
@@ -540,8 +554,12 @@ export default function App() {
             subscriptionStatus={subscriptionStatus}
             bankFeedReadiness={bankFeedReadiness}
             bankConnections={bankConnections}
+            onShowPrivacy={() => setPage("privacy")}
             styles={styles}
           />
+        )}
+        {page === "privacy" && (
+          <PrivacyPage onBack={() => setPage("settings")} styles={styles} />
         )}
         </Suspense>
       </main>

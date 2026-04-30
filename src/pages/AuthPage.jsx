@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
 
-export default function AuthPage({ screenWidth, styles }) {
+export default function AuthPage({ screenWidth, styles, onShowPrivacy }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -35,24 +35,24 @@ export default function AuthPage({ screenWidth, styles }) {
     const { error } = await supabase.auth.signInWithPassword(credentials);
     setBusy(false);
 
-    if (error) alert(error.message);
+    if (error) alert("Login did not work. Check your email and password, then try again.");
   }
 
   async function signup() {
     const credentials = validateAuthInput(true);
-if (!credentials || busy) return;
+    if (!credentials || busy) return;
 
-if (!agreedToPrivacy) {
-  alert("Please agree to the Privacy Policy before creating an account.");
-  return;
-}
+    if (!agreedToPrivacy) {
+      alert("Please agree to the Privacy Policy before creating an account.");
+      return;
+    }
 
     setBusy(true);
     const { error } = await supabase.auth.signUp(credentials);
     setBusy(false);
 
     if (error) {
-      alert(error.message);
+      alert("Account creation did not work. Check the details and try again.");
       return;
     }
 
@@ -107,9 +107,13 @@ if (!agreedToPrivacy) {
     checked={agreedToPrivacy}
     onChange={(e) => setAgreedToPrivacy(e.target.checked)}
   />
-  <span>
-    I agree to the Privacy Policy and understand my data may be processed to provide insights and AI features.
-  </span>
+          <span>
+            I agree to the{" "}
+            <button type="button" style={styles.textLink || linkStyle} onClick={onShowPrivacy}>
+              Privacy Policy
+            </button>{" "}
+            and understand my data is processed to provide insights and AI features.
+          </span>
 </label>
 
 <button
@@ -124,6 +128,16 @@ if (!agreedToPrivacy) {
     </div>
   );
 }
+
+const linkStyle = {
+  border: 0,
+  background: "transparent",
+  color: "#1d4ed8",
+  padding: 0,
+  font: "inherit",
+  textDecoration: "underline",
+  cursor: "pointer",
+};
 
 function getHeroCardStyle(screenWidth, styles) {
   return {

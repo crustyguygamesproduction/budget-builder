@@ -267,9 +267,9 @@ export default function OnboardingExperience({
       <span>Ask anything about your money</span>
     </div>
 
-    <p className="mh-ob-trust-line">
+    <button type="button" className="mh-ob-trust-line mh-ob-trust-button" onClick={() => setPage("privacy")}>
       Your data stays private and secure.
-    </p>
+    </button>
   </>
 )}
 

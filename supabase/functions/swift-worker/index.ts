@@ -1,13 +1,23 @@
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+function buildCorsHeaders(req: Request) {
+  const origin = req.headers.get("origin") || "";
+  const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const allowOrigin = allowedOrigins.length === 0 || allowedOrigins.includes(origin) ? origin || "*" : allowedOrigins[0];
+
+  return {
+  "Access-Control-Allow-Origin": allowOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: buildCorsHeaders(req) });
   }
+  const corsHeaders = buildCorsHeaders(req);
 
   try {
     const { headers, sampleRows } = await req.json();
@@ -21,7 +31,7 @@ Deno.serve(async (req) => {
     }
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
+      return new Response(JSON.stringify({ error: "AI service is not configured." }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -90,10 +100,8 @@ ${JSON.stringify(sampleRows)}
     return new Response(text, {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (error) {
-    console.error("SWIFT WORKER ERROR:", error);
-
-    return new Response(JSON.stringify({ error: String(error) }), {
+  } catch {
+    return new Response(JSON.stringify({ error: "CSV mapping is unavailable right now." }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

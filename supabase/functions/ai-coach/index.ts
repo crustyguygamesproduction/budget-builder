@@ -1,9 +1,18 @@
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+function buildCorsHeaders(req: Request) {
+  const origin = req.headers.get("origin") || "";
+  const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const allowOrigin = allowedOrigins.length === 0 || allowedOrigins.includes(origin) ? origin || "*" : allowedOrigins[0];
+
+  return {
+  "Access-Control-Allow-Origin": allowOrigin,
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+}
 
 function cleanReply(text: string) {
   return String(text || "")
@@ -104,15 +113,16 @@ ${message || "No extra note."}` },
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: buildCorsHeaders(req) });
   }
+  const corsHeaders = buildCorsHeaders(req);
 
   try {
     const { mode = "coach", message, context } = await req.json();
     const apiKey = Deno.env.get("OPENAI_API_KEY");
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
+          return new Response(JSON.stringify({ error: "AI service is not configured." }), {
         status: 500,
         headers: {
           ...corsHeaders,
@@ -405,7 +415,7 @@ ${JSON.stringify(
   } catch (error) {
     return new Response(
       JSON.stringify({
-        error: String(error),
+        error: "AI request could not be completed right now.",
       }),
       {
         status: 500,
