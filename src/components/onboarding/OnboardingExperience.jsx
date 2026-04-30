@@ -80,16 +80,23 @@ function MiniDashboard({ hasData }) {
         <span />
         <span />
       </div>
+
       <div className="mh-ob-balance-card">
         <p>{hasData ? "Ready to analyse" : "Your money, sorted"}</p>
         <strong>{hasData ? "Dashboard ready" : "Start with 1 file"}</strong>
       </div>
+
       <Sparkline />
+
       <div className="mh-ob-mini-list">
-        <span><b /> Food insight</span>
-        <span><b /> Bills detected</span>
-        <span><b /> Coach ready</span>
+        <span><b /> Spending patterns found</span>
+        <span><b /> Subscriptions detected</span>
+        <span><b /> Answers ready instantly</span>
       </div>
+
+      <p style={{ marginTop: 10, fontSize: 13, opacity: 0.7 }}>
+        Your data stays private and secure.
+      </p>
     </div>
   );
 }
@@ -178,7 +185,7 @@ export default function OnboardingExperience({
       eyebrow: "Money Hub setup",
       title: hasData ? "You're nearly there." : "Sort your money without the boring setup.",
       body: hasData
-        ? "We'll show the fastest route through the app, then get out of your way."
+        ? "We’ll get you to a useful view of your money in under a minute."
         : "No long tour. Choose one action and get to a useful money view quickly.",
       primary: "Get started",
       secondary: "Skip tips",
