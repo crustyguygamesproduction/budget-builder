@@ -101,12 +101,16 @@ export default function AuthPage({ screenWidth, styles, onShowPrivacy }) {
           </button>
         </form>
 
-        <label style={{ ...styles.checkRow, marginTop: 14, marginBottom: 10 }}>
-  <input
-    type="checkbox"
-    checked={agreedToPrivacy}
-    onChange={(e) => setAgreedToPrivacy(e.target.checked)}
-  />
+        <div style={{ marginTop: 14 }}>
+          <p style={styles.smallMuted}>
+            Creating an account means saving private financial data in Money Hub.
+          </p>
+          <label style={{ ...styles.checkRow, marginTop: 8, marginBottom: 10 }}>
+            <input
+              type="checkbox"
+              checked={agreedToPrivacy}
+              onChange={(e) => setAgreedToPrivacy(e.target.checked)}
+            />
           <span>
             I agree to the{" "}
             <button type="button" style={styles.textLink || linkStyle} onClick={onShowPrivacy}>
@@ -114,16 +118,17 @@ export default function AuthPage({ screenWidth, styles, onShowPrivacy }) {
             </button>{" "}
             and understand my data is processed to provide insights and AI features.
           </span>
-</label>
+          </label>
+        </div>
 
-<button
-  style={styles.secondaryBtn}
-  onClick={signup}
-  type="button"
-  disabled={busy || !agreedToPrivacy}
->
-  Create Account
-</button>
+        <button
+          style={styles.secondaryBtn}
+          onClick={signup}
+          type="button"
+          disabled={busy || !agreedToPrivacy}
+        >
+          Create Account
+        </button>
       </section>
     </div>
   );

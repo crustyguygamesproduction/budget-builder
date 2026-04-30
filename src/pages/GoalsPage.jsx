@@ -7,6 +7,7 @@ import {
   Section as BaseSection,
 } from "../components/ui";
 import { buildGoalSuggestions } from "../lib/goalInsights";
+import { getMeaningfulCategory } from "../lib/finance";
 
 export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate, onChange, styles, helpers }) {
   const {
@@ -28,9 +29,33 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
     current_amount: "",
   });
 
-  const transferSavings = transactions
-    .filter((t) => isInternalTransferLike(t) && Number(t.amount) < 0)
-    .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
+  const latestDate = transactions.map((t) => new Date(t.transaction_date)).filter((date) => !Number.isNaN(date.getTime())).sort((a, b) => b - a)[0] || new Date();
+  const timeframeStart = new Date(latestDate.getFullYear(), latestDate.getMonth() - 2, 1);
+  const timeframeLabel = `${timeframeStart.toLocaleDateString("en-GB", { month: "short" })} to ${latestDate.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}`;
+  const timeframeTransactions = transactions.filter((transaction) => {
+    const date = new Date(transaction.transaction_date);
+    return !Number.isNaN(date.getTime()) && date >= timeframeStart && date <= latestDate && !isInternalTransferLike(transaction);
+  });
+  const categoryTotals = timeframeTransactions
+    .filter((transaction) => Number(transaction.amount) < 0)
+    .reduce((groups, transaction) => {
+      const category = getMeaningfulCategory(transaction) || "Spending";
+      groups[category] = (groups[category] || 0) + Math.abs(Number(transaction.amount || 0));
+      return groups;
+    }, {});
+  const behaviourInsights = Object.entries(categoryTotals)
+    .map(([category, total]) => ({
+      category,
+      threeMonthTotal: total,
+      amountLabel: formatCurrency(total),
+      monthlyAverage: total / 3,
+    }))
+    .filter((item) => !["Income", "Internal Transfer", "Uncategorised"].includes(item.category))
+    .sort((a, b) => b.threeMonthTotal - a.threeMonthTotal)
+    .slice(0, 4);
+  const reviewTransactions = timeframeTransactions
+    .filter((transaction) => Number(transaction.amount) < 0)
+    .slice(0, 6);
   const latestMonthBills = transactions
     .filter(
       (transaction) =>
@@ -47,7 +72,8 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
   const suggestions = buildGoalSuggestions({
     hasData: freshness.hasData,
     monthlyBills: latestMonthBills,
-    transferSavings,
+    behaviourInsights,
+    timeframeLabel,
     latestMonthName: latestMonth.monthName,
     subscriptionCount: subscriptionSummary.count,
   });
@@ -165,6 +191,9 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
       )}
 
       <BaseSection styles={styles} title={hasSavedGoal ? "Goal Read" : "Smart Goal Ideas"}>
+        <p style={styles.sectionIntro}>
+          Goal insights use visible spending from {timeframeLabel}. Internal transfers between your own accounts are ignored so they are not mistaken for savings.
+        </p>
         <div style={styles.aiInsightGrid}>
           <BaseInsightCard styles={styles}
             label={hasSavedGoal ? "Saved goal" : "Suggestion"}
@@ -251,6 +280,43 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
         )}
       </BaseSection>
 
+      {behaviourInsights.length > 0 ? (
+        <BaseSection styles={styles} title="Behaviour Wins">
+          <p style={styles.sectionIntro}>
+            Small swaps work better than guilt. These are the biggest visible spending areas in {timeframeLabel}.
+          </p>
+          {behaviourInsights.slice(0, 3).map((item) => (
+            <BaseInsightCard
+              key={item.category}
+              styles={styles}
+              label="Did you know?"
+              headline={`${item.category} cost ${item.amountLabel}`}
+              body={`If you redirected just 25% of that, your goal would gain ${formatCurrency(item.threeMonthTotal * 0.25)} without needing a total lifestyle reset.`}
+              ctaLabel="Build habit plan"
+              onClick={() => onGoToCoach(`Create a practical goal habit from my ${item.category} spending. Over ${timeframeLabel}, it was ${item.amountLabel}. Give me small weekly actions.`, { autoSend: true })}
+            />
+          ))}
+        </BaseSection>
+      ) : null}
+
+      <BaseSection styles={styles} title="Transaction Review">
+        <p style={styles.sectionIntro}>
+          There is not a full tagging screen yet, so this gives you a place to check the transactions currently feeding goal suggestions.
+        </p>
+        {reviewTransactions.length === 0 ? (
+          <p style={styles.emptyText}>No reviewable spending found in {timeframeLabel}.</p>
+        ) : (
+          reviewTransactions.map((transaction) => (
+            <BaseRow
+              key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`}
+              styles={styles}
+              name={`${transaction.description || "Transaction"} (${getMeaningfulCategory(transaction) || "Uncategorised"})`}
+              value={`${transaction.transaction_date || ""} - ${formatCurrency(Math.abs(Number(transaction.amount || 0)))}`}
+            />
+          ))
+        )}
+      </BaseSection>
+
       {!hasSavedGoal && suggestions.length > 0 ? (
         <BaseSection styles={styles} title="Other Smart Suggestions">
           {suggestions.map((suggestion) => (
@@ -300,7 +366,8 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
       <BaseSection styles={styles} title="What This Uses">
         <BaseRow styles={styles} name="Latest visible month" value={latestMonth.monthName} />
         <BaseRow styles={styles} name="Visible monthly bills" value={latestMonthBills > 0 ? formatCurrency(latestMonthBills) : "Not enough yet"} />
-        <BaseRow styles={styles} name="Transfer-style saving" value={formatCurrency(transferSavings)} />
+        <BaseRow styles={styles} name="Insight timeframe" value={timeframeLabel} />
+        <BaseRow styles={styles} name="Transfers ignored" value="Yes" />
         <BaseRow styles={styles} name="Saved goals" value={`${goals.length}`} />
       </BaseSection>
     </>

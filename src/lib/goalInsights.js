@@ -1,13 +1,14 @@
 export function buildGoalSuggestions({
   hasData,
   monthlyBills,
-  transferSavings,
+  behaviourInsights = [],
+  timeframeLabel,
   latestMonthName,
   subscriptionCount,
 }) {
   const safeMonthlyBills = Number(monthlyBills || 0);
-  const safeTransferSavings = Number(transferSavings || 0);
   const suggestions = [];
+  const topBehaviour = behaviourInsights[0];
 
   suggestions.push({
     key: "safety-buffer",
@@ -26,16 +27,16 @@ export function buildGoalSuggestions({
       : "Help me choose a realistic starter emergency fund target from my current money data.",
   });
 
-  if (safeTransferSavings > 0) {
+  if (topBehaviour?.threeMonthTotal > 0) {
     suggestions.push({
-      key: "protect-savings",
-      name: "Protect existing savings",
-      label: "Savings habit",
-      target: Math.max(Math.ceil((safeTransferSavings * 2) / 100) * 100, safeTransferSavings + 500),
-      current: safeTransferSavings,
-      headline: "You already have transfer-style saving activity",
-      body: "This turns money you already appear to move aside into a visible target instead of a vague habit.",
-      prompt: `I appear to have ${safeTransferSavings.toFixed(2)} of transfer-style saving activity. Turn that into a simple goal and next steps.`,
+      key: "behaviour-swap",
+      name: `${topBehaviour.category} swap fund`,
+      label: "Behaviour win",
+      target: Math.max(Math.ceil(topBehaviour.threeMonthTotal / 10) * 10, 100),
+      current: 0,
+      headline: `Turn ${topBehaviour.category} into progress`,
+      body: `In ${timeframeLabel}, ${topBehaviour.category} added up to ${topBehaviour.amountLabel}. Even redirecting part of that could create visible progress.`,
+      prompt: `Use my ${topBehaviour.category} spending over ${timeframeLabel} to create a realistic savings goal. Total was ${topBehaviour.amountLabel}. Suggest a weekly habit change, not a harsh budget.`,
     });
   }
 
