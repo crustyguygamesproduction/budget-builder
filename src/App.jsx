@@ -1,19 +1,8 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 import BottomNav from "./components/BottomNav";
 import TopBar from "./components/TopBar";
-import OnboardingTutorial from "./components/OnboardingTutorial";
-import GoalsPage from "./pages/GoalsPage";
-import CoachPage from "./pages/CoachPage";
-import SettingsPage from "./pages/SettingsPage";
-import TodayPage from "./pages/TodayPage";
 import AuthPage from "./pages/AuthPage";
-import AccountsPage from "./pages/AccountsPage";
-import ReceiptsPage from "./pages/ReceiptsPage";
-import CalendarPage from "./pages/CalendarPage";
-import DebtsPage from "./pages/DebtsPage";
-import InvestmentsPage from "./pages/InvestmentsPage";
-import UploadPage from "./pages/UploadPage";
 import { styles } from "./styles";
 import {
   buildDebtDedupeKey,
@@ -74,6 +63,18 @@ import {
 } from "./lib/finance";
 import { getBankFeedReadiness } from "./lib/bankFeeds";
 import { getSubscriptionStatus } from "./lib/productPlan";
+
+const AccountsPage = lazy(() => import("./pages/AccountsPage"));
+const CalendarPage = lazy(() => import("./pages/CalendarPage"));
+const CoachPage = lazy(() => import("./pages/CoachPage"));
+const DebtsPage = lazy(() => import("./pages/DebtsPage"));
+const GoalsPage = lazy(() => import("./pages/GoalsPage"));
+const InvestmentsPage = lazy(() => import("./pages/InvestmentsPage"));
+const OnboardingTutorial = lazy(() => import("./components/OnboardingTutorial"));
+const ReceiptsPage = lazy(() => import("./pages/ReceiptsPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const TodayPage = lazy(() => import("./pages/TodayPage"));
+const UploadPage = lazy(() => import("./pages/UploadPage"));
 
 const PAGE_TITLES = {
   today: "Today",
@@ -340,6 +341,7 @@ export default function App() {
       />
 
       <main style={getMainStyle(screenWidth, page)}>
+        <Suspense fallback={<div style={styles.loading}>Opening {PAGE_TITLES[page] || "Money Hub"}...</div>}>
         {page === "today" && (
           <TodayPage
             transactions={smartTransactions}
@@ -541,14 +543,17 @@ export default function App() {
             styles={styles}
           />
         )}
+        </Suspense>
       </main>
-      <OnboardingTutorial
-        setPage={setPage}
-        userId={session.user.id}
-        screenWidth={screenWidth}
-        transactionCount={transactions.length}
-        accountCount={accounts.length}
-      />
+      <Suspense fallback={null}>
+        <OnboardingTutorial
+          setPage={setPage}
+          userId={session.user.id}
+          screenWidth={screenWidth}
+          transactionCount={transactions.length}
+          accountCount={accounts.length}
+        />
+      </Suspense>
       <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
     </div>
   );

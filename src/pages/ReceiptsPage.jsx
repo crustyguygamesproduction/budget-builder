@@ -7,6 +7,11 @@ import {
   parseAppDate,
   toIsoDate,
 } from "../lib/finance";
+import {
+  buildPrivateStoragePath,
+  openSignedStorageFile,
+  validateSensitiveFile,
+} from "../lib/security";
 import { Section } from "../components/ui";
 
 export default function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach, styles }) {
@@ -79,6 +84,13 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
     const selectedFile = event.target.files[0];
     if (!selectedFile) return;
 
+    const validation = validateSensitiveFile(selectedFile);
+    if (!validation.ok) {
+      alert(validation.message);
+      event.target.value = "";
+      return;
+    }
+
     setFile(selectedFile);
     if (!keepFile) setKeepFile(true);
 
@@ -117,16 +129,18 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
       data: { user },
     } = await supabase.auth.getUser();
 
-    let fileUrl = null;
+    let filePath = null;
     let fileType = file?.type || null;
 
     if (file && keepFile) {
-      const safeName = file.name.replace(/\s+/g, "-").toLowerCase();
-      const filePath = `${user.id}/${Date.now()}-${safeName}`;
+      filePath = buildPrivateStoragePath(user.id, "receipts", file.name);
 
       const { error: uploadError } = await supabase.storage
         .from("receipts")
-        .upload(filePath, file);
+        .upload(filePath, file, {
+          cacheControl: "private, max-age=0, no-store",
+          upsert: false,
+        });
 
       if (uploadError) {
         setSaving(false);
@@ -134,8 +148,6 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
         return;
       }
 
-      const { data } = supabase.storage.from("receipts").getPublicUrl(filePath);
-      fileUrl = data.publicUrl;
     }
 
     const displayName = merchant.trim() || file?.name.replace(/\.[^.]+$/, "") || "Saved receipt";
@@ -155,7 +167,8 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
       receipt_date: receiptDate || null,
       source: file ? "upload" : "manual",
       matched_status: match ? "matched" : "unmatched",
-      file_url: fileUrl,
+      file_path: filePath,
+      file_url: null,
       file_type: fileType,
       ai_summary: receiptSummary,
     };
@@ -195,7 +208,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
 
   const receiptCounts = {
     all: receipts.length,
-    warranty: receipts.filter((receipt) => Boolean(receipt.file_url)).length,
+    warranty: receipts.filter((receipt) => Boolean(receipt.file_path || receipt.file_url)).length,
     matched: receipts.filter((receipt) => receipt.matched_status === "matched").length,
     manual: receipts.filter((receipt) => receipt.matched_status !== "matched").length,
   };
@@ -208,7 +221,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
       receiptFilter === "all"
         ? true
         : receiptFilter === "warranty"
-        ? Boolean(receipt.file_url)
+        ? Boolean(receipt.file_path || receipt.file_url)
         : receiptFilter === "matched"
         ? receipt.matched_status === "matched"
         : receipt.matched_status !== "matched";
@@ -396,15 +409,19 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
                     <div>
                       <strong>{receipt.merchant || "Receipt"}</strong>
                       <p style={styles.transactionMeta}>
-                        {receipt.receipt_date || "No date"} - {receipt.matched_status === "matched" ? "Matched" : "Unmatched"} - {receipt.file_url ? "File saved" : "Details only"}
+                        {receipt.receipt_date || "No date"} - {receipt.matched_status === "matched" ? "Matched" : "Unmatched"} - {receipt.file_path || receipt.file_url ? "File saved" : "Details only"}
                       </p>
                     </div>
                     <strong>{formatCurrency(receipt.total || 0)}</strong>
                   </div>
                   {receipt.ai_summary ? <p style={styles.signalBody}>{receipt.ai_summary}</p> : null}
                   <div style={styles.inlineBtnRow}>
-                    {receipt.file_url ? (
-                      <button style={styles.secondaryInlineBtn} type="button" onClick={() => window.open(receipt.file_url, "_blank", "noopener,noreferrer")}>
+                    {receipt.file_path || receipt.file_url ? (
+                      <button
+                        style={styles.secondaryInlineBtn}
+                        type="button"
+                        onClick={() => openReceiptFile(receipt)}
+                      >
                         Open file
                       </button>
                     ) : null}
@@ -433,4 +450,19 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
       )}
     </>
   );
+}
+
+async function openReceiptFile(receipt) {
+  try {
+    if (receipt.file_path) {
+      await openSignedStorageFile(supabase, "receipts", receipt.file_path);
+      return;
+    }
+
+    if (receipt.file_url) {
+      window.open(receipt.file_url, "_blank", "noopener,noreferrer");
+    }
+  } catch (error) {
+    alert(error.message || "Could not open that receipt securely.");
+  }
 }

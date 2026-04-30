@@ -2,6 +2,7 @@
 import { supabase } from "../supabase";
 import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, normalizeText, numberOrNull } from "../lib/finance";
+import { buildPrivateStoragePath, validateSensitiveFile } from "../lib/security";
 
 export default function InvestmentsPage({
   investments,
@@ -136,16 +137,19 @@ export default function InvestmentsPage({
         data: { user },
       } = await supabase.auth.getUser();
 
-      const safeName = documentFile.name.replace(/\s+/g, "-").toLowerCase();
-      const filePath = `${user.id}/documents/investment/${Date.now()}-${safeName}`;
+      const validation = validateSensitiveFile(documentFile);
+      if (!validation.ok) throw new Error(validation.message);
+
+      const filePath = buildPrivateStoragePath(user.id, "documents/investment", documentFile.name);
       const { error: uploadError } = await supabase.storage
         .from("receipts")
-        .upload(filePath, documentFile, { upsert: false });
+        .upload(filePath, documentFile, {
+          cacheControl: "private, max-age=0, no-store",
+          upsert: false,
+        });
 
       if (uploadError) throw uploadError;
 
-      const { data: publicData } = supabase.storage.from("receipts").getPublicUrl(filePath);
-      const fileUrl = publicData.publicUrl;
       const documentDataUrl = documentFile.type.startsWith("image/")
         ? await fileToDataUrl(documentFile)
         : null;
@@ -153,7 +157,8 @@ export default function InvestmentsPage({
         user_id: user.id,
         record_type: "investment",
         file_name: documentFile.name,
-        file_url: fileUrl,
+        file_path: filePath,
+        file_url: null,
         file_type: documentFile.type || null,
         extraction_status: documentFile.type.startsWith("image/") ? "processing" : "uploaded",
       };
@@ -175,7 +180,7 @@ export default function InvestmentsPage({
           mode: "extract_investment_document",
           message: aiText.trim(),
           context: {
-            document_url: fileUrl,
+            document_path: filePath,
             document_name: documentFile.name,
             document_data_url: documentDataUrl,
           },
@@ -424,7 +429,21 @@ export default function InvestmentsPage({
           style={styles.input}
           type="file"
           accept="image/*,.pdf"
-          onChange={(e) => setDocumentFile(e.target.files?.[0] || null)}
+          onChange={(e) => {
+            const nextFile = e.target.files?.[0] || null;
+            if (!nextFile) {
+              setDocumentFile(null);
+              return;
+            }
+            const validation = validateSensitiveFile(nextFile);
+            if (!validation.ok) {
+              alert(validation.message);
+              e.target.value = "";
+              setDocumentFile(null);
+              return;
+            }
+            setDocumentFile(nextFile);
+          }}
         />
         {documentFile ? <p style={styles.smallMuted}>{documentFile.name}</p> : null}
         {aiNote ? <p style={styles.smallMuted}>{aiNote}</p> : null}

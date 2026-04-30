@@ -55,6 +55,15 @@
 - The Supabase publishable key is safe to ship only when RLS policies are correct. Never expose service-role keys in Vite, Vercel client env vars, or browser code.
 - Keep document and receipt storage buckets private unless each object path is protected by user-specific storage policies.
 - Treat AI context as sensitive financial data. Edge functions should avoid logging full transaction payloads in production.
+- `20260430_secure_upload_storage.sql` makes the `receipts` storage bucket private, adds user-path storage policies, and adds `file_path` columns so new uploads use short-lived signed links instead of public URLs.
+- New client uploads validate file type and size before parsing or storage. CSV statements are capped separately from receipt/document images and PDFs.
+- Existing public `file_url` rows should be migrated or re-uploaded before launch if the bucket was public while testing.
+- Keep signed document links short-lived. The browser should not store permanent public URLs for receipts, debts, investments, statements, or bank-feed exports.
+
+## Bundle Size
+
+- Page modules are lazy-loaded from `src/App.jsx` so the first load no longer pulls every feature page into the main JavaScript chunk.
+- Keep future page-specific libraries inside their page modules so Vite can split them out.
 
 ## Pre-Deploy Checks
 

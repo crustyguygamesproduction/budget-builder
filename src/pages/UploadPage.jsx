@@ -11,6 +11,7 @@ import {
 } from "../lib/importAnalysis";
 import { buildUploadGuidance } from "../lib/uploadGuidance";
 import { getTotals, normalizeText } from "../lib/finance";
+import { validateStatementCsvFile } from "../lib/security";
 
 export default function UploadPage({
   accounts,
@@ -163,13 +164,11 @@ export default function UploadPage({
       });
 
       if (error) {
-        console.error("AI mapping failed:", error);
         return null;
       }
 
       return data || null;
-    } catch (error) {
-      console.error("AI mapping request failed:", error);
+    } catch {
       return null;
     }
   }
@@ -429,6 +428,12 @@ export default function UploadPage({
     if (selectedFiles.length === 0) return;
 
     selectedFiles.forEach((file) => {
+      const validation = validateStatementCsvFile(file);
+      if (!validation.ok) {
+        alert(`${file.name}: ${validation.message}`);
+        return;
+      }
+
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -455,12 +460,13 @@ export default function UploadPage({
             return [...withoutDuplicate, nextCard].sort((a, b) => a.fileName.localeCompare(b.fileName));
           });
         },
-        error(parseError) {
-          console.error("CSV parse failed:", parseError);
+        error() {
           alert(`Could not read ${file.name}. Please check the file format and try again.`);
         },
       });
     });
+
+    event.target.value = "";
 
     event.target.value = "";
   }
