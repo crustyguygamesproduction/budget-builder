@@ -492,6 +492,7 @@ export default function App() {
             onGoToCoach={openCoachWithPrompt}
             onNavigate={setPage}
             onChange={loadGoals}
+            onAccountsChange={loadAccounts}
             styles={styles}
             helpers={{
               getDataFreshness,

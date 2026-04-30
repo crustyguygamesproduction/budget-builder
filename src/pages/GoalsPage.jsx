@@ -9,7 +9,7 @@ import {
 import { buildGoalSuggestions } from "../lib/goalInsights";
 import { getMeaningfulCategory } from "../lib/finance";
 
-export default function GoalsPage({ goals, accounts = [], transactions, onGoToCoach, onNavigate, onChange, styles, helpers }) {
+export default function GoalsPage({ goals, accounts = [], transactions, onGoToCoach, onNavigate, onChange, onAccountsChange, styles, helpers }) {
   const {
     getDataFreshness,
     getDisplayedMonthSnapshot,
@@ -29,14 +29,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     current_amount: "",
     timeframe: "fast",
   });
-  const [confirmedSavingsAccounts, setConfirmedSavingsAccounts] = useState(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      return JSON.parse(localStorage.getItem("moneyhub-savings-accounts") || "{}");
-    } catch {
-      return {};
-    }
-  });
+  const [savingAccountRole, setSavingAccountRole] = useState("");
 
   const latestDate = transactions.map((t) => new Date(t.transaction_date)).filter((date) => !Number.isNaN(date.getTime())).sort((a, b) => b - a)[0] || new Date();
   const timeframeStart = new Date(latestDate.getFullYear(), latestDate.getMonth() - 2, 1);
@@ -70,12 +63,14 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     const incomingTransfers = tx.filter((transaction) => Number(transaction.amount) > 0 && isInternalTransferLike(transaction));
     const outgoingTransfers = tx.filter((transaction) => Number(transaction.amount) < 0 && isInternalTransferLike(transaction));
     const externalOut = tx.filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction));
+    const accountDecision = account.counts_as_savings;
     const nameLooksSavings = /save|saver|saving|isa|pot|vault|reserve|emergency/i.test(`${account.name || ""} ${account.nickname || ""}`);
-    const likelySavings = confirmedSavingsAccounts[account.id] === true || (nameLooksSavings && incomingTransfers.length >= outgoingTransfers.length && externalOut.length <= 2);
+    const inferredSavings = nameLooksSavings && incomingTransfers.length >= outgoingTransfers.length && externalOut.length <= 2;
+    const likelySavings = accountDecision === true || (accountDecision == null && inferredSavings);
     const netTransferIn = incomingTransfers.reduce((sum, item) => sum + Number(item.amount || 0), 0) - outgoingTransfers.reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0);
     return { account, likelySavings, nameLooksSavings, netTransferIn: Math.max(netTransferIn, 0) };
   });
-  const suggestedSavingsAccounts = accountStats.filter((item) => item.nameLooksSavings && confirmedSavingsAccounts[item.account.id] == null);
+  const suggestedSavingsAccounts = accountStats.filter((item) => item.nameLooksSavings && item.account.counts_as_savings == null);
   const confirmedSavingsIn = accountStats
     .filter((item) => item.likelySavings)
     .reduce((sum, item) => sum + item.netTransferIn, 0);
@@ -118,11 +113,24 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
       timeframe: "fast",
     });
   }
-  function confirmSavingsAccount(accountId, value) {
-    const next = { ...confirmedSavingsAccounts, [accountId]: value };
-    setConfirmedSavingsAccounts(next);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("moneyhub-savings-accounts", JSON.stringify(next));
+  async function confirmSavingsAccount(accountId, value) {
+    setSavingAccountRole(accountId);
+    try {
+      const { error } = await supabase
+        .from("accounts")
+        .update({
+          counts_as_savings: value,
+          account_role: value ? "savings" : "not_savings",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", accountId);
+
+      if (error) throw error;
+      await onAccountsChange?.();
+    } catch {
+      alert("Could not save that account choice yet.");
+    } finally {
+      setSavingAccountRole("");
     }
   }
 
@@ -301,8 +309,8 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
               <strong>{account.name}</strong>
               <p style={styles.transactionMeta}>Should transfers into this account count as savings?</p>
               <div style={styles.inlineBtnRow}>
-                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, true)}>Yes</button>
-                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, false)}>No</button>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, true)} disabled={savingAccountRole === account.id}>Yes</button>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, false)} disabled={savingAccountRole === account.id}>No</button>
               </div>
             </div>
           ))}
