@@ -5,6 +5,7 @@ export default function AuthPage({ screenWidth, styles }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
 
   function validateAuthInput(isSignup = false) {
     const normalizedEmail = email.trim().toLowerCase();
@@ -39,7 +40,12 @@ export default function AuthPage({ screenWidth, styles }) {
 
   async function signup() {
     const credentials = validateAuthInput(true);
-    if (!credentials || busy) return;
+if (!credentials || busy) return;
+
+if (!agreedToPrivacy) {
+  alert("Please agree to the Privacy Policy before creating an account.");
+  return;
+}
 
     setBusy(true);
     const { error } = await supabase.auth.signUp(credentials);
@@ -95,9 +101,25 @@ export default function AuthPage({ screenWidth, styles }) {
           </button>
         </form>
 
-        <button style={styles.secondaryBtn} onClick={signup} type="button" disabled={busy}>
-          Create Account
-        </button>
+        <label style={{ ...styles.checkRow, marginTop: 14, marginBottom: 10 }}>
+  <input
+    type="checkbox"
+    checked={agreedToPrivacy}
+    onChange={(e) => setAgreedToPrivacy(e.target.checked)}
+  />
+  <span>
+    I agree to the Privacy Policy and understand my data may be processed to provide insights and AI features.
+  </span>
+</label>
+
+<button
+  style={styles.secondaryBtn}
+  onClick={signup}
+  type="button"
+  disabled={busy || !agreedToPrivacy}
+>
+  Create Account
+</button>
       </section>
     </div>
   );
