@@ -9,7 +9,7 @@ import {
 } from "../lib/finance";
 import {
   buildPrivateStoragePath,
-  openSignedStorageFile,
+  getSignedStorageUrl,
   prepareSensitiveUploadFile,
   validateSensitiveFile,
 } from "../lib/security";
@@ -25,6 +25,8 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
   const [match, setMatch] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [receiptFilter, setReceiptFilter] = useState("all");
+  const [viewerReceipt, setViewerReceipt] = useState(null);
+  const [viewerError, setViewerError] = useState("");
 
   function guessFromFileName(fileName) {
     const clean = fileName.toLowerCase();
@@ -251,6 +253,24 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
     setReceiptFilter("all");
   }
 
+  async function showReceipt(receipt) {
+    setViewerError("");
+
+    try {
+      const url = receipt.file_path
+        ? await getSignedStorageUrl(supabase, "receipts", receipt.file_path)
+        : receipt.file_url;
+
+      setViewerReceipt({
+        title: receipt.merchant || "Receipt",
+        url,
+        type: receipt.file_type || "",
+      });
+    } catch (error) {
+      setViewerError(error.message || "Could not show that receipt.");
+    }
+  }
+
   return (
     <>
       <Section
@@ -426,9 +446,9 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
                       <button
                         style={styles.secondaryInlineBtn}
                         type="button"
-                        onClick={() => openReceiptFile(receipt)}
+                        onClick={() => showReceipt(receipt)}
                       >
-                        Open file
+                        Show receipt
                       </button>
                     ) : null}
                     <button
@@ -454,21 +474,33 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
           <p style={styles.emptyText}>No receipts saved yet. Once you keep one, this becomes the place to find warranty proof, return receipts, and old purchases fast.</p>
         </Section>
       )}
+
+      {viewerReceipt ? (
+        <Section
+          title={viewerReceipt.title}
+          styles={styles}
+          right={
+            <button style={styles.ghostBtn} type="button" onClick={() => setViewerReceipt(null)}>
+              Close
+            </button>
+          }
+        >
+          {viewerError ? <p style={styles.errorNote}>{viewerError}</p> : null}
+          {viewerReceipt.type.startsWith("image/") || viewerReceipt.url.includes(".webp") ? (
+            <img
+              src={viewerReceipt.url}
+              alt={viewerReceipt.title}
+              style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 12 }}
+            />
+          ) : (
+            <iframe
+              title={viewerReceipt.title}
+              src={viewerReceipt.url}
+              style={{ width: "100%", minHeight: "70vh", border: "1px solid #dbe4f0", borderRadius: 12 }}
+            />
+          )}
+        </Section>
+      ) : null}
     </>
   );
-}
-
-async function openReceiptFile(receipt) {
-  try {
-    if (receipt.file_path) {
-      await openSignedStorageFile(supabase, "receipts", receipt.file_path);
-      return;
-    }
-
-    if (receipt.file_url) {
-      window.open(receipt.file_url, "_blank", "noopener,noreferrer");
-    }
-  } catch (error) {
-    alert(error.message || "Could not open that receipt securely.");
-  }
 }

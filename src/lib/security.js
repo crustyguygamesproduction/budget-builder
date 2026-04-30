@@ -118,3 +118,14 @@ export async function openSignedStorageFile(supabase, bucket, filePath) {
   if (error) throw error;
   window.open(data.signedUrl, "_blank", "noopener,noreferrer");
 }
+
+export async function getSignedStorageUrl(supabase, bucket, filePath, expiresIn = 300) {
+  if (!filePath) return "";
+
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(filePath, expiresIn);
+
+  if (error) throw error;
+  return data.signedUrl;
+}
