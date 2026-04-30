@@ -2,6 +2,7 @@
 import { supabase } from "./supabase";
 import BottomNav from "./components/BottomNav";
 import TopBar from "./components/TopBar";
+import OnboardingTutorial from "./components/OnboardingTutorial";
 import GoalsPage from "./pages/GoalsPage";
 import CoachPage from "./pages/CoachPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -492,7 +493,12 @@ export default function App() {
           />
         )}
       </main>
-
+      <OnboardingTutorial
+  setPage={setPage}
+  screenWidth={screenWidth}
+  transactionCount={transactions.length}
+  accountCount={accounts.length}
+/>
       <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
     </div>
   );

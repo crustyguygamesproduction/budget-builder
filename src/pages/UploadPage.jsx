@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import { supabase } from "../supabase";
 import { ActionCard, InsightCard, MiniCard, Row, Section } from "../components/ui";
@@ -33,10 +33,27 @@ export default function UploadPage({
 
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [showUploadHint, setShowUploadHint] = useState(false);
   const uploadGuidance = useMemo(
     () => buildUploadGuidance({ statementImports, existingTransactions }),
     [statementImports, existingTransactions]
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const shouldHighlight = sessionStorage.getItem("moneyhub-highlight-upload") === "true";
+    if (!shouldHighlight) return undefined;
+
+    sessionStorage.removeItem("moneyhub-highlight-upload");
+    const showTimer = window.setTimeout(() => setShowUploadHint(true), 0);
+    const hideTimer = window.setTimeout(() => setShowUploadHint(false), 7000);
+
+    return () => {
+      window.clearTimeout(showTimer);
+      window.clearTimeout(hideTimer);
+    };
+  }, []);
 
   function cleanAmount(value) {
     const raw = String(value ?? "").trim();
@@ -631,14 +648,38 @@ export default function UploadPage({
           and get much sharper once you have around three months of history.
         </p>
 
-        <input
-          id="statement-upload-input"
-          type="file"
-          accept=".csv"
-          multiple
-          onChange={handleFiles}
-          style={styles.input}
-        />
+        <div
+  style={{
+    position: "relative",
+    padding: showUploadHint ? 14 : 0,
+    borderRadius: 18,
+    boxShadow: showUploadHint
+      ? "0 0 0 4px rgba(34, 211, 238, 0.22), 0 18px 50px rgba(15, 23, 42, 0.18)"
+      : "none",
+    transition: "all 220ms ease",
+  }}
+>
+  {showUploadHint && (
+    <div
+      style={{
+        marginBottom: 10,
+        fontWeight: 800,
+        color: "#0891b2",
+      }}
+    >
+      Start here: choose your CSV statement
+    </div>
+  )}
+
+  <input
+    id="statement-upload-input"
+    type="file"
+    accept=".csv"
+    multiple
+    onChange={handleFiles}
+    style={styles.input}
+  />
+</div>
       </Section>
 
       <Section styles={styles} title="Upload Plan">
