@@ -260,12 +260,18 @@ export default function OnboardingExperience({
           <p className="mh-ob-body">{current.body}</p>
 
           {phase === PHASES.WELCOME && (
-            <div className="mh-ob-tip-strip" aria-label="Quick setup benefits">
-  <span>Upload statements in any order</span>
-  <span>We organise and categorise everything</span>
-  <span>Ask anything about your money</span>
-</div>
-          )}
+  <>
+    <div className="mh-ob-tip-strip" aria-label="Quick setup benefits">
+      <span>Upload statements in any order</span>
+      <span>We organise and categorise everything</span>
+      <span>Ask anything about your money</span>
+    </div>
+
+    <p className="mh-ob-trust-line">
+      Your data stays private and secure.
+    </p>
+  </>
+)}
 
           {phase === PHASES.WELCOME && (
             <div className="mh-ob-actions">
