@@ -10,6 +10,7 @@ import {
 import {
   buildPrivateStoragePath,
   openSignedStorageFile,
+  prepareSensitiveUploadFile,
   validateSensitiveFile,
 } from "../lib/security";
 import { Section } from "../components/ui";
@@ -133,11 +134,16 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
     let fileType = file?.type || null;
 
     if (file && keepFile) {
-      filePath = buildPrivateStoragePath(user.id, "receipts", file.name);
+      const uploadFile = await prepareSensitiveUploadFile(file, {
+        maxDimension: 1600,
+        quality: 0.7,
+      });
+      fileType = uploadFile.type || fileType;
+      filePath = buildPrivateStoragePath(user.id, "receipts", uploadFile.name);
 
       const { error: uploadError } = await supabase.storage
         .from("receipts")
-        .upload(filePath, file, {
+        .upload(filePath, uploadFile, {
           cacheControl: "private, max-age=0, no-store",
           upsert: false,
         });

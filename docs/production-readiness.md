@@ -57,6 +57,7 @@
 - Treat AI context as sensitive financial data. Edge functions should avoid logging full transaction payloads in production.
 - `20260430_secure_upload_storage.sql` makes the `receipts` storage bucket private, adds user-path storage policies, and adds `file_path` columns so new uploads use short-lived signed links instead of public URLs.
 - New client uploads validate file type and size before parsing or storage. CSV statements are capped separately from receipt/document images and PDFs.
+- Phone-camera images are resized client-side to a maximum 1600px edge and converted to WebP before upload when that reduces file size.
 - Existing public `file_url` rows should be migrated or re-uploaded before launch if the bucket was public while testing.
 - Keep signed document links short-lived. The browser should not store permanent public URLs for receipts, debts, investments, statements, or bank-feed exports.
 

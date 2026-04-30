@@ -75,6 +75,39 @@ export function buildPrivateStoragePath(userId, folder, fileName) {
   return `${userId}/${folder}/${nonce}-${safeName}`;
 }
 
+export async function prepareSensitiveUploadFile(file, options = {}) {
+  if (!file || !String(file.type || "").startsWith("image/")) return file;
+
+  const maxDimension = options.maxDimension || 1600;
+  const quality = options.quality || 0.72;
+  const targetType = options.type || "image/webp";
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d", { alpha: false });
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, targetType, quality));
+    if (!blob || blob.size >= file.size) return file;
+
+    const baseName = sanitizeStorageFileName(file.name).replace(/\.[^.]+$/, "");
+    return new File([blob], `${baseName || "upload"}.webp`, {
+      type: targetType,
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  }
+}
+
 export async function openSignedStorageFile(supabase, bucket, filePath) {
   if (!filePath) return;
 

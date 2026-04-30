@@ -2,7 +2,7 @@
 import { supabase } from "../supabase";
 import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, normalizeText, numberOrNull } from "../lib/finance";
-import { buildPrivateStoragePath, validateSensitiveFile } from "../lib/security";
+import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
 
 export default function InvestmentsPage({
   investments,
@@ -140,18 +140,22 @@ export default function InvestmentsPage({
       const validation = validateSensitiveFile(documentFile);
       if (!validation.ok) throw new Error(validation.message);
 
-      const filePath = buildPrivateStoragePath(user.id, "documents/investment", documentFile.name);
+      const uploadFile = await prepareSensitiveUploadFile(documentFile, {
+        maxDimension: 1600,
+        quality: 0.7,
+      });
+      const filePath = buildPrivateStoragePath(user.id, "documents/investment", uploadFile.name);
       const { error: uploadError } = await supabase.storage
         .from("receipts")
-        .upload(filePath, documentFile, {
+        .upload(filePath, uploadFile, {
           cacheControl: "private, max-age=0, no-store",
           upsert: false,
         });
 
       if (uploadError) throw uploadError;
 
-      const documentDataUrl = documentFile.type.startsWith("image/")
-        ? await fileToDataUrl(documentFile)
+      const documentDataUrl = uploadFile.type.startsWith("image/")
+        ? await fileToDataUrl(uploadFile)
         : null;
       const documentInsertPayload = {
         user_id: user.id,
@@ -159,11 +163,11 @@ export default function InvestmentsPage({
         file_name: documentFile.name,
         file_path: filePath,
         file_url: null,
-        file_type: documentFile.type || null,
-        extraction_status: documentFile.type.startsWith("image/") ? "processing" : "uploaded",
+        file_type: uploadFile.type || documentFile.type || null,
+        extraction_status: uploadFile.type.startsWith("image/") ? "processing" : "uploaded",
       };
 
-      if (!documentFile.type.startsWith("image/")) {
+      if (!uploadFile.type.startsWith("image/")) {
         try {
           await supabase.from("financial_documents").insert(documentInsertPayload);
           await onDocumentsChange();
