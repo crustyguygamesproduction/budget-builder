@@ -7,6 +7,7 @@ This repo has been refactored to keep future work cheap and focused. Start here 
 - `src/App.jsx` is the app shell only: auth/session, Supabase data loading, derived shared data, page routing, and prop wiring.
 - Page UI lives in `src/pages/*Page.jsx`.
 - Shared visual primitives live in `src/components/ui.jsx`.
+- First-time setup tips live in `src/components/onboarding/*`.
 - Shared inline styles live in `src/styles.js`.
 - Responsive/status visual helpers live in `src/lib/styleHelpers.js`.
 

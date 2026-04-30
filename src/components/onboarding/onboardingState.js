@@ -1,18 +1,22 @@
 export const ONBOARDING_DONE_KEY = "moneyhub-onboarding-complete";
 export const ONBOARDING_REPLAY_EVENT = "moneyhub:onboarding-replay";
 
-export function hasCompletedOnboarding() {
+function getOnboardingKey(userId) {
+  return userId ? `${ONBOARDING_DONE_KEY}:${userId}` : ONBOARDING_DONE_KEY;
+}
+
+export function hasCompletedOnboarding(userId) {
   if (typeof window === "undefined") return true;
-  return localStorage.getItem(ONBOARDING_DONE_KEY) === "true";
+  return localStorage.getItem(getOnboardingKey(userId)) === "true";
 }
 
-export function completeOnboarding() {
+export function completeOnboarding(userId) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(ONBOARDING_DONE_KEY, "true");
+  localStorage.setItem(getOnboardingKey(userId), "true");
 }
 
-export function replayOnboarding() {
+export function replayOnboarding(userId) {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(ONBOARDING_DONE_KEY);
+  localStorage.removeItem(getOnboardingKey(userId));
   window.dispatchEvent(new CustomEvent(ONBOARDING_REPLAY_EVENT));
 }

@@ -9,6 +9,7 @@ Use this first when making changes so future work does not start by rereading th
 - `src/lib/styleHelpers.js` owns responsive/status style helper functions.
 - `src/components/ui.jsx` owns repeated small UI primitives: `Section`, `MiniCard`, `Row`, `InsightCard`, and `ActionCard`.
 - `src/components/TopBar.jsx` and `src/components/BottomNav.jsx` own the app frame.
+- `src/components/onboarding/*` owns first-time setup tips, user-scoped onboarding memory, and setup replay.
 
 ## Pages
 

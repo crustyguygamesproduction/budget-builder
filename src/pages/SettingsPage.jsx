@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
 import { Row, Section } from "../components/ui";
+import { replayOnboarding } from "../components/onboarding/onboardingState";
 
 export default function SettingsPage({
+  userId,
   viewerAccess,
   onViewerChange,
   viewerMode,
@@ -98,6 +100,18 @@ export default function SettingsPage({
         <Row name="Saved finance documents" value={`${financialDocuments.length}`} styles={styles} />
         <Row name="Image extraction" value="Live" styles={styles} />
         <Row name="PDF storage" value="Live" styles={styles} />
+      </Section>
+
+      <Section title="Help And Tips" styles={styles}>
+        <p style={styles.sectionIntro}>
+          Quick fintech-style pointers for getting clean answers from Money Hub. Tips appear once per login account and can be skipped.
+        </p>
+        <Row name="Best first upload" value="Oldest statements first" styles={styles} />
+        <Row name="If a number looks odd" value="Ask AI why" styles={styles} />
+        <Row name="Before saving goals" value="Check estimates" styles={styles} />
+        <button style={styles.ghostBtn} type="button" onClick={() => replayOnboarding(userId)}>
+          Replay setup tips
+        </button>
       </Section>
 
       <Section title="Product Direction" styles={styles}>

@@ -14,7 +14,7 @@ export function buildGoalSuggestions({
     name: "Emergency buffer",
     label: "Safety buffer",
     target: Math.max(Math.ceil((safeMonthlyBills * 3) / 100) * 100, 1500),
-    current: safeTransferSavings,
+    current: 0,
     headline: safeMonthlyBills > 0
       ? "Build a buffer from your real bills"
       : "Start with a simple starter buffer",

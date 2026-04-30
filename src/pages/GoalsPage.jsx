@@ -151,9 +151,16 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
             <div style={styles.inlineInfoBlock}>
               <BaseRow styles={styles} name="Smart suggestion" value={primarySuggestion.name} />
               <BaseRow styles={styles} name="Suggested target" value={formatCurrency(primarySuggestion.target)} />
-              <BaseRow styles={styles} name="Starting point" value={formatCurrency(primarySuggestion.current)} />
+              <BaseRow
+                styles={styles}
+                name="Progress today"
+                value={primarySuggestion.current > 0 ? formatCurrency(primarySuggestion.current) : "Not set yet"}
+              />
             </div>
           ) : null}
+          <p style={styles.transactionMeta}>
+            Suggestions are planning prompts only. Money Hub will not treat an estimated amount as a saved goal until you choose to save it.
+          </p>
         </BaseSection>
       )}
 

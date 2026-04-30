@@ -150,6 +150,23 @@
   margin-top: 28px;
 }
 
+.mh-ob-tip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 22px;
+}
+
+.mh-ob-tip-strip span {
+  padding: 9px 11px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .mh-ob-primary,
 .mh-ob-secondary {
   border: 0;

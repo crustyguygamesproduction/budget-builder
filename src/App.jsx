@@ -484,6 +484,7 @@ export default function App() {
 
         {page === "settings" && (
           <SettingsPage
+            userId={session.user.id}
             viewerAccess={viewerAccess}
             onViewerChange={loadViewerAccess}
             viewerMode={viewerMode}
@@ -494,11 +495,12 @@ export default function App() {
         )}
       </main>
       <OnboardingTutorial
-  setPage={setPage}
-  screenWidth={screenWidth}
-  transactionCount={transactions.length}
-  accountCount={accounts.length}
-/>
+        setPage={setPage}
+        userId={session.user.id}
+        screenWidth={screenWidth}
+        transactionCount={transactions.length}
+        accountCount={accounts.length}
+      />
       <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
     </div>
   );

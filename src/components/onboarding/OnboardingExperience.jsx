@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeOnboarding,
   hasCompletedOnboarding,
@@ -17,14 +17,13 @@ const PHASES = {
 const DEFAULT_ANCHORS = {
   today: ["[data-page='today']", "[data-nav='today']", "button[aria-label*='Today']", "button"],
   upload: ["[data-page='upload']", "[data-nav='upload']", "button[aria-label*='Upload']"],
-  coach: ["[data-page='coach']", "[data-nav='coach']", "button[aria-label*='Coach']"],
 };
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const onChange = () => setReduced(media.matches);
     onChange();
@@ -97,17 +96,42 @@ function MiniDashboard({ hasData }) {
 
 export default function OnboardingExperience({
   setPage,
+  userId,
   screenWidth = 1024,
   transactionCount = 0,
   accountCount = 0,
 }) {
-  const [isOpen, setIsOpen] = useState(() => !hasCompletedOnboarding());
+  const [isOpen, setIsOpen] = useState(() => !hasCompletedOnboarding(userId));
   const [phase, setPhase] = useState(PHASES.WELCOME);
   const [spotlight, setSpotlight] = useState(null);
   const dialogRef = useRef(null);
   const reducedMotion = usePrefersReducedMotion();
   const compact = screenWidth < 680;
   const hasData = transactionCount > 0 || accountCount > 0;
+
+  const close = useCallback((nextPage = null) => {
+    completeOnboarding(userId);
+
+    if (nextPage === "upload" && typeof window !== "undefined") {
+      sessionStorage.setItem("moneyhub-highlight-upload", "true");
+    }
+
+    if (nextPage) {
+      setPage(nextPage);
+    }
+
+    setTimeout(() => {
+      setIsOpen(false);
+    }, 50);
+  }, [setPage, userId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsOpen(!hasCompletedOnboarding(userId));
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [userId]);
 
   useEffect(() => {
     function handleReplay() {
@@ -120,7 +144,7 @@ export default function OnboardingExperience({
   }, []);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const focusTimer = window.setTimeout(() => dialogRef.current?.focus(), 40);
@@ -135,10 +159,10 @@ export default function OnboardingExperience({
       window.clearTimeout(focusTimer);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [isOpen]);
+  }, [close, isOpen]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) return undefined;
     const updateSpotlight = () => setSpotlight(getSpotlightRect(phase));
     updateSpotlight();
     window.addEventListener("resize", updateSpotlight);
@@ -152,12 +176,12 @@ export default function OnboardingExperience({
   const content = useMemo(() => ({
     [PHASES.WELCOME]: {
       eyebrow: "Money Hub setup",
-      title: hasData ? "You’re nearly there." : "Sort your money without the boring setup.",
+      title: hasData ? "You're nearly there." : "Sort your money without the boring setup.",
       body: hasData
-        ? "We’ll show the fastest route through the app, then get out of your way."
+        ? "We'll show the fastest route through the app, then get out of your way."
         : "No long tour. Choose one action and get to a useful money view quickly.",
       primary: "Start setup",
-      secondary: "Skip for now",
+      secondary: "Skip tips",
     },
     [PHASES.CHOOSE]: {
       eyebrow: "Pick your first win",
@@ -166,7 +190,7 @@ export default function OnboardingExperience({
     },
     [PHASES.UPLOAD]: {
       eyebrow: "Fastest value",
-      title: "Upload one statement. We’ll turn it into insight.",
+      title: "Upload one statement. We'll turn it into insight.",
       body: "The app reads your file, spots patterns, categorises spending and makes the dashboard useful immediately.",
       primary: "Go to upload",
       secondary: "Choose another route",
@@ -182,31 +206,15 @@ export default function OnboardingExperience({
     },
     [PHASES.EXPLORE]: {
       eyebrow: "No pressure",
-      title: "Explore the app first. Add data when you’re ready.",
-      body: "You can look around without being trapped in setup. We’ll keep a small nudge to upload when useful.",
+      title: "Explore the app first. Add data when you're ready.",
+      body: "You can look around without being trapped in setup. We'll keep a small nudge to upload when useful.",
       primary: "Explore Today",
       secondary: "Choose another route",
-      proof: ["No forced setup", "Replay anytime in Settings", "Useful prompts stay subtle"],
+      proof: ["No forced setup", "Replay anytime in More", "Useful prompts stay subtle"],
     },
   }), [hasData]);
 
   if (!isOpen) return null;
-
-  function close(nextPage = null) {
-  completeOnboarding();
-
-  if (nextPage === "upload" && typeof window !== "undefined") {
-    sessionStorage.setItem("moneyhub-highlight-upload", "true");
-  }
-
-  if (nextPage) {
-    setPage(nextPage);
-  }
-
-  setTimeout(() => {
-    setIsOpen(false);
-  }, 50);
-}
 
   function goToPhase(nextPhase, page = null) {
     if (page) setPage(page);
@@ -230,7 +238,7 @@ export default function OnboardingExperience({
         tabIndex={-1}
       >
         <button className="mh-ob-close" type="button" onClick={() => close()} aria-label="Skip onboarding">
-          ×
+          x
         </button>
 
         <div className="mh-ob-copy">
@@ -243,6 +251,14 @@ export default function OnboardingExperience({
           <p className="mh-ob-eyebrow">{current.eyebrow}</p>
           <h2 id="mh-ob-title">{current.title}</h2>
           <p className="mh-ob-body">{current.body}</p>
+
+          {phase === PHASES.WELCOME && (
+            <div className="mh-ob-tip-strip" aria-label="Quick setup tips">
+              <span>Upload statements oldest to newest</span>
+              <span>Check guessed accounts before saving</span>
+              <span>Ask AI why when a number looks off</span>
+            </div>
+          )}
 
           {phase === PHASES.WELCOME && (
             <div className="mh-ob-actions">
@@ -258,18 +274,18 @@ export default function OnboardingExperience({
           {phase === PHASES.CHOOSE && (
             <div className="mh-ob-options">
               <button className="mh-ob-option mh-ob-option-featured" type="button" onClick={() => close("upload")}>
-                <span className="mh-ob-icon">↥</span>
+                <span className="mh-ob-icon">1</span>
                 <strong>Upload statement</strong>
                 <em>Fastest way to see real insight.</em>
                 <small>Recommended</small>
               </button>
               <button className="mh-ob-option" type="button" onClick={() => goToPhase(PHASES.BANK)}>
-                <span className="mh-ob-icon">⌁</span>
+                <span className="mh-ob-icon">2</span>
                 <strong>Connect bank</strong>
                 <em>Open Banking slot, coming soon.</em>
               </button>
               <button className="mh-ob-option" type="button" onClick={() => close("today")}>
-                <span className="mh-ob-icon">✦</span>
+                <span className="mh-ob-icon">3</span>
                 <strong>Just explore</strong>
                 <em>No pressure. Add data later.</em>
               </button>
