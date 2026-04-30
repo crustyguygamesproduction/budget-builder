@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { supabase } from "../supabase";
 
-export default function AuthPage({ screenWidth, styles, onShowPrivacy }) {
+const PrivacyPage = lazy(() => import("./PrivacyPage"));
+
+export default function AuthPage({ screenWidth, styles }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   function validateAuthInput(isSignup = false) {
     const normalizedEmail = email.trim().toLowerCase();
@@ -113,7 +116,7 @@ export default function AuthPage({ screenWidth, styles, onShowPrivacy }) {
             />
           <span>
             I agree to the{" "}
-            <button type="button" style={styles.textLink || linkStyle} onClick={onShowPrivacy}>
+            <button type="button" style={styles.textLink || linkStyle} onClick={() => setShowPrivacy(true)}>
               Privacy Policy
             </button>{" "}
             and understand my data is processed to provide insights and AI features.
@@ -129,6 +132,13 @@ export default function AuthPage({ screenWidth, styles, onShowPrivacy }) {
         >
           Create Account
         </button>
+        {showPrivacy ? (
+          <div style={{ marginTop: 18 }}>
+            <Suspense fallback={<p style={styles.smallMuted}>Opening privacy...</p>}>
+              <PrivacyPage onBack={() => setShowPrivacy(false)} styles={styles} />
+            </Suspense>
+          </div>
+        ) : null}
       </section>
     </div>
   );

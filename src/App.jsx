@@ -487,6 +487,7 @@ export default function App() {
         {page === "goals" && (
           <GoalsPage
             goals={goals}
+            accounts={accounts}
             transactions={smartTransactions}
             onGoToCoach={openCoachWithPrompt}
             onNavigate={setPage}

@@ -9,7 +9,7 @@ import {
 import { buildGoalSuggestions } from "../lib/goalInsights";
 import { getMeaningfulCategory } from "../lib/finance";
 
-export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate, onChange, styles, helpers }) {
+export default function GoalsPage({ goals, accounts = [], transactions, onGoToCoach, onNavigate, onChange, styles, helpers }) {
   const {
     getDataFreshness,
     getDisplayedMonthSnapshot,
@@ -27,6 +27,15 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
     name: "",
     target_amount: "",
     current_amount: "",
+    timeframe: "fast",
+  });
+  const [confirmedSavingsAccounts, setConfirmedSavingsAccounts] = useState(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      return JSON.parse(localStorage.getItem("moneyhub-savings-accounts") || "{}");
+    } catch {
+      return {};
+    }
   });
 
   const latestDate = transactions.map((t) => new Date(t.transaction_date)).filter((date) => !Number.isNaN(date.getTime())).sort((a, b) => b - a)[0] || new Date();
@@ -56,6 +65,20 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
   const reviewTransactions = timeframeTransactions
     .filter((transaction) => Number(transaction.amount) < 0)
     .slice(0, 6);
+  const accountStats = accounts.map((account) => {
+    const tx = transactions.filter((transaction) => transaction.account_id === account.id);
+    const incomingTransfers = tx.filter((transaction) => Number(transaction.amount) > 0 && isInternalTransferLike(transaction));
+    const outgoingTransfers = tx.filter((transaction) => Number(transaction.amount) < 0 && isInternalTransferLike(transaction));
+    const externalOut = tx.filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction));
+    const nameLooksSavings = /save|saver|saving|isa|pot|vault|reserve|emergency/i.test(`${account.name || ""} ${account.nickname || ""}`);
+    const likelySavings = confirmedSavingsAccounts[account.id] === true || (nameLooksSavings && incomingTransfers.length >= outgoingTransfers.length && externalOut.length <= 2);
+    const netTransferIn = incomingTransfers.reduce((sum, item) => sum + Number(item.amount || 0), 0) - outgoingTransfers.reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0);
+    return { account, likelySavings, nameLooksSavings, netTransferIn: Math.max(netTransferIn, 0) };
+  });
+  const suggestedSavingsAccounts = accountStats.filter((item) => item.nameLooksSavings && confirmedSavingsAccounts[item.account.id] == null);
+  const confirmedSavingsIn = accountStats
+    .filter((item) => item.likelySavings)
+    .reduce((sum, item) => sum + item.netTransferIn, 0);
   const latestMonthBills = transactions
     .filter(
       (transaction) =>
@@ -92,7 +115,15 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
       name: suggestion.name,
       target_amount: String(suggestion.target),
       current_amount: suggestion.current ? String(suggestion.current.toFixed(2)) : "",
+      timeframe: "fast",
     });
+  }
+  function confirmSavingsAccount(accountId, value) {
+    const next = { ...confirmedSavingsAccounts, [accountId]: value };
+    setConfirmedSavingsAccounts(next);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("moneyhub-savings-accounts", JSON.stringify(next));
+    }
   }
 
   async function saveGoal(extra = {}) {
@@ -122,7 +153,7 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
 
       if (error) throw error;
 
-      setForm({ name: "", target_amount: "", current_amount: "" });
+      setForm({ name: "", target_amount: "", current_amount: "", timeframe: "fast" });
       await onChange();
       alert("Goal saved.");
     } catch (error) {
@@ -145,6 +176,19 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
           ? "The figures below are suggestions from your statement patterns, not goals you created."
           : "Upload a statement first and Money Hub can suggest goals from real spending instead of generic targets.",
       };
+  const settledIncome = timeframeTransactions
+    .filter((transaction) => Number(transaction.amount) > 0)
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const settledSpend = timeframeTransactions
+    .filter((transaction) => Number(transaction.amount) < 0)
+    .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  const monthlyIncome = settledIncome / 3;
+  const monthlySpend = settledSpend / 3;
+  const monthlyRoom = Math.max(monthlyIncome - monthlySpend, 0);
+  const topBehaviourSave = behaviourInsights[0] ? behaviourInsights[0].monthlyAverage * 0.25 : 0;
+  const likelyMonthlySaving = Math.max(confirmedSavingsIn / 3, monthlyRoom * 0.5, topBehaviourSave);
+  const planningGap = hasSavedGoal ? gap : Math.max(Number(form.target_amount || 0) - Number(form.current_amount || 0), 0);
+  const fastestMonths = planningGap > 0 && likelyMonthlySaving > 0 ? Math.ceil(planningGap / likelyMonthlySaving) : null;
 
   return (
     <>
@@ -224,6 +268,47 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
         </div>
       </BaseSection>
 
+      <BaseSection styles={styles} title="Fastest Route">
+        <p style={styles.sectionIntro}>
+          This uses {timeframeLabel}, ignores account-to-account transfers unless they land in a confirmed savings-style account, and keeps bills/spending in the picture.
+        </p>
+        <BaseRow styles={styles} name="Average income" value={formatCurrency(monthlyIncome)} />
+        <BaseRow styles={styles} name="Average spending" value={formatCurrency(monthlySpend)} />
+        <BaseRow styles={styles} name="Likely monthly saving room" value={likelyMonthlySaving > 0 ? formatCurrency(likelyMonthlySaving) : "Not enough room visible"} />
+        <BaseRow styles={styles} name="Fastest estimate" value={fastestMonths ? `${fastestMonths} month${fastestMonths === 1 ? "" : "s"}` : "Add a target first"} />
+        <button
+          style={styles.primaryBtn}
+          type="button"
+          onClick={() =>
+            onGoToCoach(
+              `I want to reach ${hasSavedGoal ? mainGoal.name : form.name || "my goal"} as fast as realistically possible. Target ${formatCurrency(hasSavedGoal ? target : Number(form.target_amount || 0))}, current ${formatCurrency(hasSavedGoal ? current : Number(form.current_amount || 0))}. Use income ${formatCurrency(monthlyIncome)}, spending ${formatCurrency(monthlySpend)}, bills ${formatCurrency(latestMonthBills)}, debts if visible, and behaviour changes from ${timeframeLabel}.`,
+              { autoSend: true }
+            )
+          }
+          disabled={!hasSavedGoal && !Number(form.target_amount || 0)}
+        >
+          Ask AI for fastest realistic plan
+        </button>
+      </BaseSection>
+
+      {suggestedSavingsAccounts.length > 0 ? (
+        <BaseSection styles={styles} title="Savings Account Check">
+          <p style={styles.sectionIntro}>
+            I found an account that looks savings-like. Confirm once and I will count money that lands there and stays there as savings progress.
+          </p>
+          {suggestedSavingsAccounts.map(({ account }) => (
+            <div key={account.id} style={styles.signalCard}>
+              <strong>{account.name}</strong>
+              <p style={styles.transactionMeta}>Should transfers into this account count as savings?</p>
+              <div style={styles.inlineBtnRow}>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, true)}>Yes</button>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, false)}>No</button>
+              </div>
+            </div>
+          ))}
+        </BaseSection>
+      ) : null}
+
       <BaseSection styles={styles} title={hasSavedGoal ? "Next Moves" : "Save A Goal"}>
         {!hasSavedGoal ? (
           <>
@@ -247,6 +332,16 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
               value={form.current_amount}
               onChange={(e) => setForm((prev) => ({ ...prev, current_amount: e.target.value }))}
             />
+            <select
+              style={styles.input}
+              value={form.timeframe}
+              onChange={(e) => setForm((prev) => ({ ...prev, timeframe: e.target.value }))}
+            >
+              <option value="fast">As fast as realistically possible</option>
+              <option value="6m">Within 6 months</option>
+              <option value="12m">Within 12 months</option>
+              <option value="24m">Within 24 months</option>
+            </select>
             <button style={styles.primaryBtn} type="button" onClick={() => saveGoal()} disabled={saving}>
               {saving ? "Saving..." : "Save Goal"}
             </button>
@@ -368,6 +463,7 @@ export default function GoalsPage({ goals, transactions, onGoToCoach, onNavigate
         <BaseRow styles={styles} name="Visible monthly bills" value={latestMonthBills > 0 ? formatCurrency(latestMonthBills) : "Not enough yet"} />
         <BaseRow styles={styles} name="Insight timeframe" value={timeframeLabel} />
         <BaseRow styles={styles} name="Transfers ignored" value="Yes" />
+        <BaseRow styles={styles} name="Confirmed savings transfer in" value={formatCurrency(confirmedSavingsIn)} />
         <BaseRow styles={styles} name="Saved goals" value={`${goals.length}`} />
       </BaseSection>
     </>
