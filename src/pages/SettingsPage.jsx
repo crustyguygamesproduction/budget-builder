@@ -2,6 +2,8 @@ import { useState } from "react";
 import { supabase } from "../supabase";
 import { Row, Section } from "../components/ui";
 import { replayOnboarding } from "../components/onboarding/onboardingState";
+import { BANK_FEED_PROVIDER } from "../lib/bankFeeds";
+import { FREE_FEATURES, PREMIUM_FEATURES, getPremiumFeatureSummary } from "../lib/productPlan";
 
 export default function SettingsPage({
   userId,
@@ -10,6 +12,9 @@ export default function SettingsPage({
   viewerMode,
   setViewerMode,
   financialDocuments,
+  subscriptionStatus,
+  bankFeedReadiness,
+  bankConnections,
   styles,
 }) {
   const [viewerEmail, setViewerEmail] = useState("");
@@ -49,6 +54,29 @@ export default function SettingsPage({
 
   return (
     <>
+      <Section title="Plan And Premium" styles={styles}>
+        <p style={styles.sectionIntro}>{getPremiumFeatureSummary(subscriptionStatus).body}</p>
+        <Row name="Current plan" value={subscriptionStatus?.label || "Free"} styles={styles} />
+        <Row name="Paid hook" value="Automatic bank sync and smarter warnings" styles={styles} />
+        <Row name="Payment path" value="Stripe subscription table ready" styles={styles} />
+        <div style={styles.compactInsightGrid}>
+          <FeatureList title="Free" features={FREE_FEATURES} styles={styles} />
+          <FeatureList title="Premium" features={PREMIUM_FEATURES} styles={styles} />
+        </div>
+      </Section>
+
+      <Section title="Live Bank Feed Prep" styles={styles}>
+        <p style={styles.sectionIntro}>{bankFeedReadiness.body}</p>
+        <Row name="Recommended provider" value={BANK_FEED_PROVIDER.name} styles={styles} />
+        <Row name="Why this first" value="Lowest-cost UK AIS path" styles={styles} />
+        <Row name="Connected banks" value={`${bankConnections.length}`} styles={styles} />
+        <Row name="Active feeds" value={`${bankFeedReadiness.activeCount || 0}`} styles={styles} />
+        <Row name="Fallbacks" value={BANK_FEED_PROVIDER.fallbackProviders.join(", ")} styles={styles} />
+        <button style={styles.primaryBtn} type="button" disabled>
+          Bank connection coming in Premium
+        </button>
+      </Section>
+
       <Section title="Family / Viewer Mode" styles={styles}>
         <p style={styles.sectionIntro}>
           Shared viewer mode is now wired in as a read-only access layer.
@@ -118,10 +146,22 @@ export default function SettingsPage({
         <Row name="Statement-first setup" value="Core" styles={styles} />
         <Row name="Bulk multi-statement upload" value="Live" styles={styles} />
         <Row name="Recurring payment inference" value="Live" styles={styles} />
-        <Row name="Debt/investment smart tracking" value="Live" styles={styles} />
-        <Row name="Live market pricing" value="Live" styles={styles} />
-        <Row name="Viewer mode" value="Live" styles={styles} />
+        <Row name="Debt/investment smart tracking" value="Premium" styles={styles} />
+        <Row name="Live market pricing" value="Premium" styles={styles} />
+        <Row name="Viewer mode" value="Premium" styles={styles} />
+        <Row name="Live bank feeds" value="Premium prep" styles={styles} />
       </Section>
     </>
+  );
+}
+
+function FeatureList({ title, features, styles }) {
+  return (
+    <div style={styles.insightCard}>
+      <p style={styles.insightLabel}>{title}</p>
+      {features.map((feature) => (
+        <Row key={feature} name={feature} value="Included" styles={styles} />
+      ))}
+    </div>
   );
 }

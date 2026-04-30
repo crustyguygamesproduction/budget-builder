@@ -738,3 +738,82 @@ export function getTrendSummary(transactions) {
   };
 }
 
+export function getMoneyIntelligenceSummary({
+  transactions = [],
+  accounts = [],
+  debts = [],
+  investments = [],
+  dataFreshness,
+  statementCoverage,
+  subscriptionSummary,
+  recurringSummary,
+  bankFeedReadiness,
+}) {
+  let score = 0;
+  const boosts = [];
+  const gaps = [];
+
+  if (statementCoverage?.monthCount >= 6) {
+    score += 28;
+    boosts.push("Six or more months of history gives the app a strong pattern base.");
+  } else if (statementCoverage?.monthCount >= 3) {
+    score += 20;
+    boosts.push("Three or more months makes recurring reads and AI advice believable.");
+  } else if (statementCoverage?.monthCount > 0) {
+    score += 10;
+    gaps.push("More months of statements will make recurring bills and trends sharper.");
+  } else {
+    gaps.push("Upload a first statement to unlock a real read.");
+  }
+
+  if (dataFreshness?.hasCurrentMonthData && !dataFreshness?.needsUpload) {
+    score += 18;
+    boosts.push("Current-month data is visible.");
+  } else if (dataFreshness?.hasData) {
+    score += 6;
+    gaps.push("The latest statement is needed before Today can feel current.");
+  }
+
+  if (bankFeedReadiness?.status === "active") {
+    score += 20;
+    boosts.push("Live bank data can keep the app fresh without manual uploads.");
+  } else if (bankFeedReadiness?.status === "ready_to_connect") {
+    score += 8;
+    gaps.push("Connect a live bank feed to turn history reads into current reads.");
+  }
+
+  if (accounts.length > 0) score += 8;
+  else gaps.push("Add or connect accounts so balances and transfers are easier to trust.");
+
+  if ((recurringSummary?.label || "") === "High") {
+    score += 10;
+    boosts.push("Recurring bills and income are now visible enough for calendar forecasting.");
+  } else if (transactions.length > 0) {
+    gaps.push("More repeated transactions will improve bill and subscription detection.");
+  }
+
+  if ((subscriptionSummary?.count || 0) > 0) {
+    score += 5;
+    boosts.push("Subscription checks are available.");
+  }
+
+  if (debts.length > 0) score += 6;
+  else gaps.push("Premium debt tracking would make payoff pace and minimum-payment warnings clearer.");
+
+  if (investments.length > 0) score += 5;
+  else gaps.push("Premium investment tracking would make long-term progress easier to see.");
+
+  const boundedScore = Math.max(0, Math.min(Math.round(score), 100));
+  const label = boundedScore >= 75 ? "Strong" : boundedScore >= 50 ? "Good" : boundedScore >= 25 ? "Learning" : "Early";
+
+  return {
+    score: boundedScore,
+    label,
+    headline: `${label} intelligence: ${boundedScore}/100`,
+    body: boosts[0] || gaps[0] || "Money Hub is ready to learn from your financial data.",
+    nextBestMove: gaps[0] || "Keep the newest bank data connected so the app stays sharp.",
+    boosts,
+    gaps,
+  };
+}
+

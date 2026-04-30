@@ -4,21 +4,46 @@ import { supabase } from "../supabase";
 export default function AuthPage({ screenWidth, styles }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  function validateAuthInput(isSignup = false) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      alert("Enter a valid email address.");
+      return null;
+    }
+
+    if (isSignup && password.length < 10) {
+      alert("Use at least 10 characters for your password.");
+      return null;
+    }
+
+    if (!password) {
+      alert("Enter your password.");
+      return null;
+    }
+
+    return { email: normalizedEmail, password };
+  }
 
   async function login() {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const credentials = validateAuthInput(false);
+    if (!credentials || busy) return;
+
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword(credentials);
+    setBusy(false);
 
     if (error) alert(error.message);
   }
 
   async function signup() {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+    const credentials = validateAuthInput(true);
+    if (!credentials || busy) return;
+
+    setBusy(true);
+    const { error } = await supabase.auth.signUp(credentials);
+    setBusy(false);
 
     if (error) {
       alert(error.message);
@@ -65,12 +90,12 @@ export default function AuthPage({ screenWidth, styles }) {
             autoComplete="current-password"
           />
 
-          <button style={styles.primaryBtn} type="submit">
-            Login
+          <button style={styles.primaryBtn} type="submit" disabled={busy}>
+            {busy ? "Working..." : "Login"}
           </button>
         </form>
 
-        <button style={styles.secondaryBtn} onClick={signup} type="button">
+        <button style={styles.secondaryBtn} onClick={signup} type="button" disabled={busy}>
           Create Account
         </button>
       </section>

@@ -17,6 +17,8 @@ export default function CoachPage({
   debtSignals,
   investmentSignals,
   aiMessages,
+  subscriptionStatus,
+  bankFeedReadiness,
   onChange,
   screenWidth,
   viewportHeight,
@@ -123,6 +125,8 @@ export default function CoachPage({
         baseMessages,
         helpers,
         userMessage: text,
+        subscriptionStatus,
+        bankFeedReadiness,
       });
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {

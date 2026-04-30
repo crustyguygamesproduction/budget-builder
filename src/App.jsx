@@ -46,6 +46,7 @@ import {
   getHistorySummary,
   getInvestmentPerformanceSummary,
   getInvestmentPortfolioSnapshot,
+  getMoneyIntelligenceSummary,
   getRecurringSummary,
   getStatementCoverageSummary,
   getSubscriptionSummary,
@@ -71,6 +72,8 @@ import {
   isTransactionInMonth,
   numberOrNull,
 } from "./lib/finance";
+import { getBankFeedReadiness } from "./lib/bankFeeds";
+import { getSubscriptionStatus } from "./lib/productPlan";
 
 const PAGE_TITLES = {
   today: "Today",
@@ -102,6 +105,8 @@ export default function App() {
   const [statementImports, setStatementImports] = useState([]);
   const [viewerAccess, setViewerAccess] = useState([]);
   const [financialDocuments, setFinancialDocuments] = useState([]);
+  const [subscriptionProfile, setSubscriptionProfile] = useState(null);
+  const [bankConnections, setBankConnections] = useState([]);
   const [viewerMode, setViewerMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("moneyhub-viewer-preview") === "true";
@@ -165,6 +170,8 @@ export default function App() {
       loadStatementImports(),
       loadViewerAccess(),
       loadFinancialDocuments(),
+      loadSubscriptionProfile(),
+      loadBankConnections(),
     ]);
   }
 
@@ -268,6 +275,34 @@ export default function App() {
     setFinancialDocuments(data || []);
   }
 
+  async function loadSubscriptionProfile() {
+    const { data, error } = await supabase
+      .from("subscription_profiles")
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      setSubscriptionProfile(null);
+      return;
+    }
+
+    setSubscriptionProfile(data || null);
+  }
+
+  async function loadBankConnections() {
+    const { data, error } = await supabase
+      .from("bank_connections")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setBankConnections([]);
+      return;
+    }
+
+    setBankConnections(data || []);
+  }
+
   function openCoachWithPrompt(prompt, options = {}) {
     if (typeof window !== "undefined") {
       localStorage.setItem(COACH_DRAFT_KEY, prompt);
@@ -288,6 +323,8 @@ export default function App() {
   const debtSignals = getDebtSignals(smartTransactions);
   const investmentSignals = getInvestmentSignals(smartTransactions);
   const trendSummary = getTrendSummary(smartTransactions);
+  const subscriptionStatus = getSubscriptionStatus(subscriptionProfile);
+  const bankFeedReadiness = getBankFeedReadiness(subscriptionStatus, bankConnections);
 
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
   if (!session) return <AuthPage screenWidth={screenWidth} styles={styles} />;
@@ -314,6 +351,8 @@ export default function App() {
             investmentSignals={investmentSignals}
             trendSummary={trendSummary}
             statementImports={statementImports}
+            subscriptionStatus={subscriptionStatus}
+            bankFeedReadiness={bankFeedReadiness}
             onGoToCoach={openCoachWithPrompt}
             onNavigate={setPage}
             screenWidth={screenWidth}
@@ -328,6 +367,8 @@ export default function App() {
               getDisplayedMonthSnapshot,
               getHomeStatusPillStyle,
               getInvestmentStatusSummary,
+              getMoneyIntelligenceSummary,
+              getRecurringSummary,
               getStatementCoverageSummary,
               getSubscriptionSummary,
               getTopCategories,
@@ -368,6 +409,8 @@ export default function App() {
             onDocumentsChange={loadFinancialDocuments}
             trendSummary={trendSummary}
             viewerMode={viewerMode}
+            subscriptionStatus={subscriptionStatus}
+            bankFeedReadiness={bankFeedReadiness}
             styles={styles}
             helpers={{
               buildDebtDedupeKey,
@@ -464,6 +507,8 @@ export default function App() {
             debtSignals={debtSignals}
             investmentSignals={investmentSignals}
             aiMessages={aiMessages}
+            subscriptionStatus={subscriptionStatus}
+            bankFeedReadiness={bankFeedReadiness}
             onChange={loadAiMessages}
             screenWidth={screenWidth}
             viewportHeight={viewportHeight}
@@ -490,6 +535,9 @@ export default function App() {
             viewerMode={viewerMode}
             setViewerMode={setViewerMode}
             financialDocuments={financialDocuments}
+            subscriptionStatus={subscriptionStatus}
+            bankFeedReadiness={bankFeedReadiness}
+            bankConnections={bankConnections}
             styles={styles}
           />
         )}

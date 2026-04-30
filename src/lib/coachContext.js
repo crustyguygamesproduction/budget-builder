@@ -13,6 +13,8 @@ export function buildCoachContext({
   baseMessages,
   helpers,
   userMessage,
+  subscriptionStatus,
+  bankFeedReadiness,
 }) {
   const {
     getDebtMonthlyStatus,
@@ -58,6 +60,10 @@ export function buildCoachContext({
     debt_signals: debtSignals.slice(0, 5),
     investment_signals: investmentSignals.slice(0, 5),
     subscription_summary: subscriptionSummary,
+    subscription_status: subscriptionStatus,
+    bank_feed_readiness: bankFeedReadiness,
+    premium_guidance:
+      "Free users should get useful manual-upload advice. Premium should be positioned around live bank feeds, sharper AI, debt payoff tracking, investment tracking, calendar forecasts, and viewer mode.",
     recent_messages: baseMessages.slice(-6).map((msg) => ({
       role: msg.role,
       content: msg.content,

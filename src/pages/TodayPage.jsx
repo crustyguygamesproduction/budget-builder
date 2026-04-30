@@ -22,6 +22,8 @@ export default function TodayPage({
   investmentSignals,
   trendSummary,
   statementImports,
+  subscriptionStatus,
+  bankFeedReadiness,
   onGoToCoach,
   onNavigate,
   screenWidth,
@@ -38,6 +40,8 @@ export default function TodayPage({
     getDisplayedMonthSnapshot,
     getHomeStatusPillStyle,
     getInvestmentStatusSummary,
+    getMoneyIntelligenceSummary,
+    getRecurringSummary,
     getStatementCoverageSummary,
     getSubscriptionSummary,
     getTopCategories,
@@ -56,6 +60,33 @@ export default function TodayPage({
   const monthSnapshot = useMemo(() => getDisplayedMonthSnapshot(transactions), [getDisplayedMonthSnapshot, transactions]);
   const cashSummary = useMemo(() => getCashSummary(accounts, transactions), [getCashSummary, accounts, transactions]);
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [getSubscriptionSummary, transactions]);
+  const recurringSummary = useMemo(() => getRecurringSummary(transactions), [getRecurringSummary, transactions]);
+  const intelligenceSummary = useMemo(
+    () =>
+      getMoneyIntelligenceSummary({
+        transactions,
+        accounts,
+        debts,
+        investments,
+        dataFreshness,
+        statementCoverage,
+        subscriptionSummary,
+        recurringSummary,
+        bankFeedReadiness,
+      }),
+    [
+      getMoneyIntelligenceSummary,
+      transactions,
+      accounts,
+      debts,
+      investments,
+      dataFreshness,
+      statementCoverage,
+      subscriptionSummary,
+      recurringSummary,
+      bankFeedReadiness,
+    ]
+  );
 
   const recent = transactions.slice(0, 3);
   const latestVisibleTransactions = useMemo(() => {
@@ -423,6 +454,45 @@ export default function TodayPage({
               styles={styles}
             />
           ))}
+          <InsightCard
+            label="Intelligence"
+            headline={intelligenceSummary.headline}
+            body={intelligenceSummary.nextBestMove}
+            ctaLabel="Ask how to improve it"
+            onClick={() =>
+              onGoToCoach(
+                `My Money Hub intelligence score is ${intelligenceSummary.score}/100. Explain the biggest gaps and the quickest way to improve it.`,
+                { autoSend: true }
+              )
+            }
+            styles={styles}
+          />
+        </div>
+      </Section>
+
+      <Section title={subscriptionStatus?.isPremium ? "Premium Setup" : "Premium Unlocks"} styles={styles}>
+        <div style={styles.compactInsightGrid}>
+          <InsightCard
+            label={subscriptionStatus?.label || "Free"}
+            headline={bankFeedReadiness.headline}
+            body={bankFeedReadiness.body}
+            ctaLabel={subscriptionStatus?.isPremium ? "Open settings" : "See paid benefits"}
+            onClick={() => onNavigate("settings")}
+            styles={styles}
+          />
+          <InsightCard
+            label="Best monetisation"
+            headline="Charge for automatic, current advice"
+            body="Keep uploads free, then make live bank sync, stronger AI, debts, investments, and forecast calendar the paid reason to stay."
+            ctaLabel="Ask AI for pricing"
+            onClick={() =>
+              onGoToCoach(
+                "Design the best free vs paid plan for Money Hub. Keep the free plan useful, but make Premium compelling with live bank feeds, debt tracking, investments, calendar forecasts, and smarter AI.",
+                { autoSend: true }
+              )
+            }
+            styles={styles}
+          />
         </div>
       </Section>
 
