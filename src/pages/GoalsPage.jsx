@@ -39,7 +39,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     return !Number.isNaN(date.getTime()) && date >= timeframeStart && date <= latestDate && !isInternalTransferLike(transaction);
   });
   const categoryTotals = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0)
+    .filter((transaction) => Number(transaction.amount) < 0 && !transaction.is_bill && !transaction.is_subscription)
     .reduce((groups, transaction) => {
       const category = getMeaningfulCategory(transaction) || "Spending";
       groups[category] = (groups[category] || 0) + Math.abs(Number(transaction.amount || 0));
@@ -52,11 +52,11 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
       amountLabel: formatCurrency(total),
       monthlyAverage: total / 3,
     }))
-    .filter((item) => !["Income", "Internal Transfer", "Uncategorised"].includes(item.category))
+    .filter((item) => !["Income", "Internal Transfer", "Uncategorised", "Spending", "Bill"].includes(item.category))
     .sort((a, b) => b.threeMonthTotal - a.threeMonthTotal)
     .slice(0, 4);
   const reviewTransactions = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0)
+    .filter((transaction) => Number(transaction.amount) < 0 && !transaction.is_bill && !transaction.is_subscription)
     .slice(0, 6);
   const accountStats = accounts.map((account) => {
     const tx = transactions.filter((transaction) => transaction.account_id === account.id);
@@ -197,6 +197,28 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
   const likelyMonthlySaving = Math.max(confirmedSavingsIn / 3, monthlyRoom * 0.5, topBehaviourSave);
   const planningGap = hasSavedGoal ? gap : Math.max(Number(form.target_amount || 0) - Number(form.current_amount || 0), 0);
   const fastestMonths = planningGap > 0 && likelyMonthlySaving > 0 ? Math.ceil(planningGap / likelyMonthlySaving) : null;
+  const goalPaths = [
+    {
+      label: "Fastest safe route",
+      headline: likelyMonthlySaving > 0 ? `${formatCurrency(likelyMonthlySaving)} possible monthly push` : "Need cleaner data first",
+      body: "Uses income, spending, confirmed savings transfers, bills, and realistic behaviour swaps. Best when you want the target as soon as possible without pretending bills do not exist.",
+      prompt: "Build my fastest safe route to my goal. Use bills, debts, spending, income, and realistic cuts. Do not count internal transfers unless they go into confirmed savings accounts.",
+    },
+    {
+      label: "Behaviour route",
+      headline: behaviourInsights[0] ? `Start with ${behaviourInsights[0].category}` : "Find one flexible category",
+      body: behaviourInsights[0]
+        ? `${behaviourInsights[0].category} is the clearest flexible lever in ${timeframeLabel}. This is more useful than a vague budget cut.`
+        : "Once categories are cleaner, this will find one flexible habit to change first.",
+      prompt: "Turn my biggest flexible spending category into a goal plan with small weekly behaviour changes.",
+    },
+    {
+      label: "Stability route",
+      headline: "Protect bills before chasing targets",
+      body: "Good goals should leave rent, bills, debts, and essential spending protected first. This route builds a goal from what is safely left.",
+      prompt: "Check what I can safely save after rent, bills, debts, subscriptions, and essentials. Then give me a goal plan.",
+    },
+  ];
 
   return (
     <>
@@ -244,7 +266,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
 
       <BaseSection styles={styles} title={hasSavedGoal ? "Goal Read" : "Smart Goal Ideas"}>
         <p style={styles.sectionIntro}>
-          Goal insights use visible spending from {timeframeLabel}. Internal transfers between your own accounts are ignored so they are not mistaken for savings.
+          Goal insights use {timeframeLabel}. Transfers are ignored unless they land in a confirmed savings-style account, and behaviour wins exclude bills and subscriptions.
         </p>
         <div style={styles.aiInsightGrid}>
           <BaseInsightCard styles={styles}
@@ -400,7 +422,21 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
             />
           ))}
         </BaseSection>
-      ) : null}
+      ) : (
+        <BaseSection styles={styles} title="Behaviour Wins">
+          <p style={styles.sectionIntro}>
+            I cannot see a clean flexible spending category yet. A lot of the visible spend is either bills, subscriptions, transfers, or still too broadly labelled as Spending.
+          </p>
+          <BaseActionCard
+            styles={styles}
+            label="Data quality"
+            headline="Goals need cleaner categories"
+            body="Upload more statements or review transactions so Money Hub can separate takeaways, shopping, transport, bills, and transfers properly."
+            actionLabel="Review transactions"
+            onClick={() => onNavigate("accounts")}
+          />
+        </BaseSection>
+      )}
 
       <BaseSection styles={styles} title="Transaction Review">
         <p style={styles.sectionIntro}>
@@ -420,34 +456,31 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
         )}
       </BaseSection>
 
-      {!hasSavedGoal && suggestions.length > 0 ? (
-        <BaseSection styles={styles} title="Other Smart Suggestions">
-          {suggestions.map((suggestion) => (
-            <div key={suggestion.key} style={styles.signalCard}>
+      <BaseSection styles={styles} title="Goal Routes">
+        <p style={styles.sectionIntro}>
+          Pick the style of plan you want. These are routes, not random extra goals.
+        </p>
+          {goalPaths.map((route) => (
+            <div key={route.label} style={styles.signalCard}>
               <div style={styles.signalHeader}>
                 <div>
-                  <strong>{suggestion.name}</strong>
-                  <p style={styles.transactionMeta}>{suggestion.headline}</p>
+                  <strong>{route.label}</strong>
+                  <p style={styles.transactionMeta}>{route.headline}</p>
                 </div>
-                <strong>{formatCurrency(suggestion.target)}</strong>
               </div>
-              <p style={styles.signalBody}>{suggestion.body}</p>
+              <p style={styles.signalBody}>{route.body}</p>
               <div style={styles.inlineBtnRow}>
-                <button style={styles.secondaryInlineBtn} type="button" onClick={() => fillGoalForm(suggestion)}>
-                  Fill form
-                </button>
                 <button
                   style={styles.secondaryInlineBtn}
                   type="button"
-                  onClick={() => onGoToCoach(suggestion.prompt, { autoSend: true })}
+                  onClick={() => onGoToCoach(route.prompt, { autoSend: true })}
                 >
                   Ask AI
                 </button>
               </div>
             </div>
           ))}
-        </BaseSection>
-      ) : null}
+      </BaseSection>
 
       {goals.length > 1 ? (
         <BaseSection styles={styles} title="Saved Goals">

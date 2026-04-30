@@ -57,5 +57,5 @@ export function buildGoalSuggestions({
     return suggestions.slice(0, 1);
   }
 
-  return suggestions.slice(0, 3);
+  return suggestions.slice(0, 2);
 }
