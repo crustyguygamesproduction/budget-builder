@@ -180,7 +180,7 @@ export default function OnboardingExperience({
       body: hasData
         ? "We'll show the fastest route through the app, then get out of your way."
         : "No long tour. Choose one action and get to a useful money view quickly.",
-      primary: "Start setup",
+      primary: "Get started",
       secondary: "Skip tips",
     },
     [PHASES.CHOOSE]: {
@@ -253,11 +253,11 @@ export default function OnboardingExperience({
           <p className="mh-ob-body">{current.body}</p>
 
           {phase === PHASES.WELCOME && (
-            <div className="mh-ob-tip-strip" aria-label="Quick setup tips">
-              <span>Upload statements oldest to newest</span>
-              <span>Check guessed accounts before saving</span>
-              <span>Ask AI why when a number looks off</span>
-            </div>
+            <div className="mh-ob-tip-strip" aria-label="Quick setup benefits">
+  <span>Upload statements in any order</span>
+  <span>We organise and categorise everything</span>
+  <span>Ask anything about your money</span>
+</div>
           )}
 
           {phase === PHASES.WELCOME && (
