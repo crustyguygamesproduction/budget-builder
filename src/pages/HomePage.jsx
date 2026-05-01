@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
-import { formatCurrency, getMeaningfulCategory, getTotals, isInternalTransferLike } from "../lib/finance";
-import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
+import { formatCurrency, getMeaningfulCategory } from "../lib/finance";
 import { Row, Section } from "../components/ui";
 
 export default function HomePage({
   transactions,
-  transactionRules = [],
+  moneyUnderstanding,
   accounts,
   goals,
   debts,
@@ -23,25 +22,20 @@ export default function HomePage({
 }) {
   const {
     getDataFreshness,
-    getDisplayedMonthSnapshot,
     getHomeStatusPillStyle,
     getStatementCoverageSummary,
-    getSubscriptionSummary,
     getTopCategories,
     hasMatchingDebt,
     hasMatchingInvestment,
   } = helpers;
 
-  const totals = useMemo(() => getTotals(transactions), [transactions]);
   const dataFreshness = useMemo(() => getDataFreshness(transactions), [getDataFreshness, transactions]);
-  const monthSnapshot = useMemo(() => getDisplayedMonthSnapshot(transactions), [getDisplayedMonthSnapshot, transactions]);
-  const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [getSubscriptionSummary, transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [getTopCategories, transactions]);
   const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
   const visibleCash = useMemo(() => getVisibleCash(accounts), [accounts]);
-  const billMoney = useMemo(() => estimateBillMoney(transactions, subscriptionSummary), [transactions, subscriptionSummary]);
-  const regularPayments = useMemo(() => estimateRegularMonthlyPayments(subscriptionSummary, statementCoverage), [subscriptionSummary, statementCoverage]);
-  const confidenceCheckCount = useMemo(() => buildRecurringMajorPaymentCandidates(transactions, transactionRules).length, [transactions, transactionRules]);
+  const billMoney = useMemo(() => estimateBillMoney(moneyUnderstanding), [moneyUnderstanding]);
+  const regularPayments = useMemo(() => estimateRegularMonthlyPayments(moneyUnderstanding), [moneyUnderstanding]);
+  const confidenceCheckCount = moneyUnderstanding?.checks?.length || 0;
   const hasConfidenceChecks = confidenceCheckCount > 0;
   const moneyLeft = visibleCash.hasBalance ? Math.max(visibleCash.total - billMoney.total, 0) : null;
   const pressure = getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft });
@@ -141,38 +135,32 @@ function getVisibleCash(accounts) {
   return { hasBalance: values.length > 0, total: values.reduce((sum, value) => sum + value, 0) };
 }
 
-function estimateBillMoney(transactions, subscriptionSummary) {
-  const currentMonth = new Date();
-  const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`;
-  const billLike = (transactions || []).filter((transaction) => {
-    if (isInternalTransferLike(transaction)) return false;
-    if (Number(transaction.amount || 0) >= 0) return false;
-    return transaction.is_bill || transaction.is_subscription || transaction._smart_is_bill || transaction._smart_is_subscription;
-  });
-  const thisMonthBills = billLike.filter((transaction) => String(transaction.transaction_date || "").startsWith(monthKey));
-  const source = thisMonthBills.length ? thisMonthBills : billLike.slice(0, 20);
-  const total = source.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
-  const subscriptionTotal = Number(subscriptionSummary?.total || 0);
-  const includesRent = source.some((transaction) => /rent|landlord|letting/i.test(String(transaction.category || transaction._smart_category || transaction.description || "")));
+function estimateBillMoney(moneyUnderstanding) {
+  const summary = moneyUnderstanding?.summary || {};
+  const upcoming = summary.upcomingBills || [];
+  const streams = moneyUnderstanding?.billStreams || [];
+  const total = Number(summary.upcomingBillsTotal || 0);
+  const source = upcoming.length ? upcoming : streams;
   return {
-    count: source.length || subscriptionSummary?.count || 0,
-    total: Math.max(total, subscriptionTotal),
-    includesRent,
-    timeframeLabel: thisMonthBills.length ? "Bills this month" : "Bills from recent history",
+    count: source.length,
+    total,
+    includesRent: Boolean(summary.includesRent),
+    timeframeLabel: upcoming.length ? "Bills due soon" : "Bills found",
+    nextBill: summary.nextBill || null,
   };
 }
 
-function estimateRegularMonthlyPayments(subscriptionSummary, statementCoverage) {
-  const monthCount = Math.max(Number(statementCoverage?.monthCount || 0), 1);
-  const items = (subscriptionSummary?.items || []).map((item) => ({
-    ...item,
-    monthlyEstimate: Number(item.total || 0) / monthCount,
+function estimateRegularMonthlyPayments(moneyUnderstanding) {
+  const items = (moneyUnderstanding?.billStreams || []).map((item) => ({
+    name: item.name,
+    count: item.sourceCount || item.sourceMonths || 0,
+    monthlyEstimate: Number(item.amount || 0),
   })).sort((a, b) => b.monthlyEstimate - a.monthlyEstimate);
   const monthlyTotal = items.reduce((sum, item) => sum + item.monthlyEstimate, 0);
   return {
     items,
     monthlyTotal,
-    summary: items.length ? `About ${formatCurrency(monthlyTotal)} / month from ${items.length} regular payment${items.length === 1 ? "" : "s"}` : "No regular payments found yet",
+    summary: items.length ? `About ${formatCurrency(monthlyTotal)} / month from ${items.length} bill${items.length === 1 ? "" : "s"}` : "No regular bills found yet",
   };
 }
 
@@ -304,7 +292,7 @@ function CollapsiblePanel({ title, summary, children, defaultOpen = false, style
   return (
     <Section title="" styles={styles}>
       <div style={getDetailsStyle(open)}>
-        <button type="button" onClick={() => setOpen((current) => !current)} style={getSummaryStyle(open)} aria-expanded={open}>
+        <button type="button" onClick={() => setOpen((current) => !current)} style={getSummaryStyle()} aria-expanded={open}>
           <span style={getSummaryTextStyle()}>
             <strong>{title}</strong>
             <small style={getSummarySmallStyle()}>{summary}</small>
@@ -395,7 +383,7 @@ function getDetailsStyle(open) {
   };
 }
 
-function getSummaryStyle(open) {
+function getSummaryStyle() {
   return {
     cursor: "pointer",
     display: "flex",

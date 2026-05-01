@@ -15,6 +15,7 @@ export function buildCoachContext({
   userMessage,
   subscriptionStatus,
   bankFeedReadiness,
+  moneyUnderstanding,
 }) {
   const {
     getDebtMonthlyStatus,
@@ -37,11 +38,22 @@ export function buildCoachContext({
   }));
 
   const statementIntelligence = getStatementIntelligenceContext(transactions, userMessage);
+  const interpretedRecentTransactions =
+    moneyUnderstanding?.aiContext?.recent_transactions ||
+    transactions.slice(0, 10).map((transaction) => ({
+      date: transaction.transaction_date,
+      name: transaction._real_merchant_name || transaction.description,
+      category: transaction._smart_category || transaction.category,
+      amount: transaction.amount,
+      is_transfer: Boolean(transaction._smart_internal_transfer || transaction.is_internal_transfer),
+      is_bill: Boolean(transaction._smart_is_bill || transaction.is_bill),
+      is_subscription: Boolean(transaction._smart_is_subscription || transaction.is_subscription),
+    }));
 
   return {
     totals,
     transaction_count: transactions.length,
-    recent_transactions: transactions.slice(0, 10),
+    recent_transactions: interpretedRecentTransactions,
     searchable_transactions: statementIntelligence.searchableTransactions,
     searchable_transaction_count: statementIntelligence.searchableTransactions.length,
     searchable_transaction_note: statementIntelligence.searchableTransactionNote,
@@ -51,6 +63,9 @@ export function buildCoachContext({
     monthly_breakdown: getMonthlyBreakdown(transactions, "6m").slice(0, 6),
     monthly_breakdown_all: getMonthlyBreakdown(transactions, "all"),
     calendar_pattern_summary: getCalendarPatternSummary(transactions, "6m"),
+    money_understanding: moneyUnderstanding?.aiContext || {},
+    bills_found: moneyUnderstanding?.billStreams || [],
+    checks_waiting: moneyUnderstanding?.checks || [],
     data_freshness: dataFreshness,
     transfer_summary: getTransferSummary(transactions),
     debts: debts.slice(0, 6),
@@ -64,10 +79,10 @@ export function buildCoachContext({
     bank_feed_readiness: bankFeedReadiness,
     launch_safety_rules: {
       audience: "People who feel bad with money and need plain, trustworthy guidance.",
-      maths_source_of_truth: "Use app-calculated totals, statement_intelligence, query_focus and rules. Do not invent or re-estimate core figures.",
+      maths_source_of_truth: "Use money_understanding, app-calculated totals, statement_intelligence, query_focus and rules. Do not invent or re-estimate core figures.",
       safe_to_spend: "Only treat safe-to-spend as real spendable money when live balances or explicit current balances are supplied. Statement net is historical movement, not cash today.",
       checks_page: "If a person, bill, transfer, work payment or pass-through looks uncertain, tell the user to confirm it in Confidence Checks instead of guessing.",
-      calendar: "Future payments may be estimates until enough history or user-confirmed rules exist. Say estimated when confidence is not high.",
+      calendar: "Future Bills only contains regular bills/subscriptions Money Hub is confident about. Unclear repeated payments belong in Checks, not Calendar.",
       answer_style: "Lead with the useful answer in simple English. Avoid accounting jargon unless the user asks for detail.",
     },
     premium_guidance:

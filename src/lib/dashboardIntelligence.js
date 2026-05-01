@@ -1,4 +1,5 @@
-﻿import { cleanEventTitle, getRecurringCalendarEvents } from "./calendarIntelligence";
+﻿import { cleanEventTitle } from "./calendarIntelligence";
+import { getSmartRecurringCalendarEvents } from "./calendarSmartRecurring";
 import {
   dayDifference,
   formatCurrency,
@@ -433,14 +434,17 @@ export function enhanceTransactions(transactions, transactionRules = []) {
       smartCategory = transaction.amount > 0 ? "Income" : "Spending";
     }
 
+    const blockedMoneyType = ["Investments", "Work / pass-through"].includes(smartCategory);
+
     return {
       ...transaction,
-      is_bill: Boolean(transaction.is_bill || savedRule?.is_bill || inferred.is_bill || smartCategory === "Rent" || smartCategory === "Mortgage" || smartCategory === "Major bill"),
-      is_subscription: Boolean(transaction.is_subscription || savedRule?.is_subscription || inferred.is_subscription),
+      is_bill: blockedMoneyType ? false : Boolean(transaction.is_bill || savedRule?.is_bill || inferred.is_bill || smartCategory === "Rent" || smartCategory === "Mortgage" || smartCategory === "Major bill"),
+      is_subscription: blockedMoneyType ? false : Boolean(transaction.is_subscription || savedRule?.is_subscription || inferred.is_subscription),
       _smart_internal_transfer: smartInternalTransfer,
       _smart_category: smartCategory,
-      _smart_is_bill: Boolean(savedRule?.is_bill || inferred.is_bill || smartCategory === "Rent" || smartCategory === "Mortgage" || smartCategory === "Major bill"),
-      _smart_is_subscription: Boolean(savedRule?.is_subscription || inferred.is_subscription),
+      _smart_is_bill: blockedMoneyType ? false : Boolean(savedRule?.is_bill || inferred.is_bill || smartCategory === "Rent" || smartCategory === "Mortgage" || smartCategory === "Major bill"),
+      _smart_is_subscription: blockedMoneyType ? false : Boolean(savedRule?.is_subscription || inferred.is_subscription),
+      _smart_rule_applied: Boolean(savedRule),
     };
   });
 }
@@ -581,30 +585,29 @@ export function getHistorySummary(transactions) {
 }
 
 export function getRecurringSummary(transactions) {
-  const recurring = getRecurringCalendarEvents(transactions);
-  const recurringBills = recurring.filter((item) => item.kind !== "income").length;
-  const recurringIncome = recurring.filter((item) => item.kind === "income").length;
+  const recurring = getSmartRecurringCalendarEvents(transactions);
+  const recurringBills = recurring.length;
 
   if (recurring.length >= 6) {
     return {
       label: "High",
-      headline: `${recurring.length} recurring streams detected`,
-      body: `${recurringBills} outgoing and ${recurringIncome} incoming streams look repeatable enough to power the calendar and money reminders.`,
+      headline: `${recurring.length} bills found`,
+      body: `${recurringBills} regular bill or subscription payments look solid enough for the calendar.`,
     };
   }
 
   if (recurring.length >= 3) {
     return {
       label: "Medium",
-      headline: `${recurring.length} recurring streams detected`,
-      body: "The app can already see repeated payments, but more history will make the timing cleaner.",
+      headline: `${recurring.length} bills found`,
+      body: "The app can see some regular payments. More history and Checks answers will make timing cleaner.",
     };
   }
 
   return {
     label: "Low",
-    headline: "Recurring patterns still forming",
-    body: "Once statement history builds up, the app can infer bills, subscriptions, salary cycles and other repeated events more confidently.",
+    headline: "Bills still being learned",
+    body: "Add more history or answer Checks so Money Hub can show future bills without guessing.",
   };
 }
 

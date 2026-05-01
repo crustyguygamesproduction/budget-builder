@@ -63,6 +63,7 @@ import {
 } from "./lib/finance";
 import { getBankFeedReadiness } from "./lib/bankFeeds";
 import { getSubscriptionStatus } from "./lib/productPlan";
+import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
 
 const AccountsPage = lazy(() => import("./pages/AccountsPage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
@@ -336,10 +337,11 @@ export default function App() {
     setPage("coach");
   }
 
-  const smartTransactions = useMemo(
-    () => enhanceTransactions(transactions, transactionRules),
+  const moneyUnderstanding = useMemo(
+    () => buildMoneyUnderstanding({ transactions, transactionRules }),
     [transactions, transactionRules]
   );
+  const smartTransactions = moneyUnderstanding.transactions;
 
   const debtSignals = getDebtSignals(smartTransactions);
   const investmentSignals = getInvestmentSignals(smartTransactions);
@@ -378,6 +380,7 @@ export default function App() {
           <TodayPage
             transactions={smartTransactions}
             transactionRules={transactionRules}
+            moneyUnderstanding={moneyUnderstanding}
             accounts={accounts}
             goals={goals}
             debts={debts}
@@ -440,6 +443,7 @@ export default function App() {
           <ConfidencePage
             transactions={smartTransactions}
             transactionRules={transactionRules}
+            moneyUnderstanding={moneyUnderstanding}
             onTransactionRulesChange={loadTransactionRules}
             screenWidth={screenWidth}
             styles={styles}
@@ -509,6 +513,7 @@ export default function App() {
         {page === "calendar" && (
           <CalendarPage
             transactions={smartTransactions}
+            moneyUnderstanding={moneyUnderstanding}
             screenWidth={screenWidth}
             styles={styles}
             helpers={{ getDataFreshness }}
@@ -553,6 +558,7 @@ export default function App() {
           <CoachPage
             transactions={smartTransactions}
             transactionRules={transactionRules}
+            moneyUnderstanding={moneyUnderstanding}
             goals={goals}
             debts={debts}
             investments={investments}

@@ -9,7 +9,6 @@ export default function DebtsPageUx(props) {
     documents = [],
     styles,
     viewerMode,
-    helpers,
   } = props;
 
   const hasSavedDebts = debts.length > 0;

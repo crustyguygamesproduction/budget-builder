@@ -34,13 +34,12 @@ import {
   getTimeframeMonthCount,
   isShortTimeframe,
 } from "../lib/calendarIntelligence";
-import { getSmartRecurringCalendarEvents } from "../lib/calendarSmartRecurring";
 import { getCalendarEventStyle } from "../lib/styleHelpers";
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export default function CalendarPage({ transactions, screenWidth, styles, helpers }) {
+export default function CalendarPage({ transactions, moneyUnderstanding, screenWidth, styles, helpers }) {
   const { getDataFreshness } = helpers;
 
   const [viewDate, setViewDate] = useState(() => new Date());
@@ -52,8 +51,8 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
   const [calendarAiError, setCalendarAiError] = useState("");
 
   const recurringEvents = useMemo(
-    () => getSmartRecurringCalendarEvents(transactions),
-    [transactions]
+    () => moneyUnderstanding?.recurringEvents || [],
+    [moneyUnderstanding]
   );
   const allHistoryMonths = useMemo(
     () => getMonthlyBreakdown(transactions, "all"),
@@ -186,7 +185,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
           <button style={{ ...styles.secondaryInlineBtn, ...(canGoPrev ? null : styles.calendarNavBtnDisabled) }} type="button" onClick={(event) => { event.currentTarget.blur(); handleRangeShift(-1); }} disabled={!canGoPrev}>Prev</button>
           <div style={styles.calendarTitleWrap}>
             <h4 style={styles.calendarTitle}>{shortRangeTitle}</h4>
-            <p style={styles.smallMuted}>{calendarMode === "recurring" ? "Money Hub groups messy bank references into the real bill provider where it can, like EE, E.ON, rent, phone, energy and subscriptions." : usingShortHistoryView ? "Showing a short slice of your real spending history." : timeframe === "all" ? "Showing your full uploaded history." : `Showing the latest month inside your ${timeframeLabel} view.`}</p>
+            <p style={styles.smallMuted}>{calendarMode === "recurring" ? "Only bills and subscriptions Money Hub is confident about show here. Unsure payments go to Checks." : usingShortHistoryView ? "Showing a short slice of your real spending history." : timeframe === "all" ? "Showing your full uploaded history." : `Showing the latest month inside your ${timeframeLabel} view.`}</p>
           </div>
           <button style={{ ...styles.secondaryInlineBtn, ...(canGoNext ? null : styles.calendarNavBtnDisabled) }} type="button" onClick={(event) => { event.currentTarget.blur(); handleRangeShift(1); }} disabled={!canGoNext}>Next</button>
         </div>
@@ -239,7 +238,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
         {selectedDay ? (
           <div style={styles.calendarInlinePanel}>
             <div style={styles.calendarInlinePanelTop}><strong>{calendarMode === "history" ? formatDateLong(selectedDay.date) : `${formatDateLong(selectedDay.date)} estimate`}</strong><button style={styles.ghostBtn} type="button" onClick={() => setSelectedDayKey("")}>Close</button></div>
-            {calendarMode === "history" ? (selectedDay.transactions.length === 0 ? <p style={styles.emptyText}>{selectedDay.isFutureDay ? "This day has not happened yet." : "Nothing landed on this day."}</p> : <><p style={styles.transactionMeta}>{selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"}. In {formatCurrency(selectedDay.earned)}. Out {formatCurrency(selectedDay.spent)}. Left {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}</p>{selectedDay.transactions.map((transaction) => <TransactionRow styles={styles} key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`} name={transaction.description || "Transaction"} meta={getMeaningfulCategory(transaction) || "Uncategorised"} amount={Number(transaction.amount || 0)} />)}</>) : !selectedDay.events.length ? <p style={styles.emptyText}>Nothing is expected on this date.</p> : selectedDay.events.map((event) => <div key={event.key} style={styles.signalCard}><div style={styles.signalHeader}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>Expected around day {event.day} - {event.kindLabel} - {event.confidenceLabel}</p>{event.estimateNote ? <p style={styles.transactionMeta}>{event.estimateNote}</p> : null}</div><strong>{event.amount > 0 ? "+" : "-"}{formatCurrency(Math.abs(event.amount))}</strong></div><div style={styles.inlineBtnRow}><button style={styles.primaryInlineBtn} onClick={() => downloadCalendarEvent(event)}>Add to Google / Apple Calendar</button></div></div>)}
+            {calendarMode === "history" ? (selectedDay.transactions.length === 0 ? <p style={styles.emptyText}>{selectedDay.isFutureDay ? "This day has not happened yet." : "Nothing landed on this day."}</p> : <><p style={styles.transactionMeta}>{selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"}. In {formatCurrency(selectedDay.earned)}. Out {formatCurrency(selectedDay.spent)}. Left {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}</p>{selectedDay.transactions.map((transaction) => <TransactionRow styles={styles} key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`} name={transaction.description || "Transaction"} meta={getMeaningfulCategory(transaction) || "Uncategorised"} amount={Number(transaction.amount || 0)} />)}</>) : !selectedDay.events.length ? <p style={styles.emptyText}>Nothing is expected on this date.</p> : selectedDay.events.map((event) => <div key={event.key} style={styles.signalCard}><div style={styles.signalHeader}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>Expected around day {event.day} - {event.kindLabel} - {getPlainMatchLabel(event.confidenceLabel)}</p>{event.estimateNote ? <p style={styles.transactionMeta}>{event.estimateNote}</p> : null}</div><strong>{event.amount > 0 ? "+" : "-"}{formatCurrency(Math.abs(event.amount))}</strong></div><div style={styles.inlineBtnRow}><button style={styles.primaryInlineBtn} onClick={() => downloadCalendarEvent(event)}>Add to Google / Apple Calendar</button></div></div>)}
           </div>
         ) : null}
       </Section>
@@ -258,4 +257,8 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
 
 function TransactionRow({ name, meta, amount, styles }) {
   return <div style={styles.transactionRow}><div><strong>{name}</strong><p style={styles.transactionMeta}>{meta}</p></div><strong style={{ color: amount < 0 ? "#dc2626" : "#059669" }}>{amount < 0 ? "-" : "+"}{formatCurrency(Math.abs(amount))}</strong></div>;
+}
+
+function getPlainMatchLabel(confidenceLabel) {
+  return confidenceLabel === "high" ? "strong match" : "good match";
 }

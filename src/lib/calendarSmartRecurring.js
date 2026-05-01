@@ -16,8 +16,7 @@ export function getSmartRecurringCalendarEvents(transactions) {
   (transactions || []).forEach((transaction) => {
     const amount = Math.abs(Number(transaction?.amount || 0));
     if (!transaction?.transaction_date) return;
-    if (isInternalTransferLike(transaction)) return;
-    if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return;
+    if (shouldNeverForecast(transaction)) return;
     if (Number(transaction.amount || 0) >= 0) return;
     if (amount < 3) return;
 
@@ -32,25 +31,35 @@ export function getSmartRecurringCalendarEvents(transactions) {
         key: groupInfo.key,
         title: groupInfo.title,
         providerMatched: groupInfo.providerMatched,
+        providerType: groupInfo.providerType,
         transactions: [],
         dates: [],
         amounts: [],
+        fingerprints: new Set(),
         billSignals: 0,
         mechanismSignals: 0,
+        ruleSignals: 0,
+        categorySignals: 0,
         recurringBillIntent: Boolean(groupInfo.recurringBillIntent),
       });
     }
 
     const group = groups.get(groupInfo.key);
+    const fingerprint = getTransactionFingerprint(transaction, amount);
+    if (group.fingerprints.has(fingerprint)) return;
+
+    group.fingerprints.add(fingerprint);
     group.transactions.push(transaction);
     group.dates.push(date);
     group.amounts.push(amount);
     if (isBillLike(transaction, groupInfo.text)) group.billSignals += 1;
     if (hasRecurringWords(groupInfo.text)) group.mechanismSignals += 1;
+    if (transaction?._smart_rule_applied) group.ruleSignals += 1;
+    if (hasBillCategory(transaction)) group.categorySignals += 1;
   });
 
   return [...groups.values()]
-    .flatMap(splitGroupByAmountStreams)
+    .flatMap(splitGroupByBillStreams)
     .map(buildSmartEvent)
     .filter(Boolean)
     .reduce(dedupeEvents, [])
@@ -67,11 +76,12 @@ function getRealWorldBillKey(transaction) {
 
   if (merchant.known) {
     if (!recurringBillIntent) return null;
-    if (merchant.type === "work_money" || merchant.type === "investment") return null;
+    if (isBlockedMerchantType(merchant.type)) return null;
     return {
       key: `merchant:${merchant.key}`,
       title: merchant.name,
       providerMatched: true,
+      providerType: merchant.type,
       recurringBillIntent,
       text: rawText,
     };
@@ -86,46 +96,67 @@ function getRealWorldBillKey(transaction) {
     key: `text:${cleaned}`,
     title: merchant.name,
     providerMatched: false,
+    providerType: "",
     recurringBillIntent,
     text: rawText,
   };
 }
 
-function splitGroupByAmountStreams(group) {
+function splitGroupByBillStreams(group) {
   if (!group.providerMatched || group.transactions.length <= 1) return [group];
 
   const clusters = [];
   group.transactions.forEach((transaction, index) => {
     const amount = Math.abs(Number(group.amounts[index] || transaction.amount || 0));
     const date = group.dates[index];
-    const existing = clusters.find((cluster) => Math.abs(cluster.average - amount) <= getStreamTolerance(cluster.average, amount));
+    const day = date.getDate();
+    const existing = clusters.find((cluster) => {
+      const amountMatches = Math.abs(cluster.average - amount) <= getStreamTolerance(cluster.average, amount);
+      const timingMatches = Math.abs(cluster.averageDay - day) <= getTimingTolerance(cluster.days);
+      const sameMonthConflict = cluster.months.has(getMonthKey(date));
+      return amountMatches && (timingMatches || !sameMonthConflict);
+    });
 
     if (existing) {
       existing.transactions.push(transaction);
       existing.dates.push(date);
       existing.amounts.push(amount);
+      existing.days.push(day);
+      existing.months.add(getMonthKey(date));
       existing.average = average(existing.amounts);
+      existing.averageDay = average(existing.days);
       return;
     }
 
-    clusters.push({ transactions: [transaction], dates: [date], amounts: [amount], average: amount });
+    clusters.push({ transactions: [transaction], dates: [date], amounts: [amount], days: [day], months: new Set([getMonthKey(date)]), average: amount, averageDay: day });
   });
 
   if (clusters.length <= 1) return [group];
 
   return clusters.map((cluster) => ({
     ...group,
-    key: `${group.key}:stream:${Math.round(cluster.average * 100)}`,
-    title: `${group.title} bill around ${formatCurrency(cluster.average)}`,
+    key: `${group.key}:stream:${Math.round(cluster.average * 100)}:${Math.round(cluster.averageDay)}`,
+    title: group.title,
     transactions: cluster.transactions,
     dates: cluster.dates,
     amounts: cluster.amounts,
+    fingerprints: new Set(),
   }));
 }
 
 function getStreamTolerance(baseAmount, nextAmount) {
   const amount = Math.max(Math.abs(Number(baseAmount || 0)), Math.abs(Number(nextAmount || 0)));
-  return Math.max(3, amount * 0.2);
+  return Math.max(2, amount * 0.12);
+}
+
+function getTimingTolerance(days) {
+  if (!days?.length) return 4;
+  const spread = Math.max(...days) - Math.min(...days);
+  return spread <= 4 ? 5 : 3;
+}
+
+function getMonthKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}`;
 }
 
 function buildSmartEvent(group) {
@@ -141,14 +172,18 @@ function buildSmartEvent(group) {
     (group.providerMatched ? 2 : 0) +
     (repeated ? 3 : 0) +
     (monthCount >= 3 ? 2 : 0) +
-    (stableAmount ? 1 : 0) +
+    (stableAmount ? 2 : 0) +
     (dayStats.confidence === "stable" ? 1 : 0) +
     (group.billSignals > 0 ? 2 : 0) +
-    (group.mechanismSignals > 0 ? 1 : 0);
+    (group.mechanismSignals > 0 ? 2 : 0) +
+    (group.ruleSignals > 0 ? 3 : 0) +
+    (group.categorySignals > 0 ? 1 : 0);
 
   if (!hasStrongBillSignal) return null;
   if (amountStats.average < 3) return null;
-  if (!repeated && group.mechanismSignals === 0 && group.billSignals < 2) return null;
+  if (!repeated) return null;
+  if (!stableAmount && group.ruleSignals === 0) return null;
+  if (confidenceScore < 7) return null;
   if (!repeated && !group.providerMatched) return null;
   if (!repeated && group.providerMatched && !stableAmount) return null;
 
@@ -158,7 +193,7 @@ function buildSmartEvent(group) {
 
   return {
     key: group.key,
-    title: group.title,
+    title: getSafeEventTitle(group, amount, kind),
     amount: -Math.abs(amount),
     day: dayStats.estimatedDay,
     month: null,
@@ -216,7 +251,7 @@ function getAmountStats(amounts) {
 
 function buildEstimateNote(group, dayStats, amountStats, confidence) {
   const parts = [];
-  if (group.providerMatched) parts.push(`${group.title} references were grouped together even when the bank reference changed.`);
+  if (group.providerMatched) parts.push("Based on repeated payments to the same provider.");
   if (dayStats.confidence === "latest-date") parts.push("The payment date has moved before, so Money Hub used the latest date it saw.");
   if (amountStats.spread > 2) parts.push(`Amount has varied by about ${formatCurrency(amountStats.spread)}.`);
   if (!parts.length && confidence === "high") return "Based on a stable repeated bill pattern.";
@@ -225,9 +260,39 @@ function buildEstimateNote(group, dayStats, amountStats, confidence) {
 }
 
 function inferKind(group) {
-  const text = normalizeText([group.title, group.key].join(" "));
+  const text = normalizeText([group.title, group.key, group.providerType].join(" "));
   if (/netflix|spotify|prime|apple|google|openai|subscription|membership|premium/.test(text)) return "subscription";
   return "bill";
+}
+
+function getSafeEventTitle(group, amount, kind) {
+  const title = String(group.title || "Bill").trim();
+  if (!group.providerMatched) return title;
+  const suffix = kind === "subscription" ? "around" : "bill around";
+  return `${title} ${suffix} ${formatCurrency(amount)}`;
+}
+
+function shouldNeverForecast(transaction) {
+  if (isInternalTransferLike(transaction)) return true;
+  if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return true;
+
+  const merchant = getRealWorldMerchant(transaction);
+  if (isBlockedMerchantType(merchant.type)) return true;
+
+  const text = normalizeText([transaction?.description, transaction?.merchant, transaction?.category, transaction?._smart_category].join(" "));
+  return /\b(reimbursement|expenses?|expense claim|work money|pass through|pass-through|transfer to|transfer from|own account|between accounts|savings pot|monzo pot|cash withdrawal|atm)\b/.test(text);
+}
+
+function isBlockedMerchantType(type) {
+  return ["work_money", "investment"].includes(String(type || ""));
+}
+
+function getTransactionFingerprint(transaction, amount) {
+  return [
+    transaction?.transaction_date || "",
+    normalizeText(transaction?.description || transaction?.merchant || ""),
+    Math.round(Math.abs(Number(amount || 0)) * 100),
+  ].join("|");
 }
 
 function isBillLike(transaction, text) {
@@ -242,6 +307,11 @@ function isBillLike(transaction, text) {
     /rent|mortgage|major bill|bill|council tax|energy|water|broadband|phone|mobile|insurance|subscription|utilities/.test(category) ||
     /\b(rent|mortgage|landlord|letting|council tax|water|energy|electric|electricity|gas|utility|utilities|broadband|internet|wifi|phone|mobile|sim|contract|insurance|tv licence|licence|loan|credit card|finance|childcare|nursery|school fees|parking permit)\b/.test(text)
   );
+}
+
+function hasBillCategory(transaction) {
+  const category = normalizeText(transaction?._smart_category || transaction?.category || "");
+  return /\b(rent|mortgage|major bill|bill|council tax|energy|water|broadband|phone|mobile|insurance|subscription|debt|credit|childcare)\b/.test(category);
 }
 
 function hasRecurringWords(text) {

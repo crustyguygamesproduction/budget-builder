@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "npm run lint && npm run build",
+    "check": "npm run lint && npm run test:money && npm run build",
+    "test:money": "node scripts/check-money-understanding.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

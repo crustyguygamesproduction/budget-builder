@@ -1,8 +1,5 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
-import {
-  buildRecurringMajorPaymentCandidates,
-} from "../lib/transactionCategorisation";
 import { normalizeText } from "../lib/finance";
 import { Section, MiniCard } from "../components/ui";
 
@@ -24,6 +21,15 @@ const RULE_OPTIONS = [
     isInternalTransfer: false,
     matchAmount: true,
     helper: "Use this for bills you need money ready for.",
+  },
+  {
+    label: "Subscription",
+    category: "Subscription",
+    isBill: false,
+    isSubscription: true,
+    isInternalTransfer: false,
+    matchAmount: true,
+    helper: "Use this for Netflix, Apple, memberships, app plans, gyms or similar.",
   },
   {
     label: "Friend/family",
@@ -57,6 +63,7 @@ const RULE_OPTIONS = [
 export default function ConfidencePage({
   transactions,
   transactionRules = [],
+  moneyUnderstanding,
   onTransactionRulesChange,
   screenWidth,
   styles,
@@ -74,13 +81,13 @@ export default function ConfidencePage({
 
   const checks = useMemo(
     () =>
-      buildRecurringMajorPaymentCandidates(transactions, transactionRules)
+      (moneyUnderstanding?.checks || [])
         .filter((candidate) => !dismissedKeys.includes(candidate.key))
         .map((candidate) => ({
           ...candidate,
           examples: getExamplesForCandidate(transactions, candidate),
         })),
-    [transactions, transactionRules, dismissedKeys]
+    [transactions, moneyUnderstanding, dismissedKeys]
   );
 
   const completedCount = transactionRules.filter((rule) =>
@@ -204,9 +211,9 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
     <div style={styles.signalCard}>
       <div style={styles.signalHeader}>
         <div>
-          <strong>What is {candidate.label}?</strong>
+          <strong>{candidate.question || `What is ${candidate.label}?`}</strong>
           <p style={styles.transactionMeta}>
-            About £{Number(candidate.amount || 0).toFixed(2)} happened {candidate.count} times across {candidate.monthCount} month{candidate.monthCount === 1 ? "" : "s"}.
+            About £{Number(candidate.amount || 0).toFixed(2)} happened {candidate.count} times across {candidate.monthCount} month{candidate.monthCount === 1 ? "" : "s"}. {candidate.helper || "Tell Money Hub what it is."}
           </p>
         </div>
         <button type="button" style={styles.ghostBtn} onClick={onSkip} disabled={saving}>

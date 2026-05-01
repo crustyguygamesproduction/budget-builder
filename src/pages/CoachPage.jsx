@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { buildCoachContext } from "../lib/coachContext";
 import { getTotals } from "../lib/finance";
-import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
 import { Section } from "../components/ui";
 
 const COACH_DISPLAY_LIMIT = 18;
@@ -12,7 +11,7 @@ const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
 
 export default function CoachPage({
   transactions,
-  transactionRules = [],
+  moneyUnderstanding,
   goals,
   debts,
   investments,
@@ -61,10 +60,10 @@ export default function CoachPage({
   );
   const dataFreshness = useMemo(() => helpers.getDataFreshness(transactions), [helpers, transactions]);
   const correctionCandidates = useMemo(
-    () => buildRecurringMajorPaymentCandidates(transactions, transactionRules)
+    () => (moneyUnderstanding?.checks || [])
       .filter((candidate) => !dismissedRuleKeys.includes(candidate.key))
       .slice(0, 1),
-    [transactions, transactionRules, dismissedRuleKeys]
+    [moneyUnderstanding, dismissedRuleKeys]
   );
   const activeCorrectionCandidate = correctionCandidates[0] || null;
 
@@ -163,6 +162,7 @@ export default function CoachPage({
         userMessage: text,
         subscriptionStatus,
         bankFeedReadiness,
+        moneyUnderstanding,
       });
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {
@@ -421,6 +421,8 @@ export default function CoachPage({
 function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
   const rules = [
     { label: "Rent", category: "Rent", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
+    { label: "Bill", category: "Major bill", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
+    { label: "Subscription", category: "Subscription", isBill: false, isSubscription: true, isInternalTransfer: false, matchAmount: true },
     { label: "Friend/family", category: "Personal payment", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
     { label: "Work/pass-through", category: "Work / pass-through", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
     { label: "Transfer", category: "Internal Transfer", isBill: false, isSubscription: false, isInternalTransfer: true, matchAmount: false },
@@ -434,10 +436,10 @@ function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
           <span style={styles.chatTimeLabel}>keeps maths right</span>
         </div>
         <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>
-          What is {candidate.label}?
+          {candidate.question || `What is ${candidate.label}?`}
         </div>
         <div style={{ fontSize: 14, lineHeight: 1.45, color: "#64748b", marginBottom: 12 }}>
-          I am not fully sure how to treat this. I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. Your answer will be saved as a rule and future totals will update.
+          I am not fully sure how to treat this. I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. {candidate.helper || "Your answer will fix future totals."}
         </div>
         <div style={{ display: "grid", gap: 8 }}>
           {rules.map((rule) => (

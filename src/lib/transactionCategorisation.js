@@ -38,10 +38,23 @@ export function inferTransactionCategory(description, amount, options = {}) {
   const merchantInfo = getRealWorldMerchant(description);
   const merchantCategory = getSmartBillCategory(description);
 
+  if (numericAmount < 0 && ["investment", "work_money"].includes(merchantInfo.type)) {
+    return {
+      category: merchantCategory || (merchantInfo.type === "investment" ? "Investments" : "Work / pass-through"),
+      is_bill: false,
+      is_subscription: false,
+      is_internal_transfer: false,
+      is_income: false,
+      confidence: 0.96,
+      merchant_name: merchantInfo.name,
+    };
+  }
+
   if (numericAmount < 0 && merchantCategory) {
+    const billCategories = ["Phone", "Energy", "Water", "Broadband", "Council Tax", "TV Licence", "Debt / Credit"];
     return {
       category: merchantCategory,
-      is_bill: looksLikeKnownBill(description) || merchantCategory !== "Subscription",
+      is_bill: Boolean(looksLikeKnownBill(description) || billCategories.includes(merchantCategory)),
       is_subscription: looksLikeKnownSubscription(description) || merchantCategory === "Subscription",
       is_internal_transfer: false,
       is_income: false,
@@ -120,6 +133,7 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
     if (isLikelyEverydaySpend(text) && amount < 350) return;
 
     const merchant = getRealWorldMerchant(transaction);
+    if (["investment", "work_money"].includes(merchant.type)) return;
     const merchantKey = getRuleMerchantKey(transaction?.description);
     if (!merchantKey || merchantKey.length < 3) return;
 
@@ -184,6 +198,7 @@ export function inferRecurringPersonalBills(transactions) {
     const amount = Math.abs(Number(transaction.amount || 0));
     if (Number(transaction.amount) >= 0 || amount < 300) return;
     const merchant = getRealWorldMerchant(transaction);
+    if (["investment", "work_money"].includes(merchant.type)) return;
     const text = merchant.known ? `${merchant.key}|${getBillStreamBand(amount)}` : normalizeText(transaction.description).replace(/\b(faster payment|standing order|bank transfer|payment to|fpi|ref|reference|mobile payment)\b/g, " ").replace(/\s+/g, " ").trim();
     if (!text) return;
     const key = `${text}|${merchant.known ? "known" : Math.round(amount / 10) * 10}`;
