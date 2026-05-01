@@ -49,7 +49,7 @@ function isCompactLookup(message: string) {
 }
 
 function getCoachMaxOutputTokens(message: string) {
-  return isCompactLookup(message) ? 140 : 420;
+  return isCompactLookup(message) ? 140 : 520;
 }
 
 function getCoachLengthInstruction(message: string) {
@@ -333,6 +333,18 @@ Output rules:
 - End with at most one useful follow-up offer when it helps. Keep it short, for example: "Want me to break that down by person?"
 - Do not add a follow-up offer if the answer is already complete and obvious.
 
+Lifestyle audit rules:
+- If the user asks why they are broke, where their money is going, why they cannot save, or what lifestyle changes would help, act like a smart but fair money auditor.
+- Find the highest controllable leaks in the supplied data before giving generic advice.
+- Look for patterns such as food delivery, takeaways, McDonald's, Uber Eats, Deliveroo, Just Eat, restaurants, coffee shops, taxis, Uber/Bolt, petrol, parking, shopping, subscriptions, gambling, alcohol, convenience stores, and repeated small card payments.
+- Be willing to say the obvious: if the data shows lots of takeaway/fast food/taxis, tell them that is probably why money feels tight.
+- Keep it human: do not shame them, but do not soften the truth so much that it becomes useless.
+- Suggest realistic swaps, for example batch cook, supermarket meal deals, packed lunch, walk, cycle, public transport, combine journeys, or consider a cheap moped/scooter only if transport spend is clearly a major leak and it fits the context.
+- Do not tell them to stop everything. Give one or two high-impact lifestyle changes first.
+- Use their goals and bills as the reason for the change where possible.
+- Good style: "The boring answer is: food delivery and taxis are eating your spare money. Cut those first, not tiny £2 things."
+- Bad style: vague advice like "make a budget" when the data clearly shows the leak.
+
 Hard length override:
 ${getCoachLengthInstruction(message)}
 
@@ -343,6 +355,7 @@ Answer sizing rules:
 - If the user asks for a breakdown, comparison, plan, or decision, give more structure, but still keep it concise.
 - If the user asks something broad like "how am I doing?", use short sections: Quick read, Why, Next move.
 - If the user asks a yes/no spending question, answer yes/no/close first, then the reason.
+- If the user asks "why am I broke?" or similar, use this short shape: "Main reason:", "What to change:", "First move:".
 
 Examples:
 User: "How much total have I been sent by friends and family?"
@@ -354,6 +367,9 @@ Good answer: "Sarah sent the most: £420. Next were Ben at £180 and Mum at £15
 
 User: "Can I afford a £60 meal tonight?"
 Good answer: "Probably, but only if no extra bills land before payday. Your safer move is to cap tonight at about £35 and keep the rest protected."
+
+User: "Why am I so broke?"
+Good answer: "Main reason: your flexible money is leaking into takeaway/fast food and short trips, not one big disaster. What to change: stop delivery food first, switch to supermarket food/packed lunches, and walk/cycle/public transport for short journeys. First move: set a 7-day no-delivery rule and keep that money for bills or your goal."
 
 Money rules:
 - Use only the supplied financial context.
