@@ -115,6 +115,8 @@ export default function TodayPage({
     ? buildGoalNudge({
         goal: primaryGoal,
         transactions,
+        monthSnapshot,
+        cashSummary,
         formatCurrency,
         isInternalTransferLike,
       })
@@ -763,7 +765,7 @@ function getPrimaryGoal(goals = []) {
   return datedGoals[0] || goals[0] || null;
 }
 
-function buildGoalNudge({ goal, transactions, formatCurrency, isInternalTransferLike }) {
+function buildGoalNudge({ goal, transactions, monthSnapshot, cashSummary, formatCurrency, isInternalTransferLike }) {
   const target = Number(goal?.target_amount || 0);
   const current = Number(goal?.current_amount || 0);
   const gap = Math.max(target - current, 0);
@@ -777,15 +779,30 @@ function buildGoalNudge({ goal, transactions, formatCurrency, isInternalTransfer
   const targetMonths = getMonthsUntil(goal.target_date);
   const monthlyNeeded = targetMonths ? gap / targetMonths : 0;
   const monthlyPattern = getMonthlyGoalPattern(transactions, isInternalTransferLike);
-  const dailyCap = targetMonths
-    ? Math.max((monthlyPattern.income - monthlyPattern.fixedBills - monthlyNeeded) / 30, 0)
-    : Math.max(monthlyPattern.flexibleSpend / 30 * 0.55, 0);
   const todaySpend = getTodayFlexibleSpend(transactions, isInternalTransferLike);
+  const latestNet = Number(monthSnapshot?.net || 0);
+  const liveCash = cashSummary?.hasLiveBalances ? Number(cashSummary.amount || 0) : null;
+  const monthlyAfterGoal = monthlyPattern.income - monthlyPattern.fixedBills - monthlyPattern.flexibleSpend - monthlyNeeded;
+  const baseDailyCap = targetMonths
+    ? Math.max(monthlyAfterGoal / 30, 0)
+    : Math.max(monthlyPattern.flexibleSpend / 30 * 0.35, 0);
+  const dailyCap = Math.min(baseDailyCap, 20);
 
-  if (dailyCap <= 5) {
+  if (latestNet < 0 || (liveCash !== null && liveCash <= 25)) {
     return {
       headline: "No-spend day",
-      detail: goal.target_date
+      detail: latestNet < 0
+        ? `Latest read is ${formatCurrency(Math.abs(latestNet))} behind. Essentials only.`
+        : `Cash looks tight. Protect ${goal.name || "your goal"} today.`,
+    };
+  }
+
+  if (dailyCap <= 7 || todaySpend >= dailyCap) {
+    return {
+      headline: "No-spend day",
+      detail: todaySpend >= dailyCap && dailyCap > 0
+        ? `${formatCurrency(todaySpend)} already spent. Stop there if you can.`
+        : goal.target_date
         ? `${goal.name || "This goal"} needs ${formatCurrency(monthlyNeeded)} a month. Today needs to be tight.`
         : `Best move for ${goal.name || "your goal"} is keeping today clean.`,
     };
