@@ -110,6 +110,7 @@ export default function App() {
   const [financialDocuments, setFinancialDocuments] = useState([]);
   const [subscriptionProfile, setSubscriptionProfile] = useState(null);
   const [bankConnections, setBankConnections] = useState([]);
+  const [transactionRules, setTransactionRules] = useState([]);
   const [viewerMode, setViewerMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("moneyhub-viewer-preview") === "true";
@@ -175,6 +176,7 @@ export default function App() {
       loadFinancialDocuments(),
       loadSubscriptionProfile(),
       loadBankConnections(),
+      loadTransactionRules(),
     ]);
   }
 
@@ -306,6 +308,20 @@ export default function App() {
     setBankConnections(data || []);
   }
 
+  async function loadTransactionRules() {
+    const { data, error } = await supabase
+      .from("transaction_rules")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setTransactionRules([]);
+      return;
+    }
+
+    setTransactionRules(data || []);
+  }
+
   function openCoachWithPrompt(prompt, options = {}) {
     if (typeof window !== "undefined") {
       localStorage.setItem(COACH_DRAFT_KEY, prompt);
@@ -319,8 +335,8 @@ export default function App() {
   }
 
   const smartTransactions = useMemo(
-    () => enhanceTransactions(transactions),
-    [transactions]
+    () => enhanceTransactions(transactions, transactionRules),
+    [transactions, transactionRules]
   );
 
   const debtSignals = getDebtSignals(smartTransactions);
@@ -489,10 +505,12 @@ export default function App() {
             goals={goals}
             accounts={accounts}
             transactions={smartTransactions}
+            transactionRules={transactionRules}
             onGoToCoach={openCoachWithPrompt}
             onNavigate={setPage}
             onChange={loadGoals}
             onAccountsChange={loadAccounts}
+            onTransactionRulesChange={loadTransactionRules}
             styles={styles}
             helpers={{
               getDataFreshness,

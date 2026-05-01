@@ -8,8 +8,21 @@ import {
 } from "../components/ui";
 import { buildGoalSuggestions } from "../lib/goalInsights";
 import { getMeaningfulCategory } from "../lib/finance";
+import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
 
-export default function GoalsPage({ goals, accounts = [], transactions, onGoToCoach, onNavigate, onChange, onAccountsChange, styles, helpers }) {
+export default function GoalsPage({
+  goals,
+  accounts = [],
+  transactions,
+  transactionRules = [],
+  onGoToCoach,
+  onNavigate,
+  onChange,
+  onAccountsChange,
+  onTransactionRulesChange,
+  styles,
+  helpers,
+}) {
   const {
     getDataFreshness,
     getDisplayedMonthSnapshot,
@@ -30,6 +43,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     timeframe: "fast",
   });
   const [savingAccountRole, setSavingAccountRole] = useState("");
+  const [savingRuleKey, setSavingRuleKey] = useState("");
 
   const latestDate = transactions.map((t) => new Date(t.transaction_date)).filter((date) => !Number.isNaN(date.getTime())).sort((a, b) => b - a)[0] || new Date();
   const timeframeStart = new Date(latestDate.getFullYear(), latestDate.getMonth() - 2, 1);
@@ -71,6 +85,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     return { account, likelySavings, nameLooksSavings, netTransferIn: Math.max(netTransferIn, 0) };
   });
   const suggestedSavingsAccounts = accountStats.filter((item) => item.nameLooksSavings && item.account.counts_as_savings == null);
+  const majorPaymentCandidates = buildRecurringMajorPaymentCandidates(transactions, transactionRules);
   const confirmedSavingsIn = accountStats
     .filter((item) => item.likelySavings)
     .reduce((sum, item) => sum + item.netTransferIn, 0);
@@ -131,6 +146,39 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
       alert("Could not save that account choice yet.");
     } finally {
       setSavingAccountRole("");
+    }
+  }
+
+  async function confirmMajorPayment(candidate, category) {
+    setSavingRuleKey(candidate.key);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const isBill = category !== "Personal payment";
+      const { error } = await supabase.from("transaction_rules").upsert(
+        {
+          user_id: user.id,
+          rule_type: "recurring_major_payment",
+          match_text: candidate.matchText,
+          match_amount: candidate.amount,
+          category,
+          is_bill: isBill,
+          is_subscription: false,
+          is_internal_transfer: false,
+          notes: `${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,rule_type,match_text,match_amount" }
+      );
+
+      if (error) throw error;
+      await onTransactionRulesChange?.();
+    } catch {
+      alert("Could not save that transaction rule yet. You may need to run the latest Supabase migration first.");
+    } finally {
+      setSavingRuleKey("");
     }
   }
 
@@ -333,6 +381,33 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
               <div style={styles.inlineBtnRow}>
                 <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, true)} disabled={savingAccountRole === account.id}>Yes</button>
                 <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, false)} disabled={savingAccountRole === account.id}>No</button>
+              </div>
+            </div>
+          ))}
+        </BaseSection>
+      ) : null}
+
+      {majorPaymentCandidates.length > 0 ? (
+        <BaseSection styles={styles} title="Major Payment Check">
+          <p style={styles.sectionIntro}>
+            These payments repeat like rent, mortgage, or a major bill. Confirm once and Money Hub will use the answer across goals, calendar, spending reads, and AI context.
+          </p>
+          {majorPaymentCandidates.map((candidate) => (
+            <div key={candidate.key} style={styles.signalCard}>
+              <div style={styles.signalHeader}>
+                <div>
+                  <strong>{candidate.label}</strong>
+                  <p style={styles.transactionMeta}>
+                    About {formatCurrency(candidate.amount)} repeated {candidate.count} times across {candidate.monthCount} months.
+                  </p>
+                </div>
+              </div>
+              <p style={styles.signalBody}>Should this be protected as a bill instead of treated as flexible spending?</p>
+              <div style={styles.inlineBtnRow}>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Rent")} disabled={savingRuleKey === candidate.key}>Rent</button>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Mortgage")} disabled={savingRuleKey === candidate.key}>Mortgage</button>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Major bill")} disabled={savingRuleKey === candidate.key}>Major bill</button>
+                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Personal payment")} disabled={savingRuleKey === candidate.key}>Not a bill</button>
               </div>
             </div>
           ))}
