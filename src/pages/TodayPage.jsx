@@ -3,6 +3,7 @@ import {
   formatCurrency,
   getMeaningfulCategory,
   getTotals,
+  isInternalTransferLike,
   isTransactionInMonth,
 } from "../lib/finance";
 import {
@@ -103,16 +104,21 @@ export default function TodayPage({
     transactions
   );
 
-  const houseGoal =
-    goals.find((goal) =>
-      String(goal.name || "").toLowerCase().includes("house")
-    ) || null;
+  const primaryGoal = getPrimaryGoal(goals);
 
-  const goalTarget = Number(houseGoal?.target_amount || 15000);
-  const goalCurrent = Number(houseGoal?.current_amount || 0);
+  const goalTarget = Number(primaryGoal?.target_amount || 15000);
+  const goalCurrent = Number(primaryGoal?.current_amount || 0);
   const goalPercent = goalTarget
     ? Math.min((goalCurrent / goalTarget) * 100, 100)
     : 0;
+  const goalNudge = primaryGoal
+    ? buildGoalNudge({
+        goal: primaryGoal,
+        transactions,
+        formatCurrency,
+        isInternalTransferLike,
+      })
+    : null;
 
   const dailyBrief = buildDailyBrief({
     transactionCount: transactions.length,
@@ -127,7 +133,7 @@ export default function TodayPage({
   const defaultCoachPrompts = getCoachPromptIdeas({
     topCategories,
     cashSummary,
-    houseGoal,
+    houseGoal: primaryGoal,
     debtSignals,
     investmentSignals,
   }).slice(0, 4);
@@ -416,6 +422,20 @@ export default function TodayPage({
             ? `You are ${formatCurrency(Math.abs(monthSnapshot.net))} behind this month.`
             : `You are ${formatCurrency(monthSnapshot.net)} ahead this month.`}
         </p>
+
+        {goalNudge ? (
+          <button
+            type="button"
+            style={getGoalNudgeStyle(screenWidth)}
+            onClick={() => onNavigate("goals")}
+          >
+            <span style={{ fontSize: 11, fontWeight: 900, opacity: 0.78, textTransform: "uppercase" }}>
+              Goal move today
+            </span>
+            <strong>{goalNudge.headline}</strong>
+            <span style={{ opacity: 0.86 }}>{goalNudge.detail}</span>
+          </button>
+        ) : null}
 
         <div style={styles.balancePills}>
           {homeHeroPills.map((pill) => (
@@ -733,5 +753,119 @@ function getBigMoneyStyle(screenWidth, styles) {
   return {
     ...styles.bigMoney,
     fontSize: screenWidth <= 480 ? "36px" : screenWidth <= 768 ? "42px" : "46px",
+  };
+}
+
+function getPrimaryGoal(goals = []) {
+  const datedGoals = goals
+    .filter((goal) => goal.target_date)
+    .sort((a, b) => new Date(a.target_date) - new Date(b.target_date));
+  return datedGoals[0] || goals[0] || null;
+}
+
+function buildGoalNudge({ goal, transactions, formatCurrency, isInternalTransferLike }) {
+  const target = Number(goal?.target_amount || 0);
+  const current = Number(goal?.current_amount || 0);
+  const gap = Math.max(target - current, 0);
+  if (!goal || gap <= 0) {
+    return {
+      headline: "Protect the win",
+      detail: `${goal?.name || "Your goal"} is already funded. Keep today steady.`,
+    };
+  }
+
+  const targetMonths = getMonthsUntil(goal.target_date);
+  const monthlyNeeded = targetMonths ? gap / targetMonths : 0;
+  const monthlyPattern = getMonthlyGoalPattern(transactions, isInternalTransferLike);
+  const dailyCap = targetMonths
+    ? Math.max((monthlyPattern.income - monthlyPattern.fixedBills - monthlyNeeded) / 30, 0)
+    : Math.max(monthlyPattern.flexibleSpend / 30 * 0.55, 0);
+  const todaySpend = getTodayFlexibleSpend(transactions, isInternalTransferLike);
+
+  if (dailyCap <= 5) {
+    return {
+      headline: "No-spend day",
+      detail: goal.target_date
+        ? `${goal.name || "This goal"} needs ${formatCurrency(monthlyNeeded)} a month. Today needs to be tight.`
+        : `Best move for ${goal.name || "your goal"} is keeping today clean.`,
+    };
+  }
+
+  return {
+    headline: `Stay under ${formatCurrency(dailyCap)} today`,
+    detail: todaySpend > 0
+      ? `${formatCurrency(todaySpend)} spent so far. ${goal.name || "Your goal"} needs focus.`
+      : goal.target_date
+      ? `To take ${goal.name || "your goal"} seriously by ${formatGoalMonth(goal.target_date)}.`
+      : `Small day, faster progress on ${goal.name || "your goal"}.`,
+  };
+}
+
+function getMonthlyGoalPattern(transactions, isInternalTransferLike) {
+  const latestDate = transactions
+    .map((transaction) => new Date(transaction.transaction_date))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => b - a)[0] || new Date();
+  const start = new Date(latestDate.getFullYear(), latestDate.getMonth() - 2, 1);
+  const clean = transactions.filter((transaction) => {
+    const date = new Date(transaction.transaction_date);
+    return !Number.isNaN(date.getTime()) && date >= start && date <= latestDate && !isInternalTransferLike(transaction);
+  });
+  const monthCount = Math.max(new Set(clean.map((transaction) => {
+    const date = new Date(transaction.transaction_date);
+    return `${date.getFullYear()}-${date.getMonth()}`;
+  })).size, 1);
+
+  return {
+    income: clean.filter((transaction) => Number(transaction.amount) > 0).reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0) / monthCount,
+    fixedBills: clean.filter((transaction) => Number(transaction.amount) < 0 && isBillLike(transaction)).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0) / monthCount,
+    flexibleSpend: clean.filter((transaction) => Number(transaction.amount) < 0 && !isBillLike(transaction)).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0) / monthCount,
+  };
+}
+
+function getTodayFlexibleSpend(transactions, isInternalTransferLike) {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  return transactions
+    .filter((transaction) => String(transaction.transaction_date || "").slice(0, 10) === todayKey)
+    .filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction) && !isBillLike(transaction))
+    .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+}
+
+function isBillLike(transaction) {
+  return Boolean(transaction?._smart_is_bill || transaction?.is_bill || transaction?._smart_is_subscription || transaction?.is_subscription);
+}
+
+function getMonthsUntil(dateString) {
+  if (!dateString) return null;
+  const target = new Date(dateString);
+  if (Number.isNaN(target.getTime())) return null;
+  const today = new Date();
+  const monthDiff = (target.getFullYear() - today.getFullYear()) * 12 + target.getMonth() - today.getMonth();
+  return Math.max(monthDiff + 1, 1);
+}
+
+function formatGoalMonth(dateString) {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return "your date";
+  return date.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+}
+
+function getGoalNudgeStyle(screenWidth) {
+  return {
+    width: "100%",
+    marginTop: 18,
+    border: "1px solid rgba(255,255,255,0.28)",
+    background: "rgba(255,255,255,0.16)",
+    color: "white",
+    borderRadius: 18,
+    padding: screenWidth <= 520 ? "12px 14px" : "14px 18px",
+    display: "flex",
+    flexDirection: screenWidth <= 520 ? "column" : "row",
+    alignItems: screenWidth <= 520 ? "flex-start" : "center",
+    justifyContent: "space-between",
+    gap: 8,
+    textAlign: "left",
+    boxShadow: "0 16px 38px rgba(15, 23, 42, 0.18)",
+    cursor: "pointer",
   };
 }

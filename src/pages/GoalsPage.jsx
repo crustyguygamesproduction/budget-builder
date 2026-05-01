@@ -45,10 +45,13 @@ export default function GoalsPage({
   const [periodMonths, setPeriodMonths] = useState(3);
   const [viewMode, setViewMode] = useState("monthly");
   const [savingAccountRole, setSavingAccountRole] = useState("");
+  const [activeGoalId, setActiveGoalId] = useState("");
+  const [showGoalForm, setShowGoalForm] = useState(goals.length === 0);
   const [form, setForm] = useState({
     name: "",
     target_amount: "",
     current_amount: "",
+    target_date: "",
     timeframe: "fast",
   });
 
@@ -124,16 +127,25 @@ export default function GoalsPage({
   const topBehaviourSave = behaviourInsights[0] ? behaviourInsights[0].monthlyAverage * 0.25 : 0;
   const likelyMonthlySaving = Math.max(monthlyConfirmedSavings, monthlyNetLeft) + topBehaviourSave;
 
-  const mainGoal =
+  const activeGoal =
+    goals.find((goal) => goal.id === activeGoalId) ||
     goals.find((goal) => String(goal.name || "").toLowerCase().includes("house")) ||
     goals[0] ||
     null;
-  const hasSavedGoal = Boolean(mainGoal);
-  const target = Number(mainGoal?.target_amount || form.target_amount || 0);
-  const current = Number(mainGoal?.current_amount || form.current_amount || 0);
+  const hasSavedGoal = Boolean(activeGoal);
+  const target = Number(activeGoal?.target_amount || form.target_amount || 0);
+  const current = Number(activeGoal?.current_amount || form.current_amount || 0);
   const gap = Math.max(target - current, 0);
   const percent = target > 0 ? Math.min((current / target) * 100, 100) : 0;
   const fastestMonths = gap > 0 && likelyMonthlySaving > 0 ? Math.ceil(gap / likelyMonthlySaving) : null;
+  const targetDate = activeGoal?.target_date || form.target_date || "";
+  const targetMonths = getMonthsUntil(targetDate);
+  const requiredMonthly = gap > 0 && targetMonths ? gap / targetMonths : 0;
+  const planPaceLabel = targetMonths
+    ? `${formatCurrency(requiredMonthly)} needed monthly`
+    : fastestMonths
+    ? `${fastestMonths} month${fastestMonths === 1 ? "" : "s"} at current pace`
+    : "Add target date for pace";
   const monthlyBillsForSuggestions = monthlyFixedBills;
   const suggestions = buildGoalSuggestions({
     hasData: freshness.hasData,
@@ -158,8 +170,10 @@ export default function GoalsPage({
       name: suggestion.name,
       target_amount: String(suggestion.target),
       current_amount: suggestion.current ? String(suggestion.current.toFixed(2)) : "",
+      target_date: "",
       timeframe: "fast",
     });
+    setShowGoalForm(true);
   }
 
   async function confirmSavingsAccount(accountId, value) {
@@ -187,6 +201,7 @@ export default function GoalsPage({
     const name = String(extra.name ?? form.name).trim();
     const targetAmount = numberOrNull(extra.target ?? form.target_amount);
     const currentAmount = numberOrNull(extra.current ?? form.current_amount) || 0;
+    const targetDateValue = String((extra.target_date ?? form.target_date) || "").trim() || null;
 
     if (!name || !targetAmount) {
       alert("Add a goal name and target first.");
@@ -200,17 +215,25 @@ export default function GoalsPage({
         data: { user },
       } = await supabase.auth.getUser();
 
-      const { error } = await supabase.from("money_goals").insert({
+      const payload = {
         user_id: user.id,
         name,
         target_amount: targetAmount,
         current_amount: currentAmount,
         priority: goals.length + 1,
-      });
+      };
+      if (targetDateValue) payload.target_date = targetDateValue;
+
+      let { error } = await supabase.from("money_goals").insert(payload);
+      if (error && targetDateValue && String(error.message || "").includes("target_date")) {
+        delete payload.target_date;
+        ({ error } = await supabase.from("money_goals").insert(payload));
+      }
 
       if (error) throw error;
 
-      setForm({ name: "", target_amount: "", current_amount: "", timeframe: "fast" });
+      setForm({ name: "", target_amount: "", current_amount: "", target_date: "", timeframe: "fast" });
+      setShowGoalForm(false);
       await onChange();
       alert("Goal saved.");
     } catch (error) {
@@ -220,34 +243,51 @@ export default function GoalsPage({
     }
   }
 
-  const planPrompt = `Build my smartest goal plan. Target ${formatCurrency(target)}, current ${formatCurrency(current)}, gap ${formatCurrency(gap)}. Use ${timeframeLabel}. Monthly averages: income ${formatCurrency(monthlyIncome)}, fixed bills ${formatCurrency(monthlyFixedBills)}, flexible spend ${formatCurrency(monthlyFlexibleSpend)}, confirmed savings transfers ${formatCurrency(monthlyConfirmedSavings)}. Protect rent, bills, debts and essentials first.`;
+  const planPrompt = `Build my smartest goal plan. Target ${formatCurrency(target)}, current ${formatCurrency(current)}, gap ${formatCurrency(gap)}${targetDate ? `, target date ${targetDate}` : ""}. Use ${timeframeLabel}. Monthly averages: income ${formatCurrency(monthlyIncome)}, fixed bills ${formatCurrency(monthlyFixedBills)}, flexible spend ${formatCurrency(monthlyFlexibleSpend)}, confirmed savings transfers ${formatCurrency(monthlyConfirmedSavings)}. Protect rent, bills, debts and essentials first.`;
 
   return (
     <>
       <BaseSection
         styles={styles}
-        title={hasSavedGoal ? mainGoal.name || "Saved Goal" : "Goal Planner"}
+        title={hasSavedGoal ? activeGoal.name || "Saved Goal" : "Goal Planner"}
         right={
-          <button style={styles.ghostBtn} type="button" onClick={() => onNavigate("upload")}>
-            Upload data
+          <button style={styles.ghostBtn} type="button" onClick={() => setShowGoalForm((value) => !value)}>
+            {showGoalForm ? "Hide form" : "Add goal"}
           </button>
         }
       >
         {hasSavedGoal ? (
           <>
+            {goals.length > 1 ? (
+              <div style={styles.inlineBtnRow}>
+                {goals.map((goal) => (
+                  <button
+                    key={goal.id || goal.name}
+                    style={(activeGoal?.id || "") === goal.id ? styles.primaryInlineBtn : styles.secondaryInlineBtn}
+                    type="button"
+                    onClick={() => setActiveGoalId(goal.id)}
+                  >
+                    {goal.name || "Goal"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <p style={styles.goalStat}>{formatCurrency(current)} / {formatCurrency(target)}</p>
             <div style={styles.progressOuter}>
               <div style={{ ...styles.progressInner, width: `${percent}%` }} />
             </div>
             <div style={styles.inlineInfoBlock}>
               <BaseRow styles={styles} name="Left to go" value={formatCurrency(gap)} />
-              <BaseRow styles={styles} name="Fastest realistic estimate" value={fastestMonths ? `${fastestMonths} month${fastestMonths === 1 ? "" : "s"}` : "Needs cleaner data"} />
+              <BaseRow styles={styles} name="Target date" value={targetDate ? formatTargetDate(targetDate) : "Not set"} />
+              <BaseRow styles={styles} name="Pace needed" value={planPaceLabel} />
             </div>
           </>
-        ) : (
+        ) : null}
+
+        {showGoalForm || !hasSavedGoal ? (
           <>
             <p style={styles.sectionIntro}>
-              Pick a target, or use Money Hub's best first suggestion. The plan below updates from your real statement patterns.
+              {hasSavedGoal ? "Add another goal and switch between plans whenever you need." : "Pick a target, or use Money Hub's best first suggestion. The plan below updates from your real statement patterns."}
             </p>
             {primarySuggestion ? (
               <BaseInsightCard
@@ -279,6 +319,12 @@ export default function GoalsPage({
               value={form.current_amount}
               onChange={(event) => setForm((prev) => ({ ...prev, current_amount: event.target.value }))}
             />
+            <input
+              style={styles.input}
+              type="date"
+              value={form.target_date}
+              onChange={(event) => setForm((prev) => ({ ...prev, target_date: event.target.value }))}
+            />
             <select
               style={styles.input}
               value={form.timeframe}
@@ -293,7 +339,7 @@ export default function GoalsPage({
               {saving ? "Saving..." : "Save Goal"}
             </button>
           </>
-        )}
+        ) : null}
       </BaseSection>
 
       <BaseSection styles={styles} title="Smart Plan">
@@ -327,6 +373,7 @@ export default function GoalsPage({
           <BaseRow styles={styles} name={`${selectedView.label} fixed bills`} value={displayAmount(monthlyFixedBills)} />
           <BaseRow styles={styles} name={`${selectedView.label} flexible spending`} value={displayAmount(monthlyFlexibleSpend)} />
           <BaseRow styles={styles} name={`${selectedView.label} savings power`} value={likelyMonthlySaving > 0 ? displayAmount(likelyMonthlySaving) : "Not visible yet"} />
+          <BaseRow styles={styles} name="Pace needed" value={targetMonths ? displayAmount(requiredMonthly) : "Set a target date"} />
           <BaseRow styles={styles} name="Goal ETA" value={fastestMonths ? `${fastestMonths} month${fastestMonths === 1 ? "" : "s"}` : target > 0 ? "Needs more room" : "Add a target"} />
         </div>
         <button
@@ -384,19 +431,27 @@ export default function GoalsPage({
         )}
       </BaseSection>
 
-      {goals.length > 1 ? (
+      {goals.length > 0 ? (
         <BaseSection styles={styles} title="Saved Goals">
           {goals.map((goal) => {
             const savedTarget = Number(goal.target_amount || 0);
             const savedCurrent = Number(goal.current_amount || 0);
             const savedPercent = savedTarget > 0 ? Math.min((savedCurrent / savedTarget) * 100, 100) : 0;
             return (
-              <BaseRow
-                styles={styles}
+              <button
+                type="button"
                 key={goal.id || goal.name}
-                name={goal.name || "Goal"}
-                value={`${savedPercent.toFixed(0)}% of ${formatCurrency(savedTarget)}`}
-              />
+                style={styles.actionCard}
+                onClick={() => {
+                  setActiveGoalId(goal.id);
+                  setShowGoalForm(false);
+                }}
+              >
+                <p style={styles.insightLabel}>{goal.target_date ? formatTargetDate(goal.target_date) : "No date set"}</p>
+                <h4 style={styles.insightHeadline}>{goal.name || "Goal"}</h4>
+                <p style={styles.insightBody}>{savedPercent.toFixed(0)}% of {formatCurrency(savedTarget)}</p>
+                <span style={styles.insightCta}>Plan this goal</span>
+              </button>
             );
           })}
         </BaseSection>
@@ -407,4 +462,19 @@ export default function GoalsPage({
 
 function isBillLike(transaction) {
   return Boolean(transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription);
+}
+
+function getMonthsUntil(dateString) {
+  if (!dateString) return null;
+  const target = new Date(dateString);
+  if (Number.isNaN(target.getTime())) return null;
+  const today = new Date();
+  const monthDiff = (target.getFullYear() - today.getFullYear()) * 12 + target.getMonth() - today.getMonth();
+  return Math.max(monthDiff + 1, 1);
+}
+
+function formatTargetDate(dateString) {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return "Not set";
+  return date.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
 }
