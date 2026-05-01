@@ -377,6 +377,7 @@ export default function App() {
         {page === "today" && (
           <TodayPage
             transactions={smartTransactions}
+            transactionRules={transactionRules}
             accounts={accounts}
             goals={goals}
             debts={debts}
