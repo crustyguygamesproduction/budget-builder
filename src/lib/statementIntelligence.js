@@ -65,7 +65,7 @@ export function getStatementIntelligenceContext(transactions, query = "") {
       outgoing_personal_payment_groups: outgoingPersonalPaymentGroups,
       personal_payment_groups: outgoingPersonalPaymentGroups,
       personal_payment_note:
-        "Incoming and outgoing personal payments are split. Use incoming_personal_payment_groups for money sent to the user, and outgoing_personal_payment_groups for money the user sent out. The legacy personal_payment_groups field is outgoing-only.",
+        "Incoming and outgoing personal payments are split. Use incoming_personal_payment_groups for money sent to the user, and outgoing_personal_payment_groups for money the user sent out. Rent, bills, subscriptions, business payments, work income and pass-through flows are excluded from these personal groups. The legacy personal_payment_groups field is outgoing-only.",
       recurring_outgoings: recurringOutgoings,
       large_outgoings: largeOutgoings,
       large_income: largeIncome,
@@ -77,12 +77,14 @@ export function getStatementIntelligenceContext(transactions, query = "") {
 function getQueryFocus(transactions, query) {
   const terms = getSearchTerms(query);
   const directionIntent = getQueryDirectionIntent(query);
+  const personalMoneyIntent = hasPersonalMoneyIntent(query);
 
   if (terms.length === 0) {
     return {
       original_query: query,
       search_terms: terms,
       direction_intent: directionIntent,
+      personal_money_intent: personalMoneyIntent,
       direct_match_count: 0,
       relevant_match_count: 0,
       direct_money_in: 0,
@@ -107,7 +109,10 @@ function getQueryFocus(transactions, query) {
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || String(b.transaction.transaction_date || "").localeCompare(String(a.transaction.transaction_date || "")));
   const matches = scoredMatches.map((item) => item.transaction);
-  const relevantMatches = filterByDirectionIntent(matches, directionIntent);
+  const directionMatches = filterByDirectionIntent(matches, directionIntent);
+  const relevantMatches = personalMoneyIntent
+    ? directionMatches.filter((transaction) => isCleanPersonalPayment(transaction))
+    : directionMatches;
   const moneyIn = matches
     .filter((transaction) => Number(transaction.amount) > 0)
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
@@ -120,6 +125,7 @@ function getQueryFocus(transactions, query) {
     original_query: query,
     search_terms: terms,
     direction_intent: directionIntent,
+    personal_money_intent: personalMoneyIntent,
     direct_match_count: matches.length,
     relevant_match_count: relevantMatches.length,
     direct_money_in: roundMoney(moneyIn),
@@ -135,7 +141,7 @@ function getQueryFocus(transactions, query) {
     ).slice(0, 20),
     direct_matches: matches.slice(0, 120).map(toCoachTransaction),
     relevant_matches: relevantMatches.slice(0, 120).map(toCoachTransaction),
-    direct_match_note: buildQueryFocusNote(matches, relevantMatches, directionIntent),
+    direct_match_note: buildQueryFocusNote(matches, relevantMatches, directionIntent, personalMoneyIntent),
   };
 }
 
@@ -159,6 +165,11 @@ function getQueryDirectionIntent(query) {
   }
 
   return "unknown";
+}
+
+function hasPersonalMoneyIntent(query) {
+  const text = normalizeText(query);
+  return /\b(friend|friends|family|mum|mother|dad|father|brother|sister|mate|mates|people|person|personal|loaned|lent|borrowed|gift|gifts)\b/.test(text);
 }
 
 function filterByDirectionIntent(transactions, directionIntent) {
@@ -198,7 +209,7 @@ function getRelevantMoneyLabel(directionIntent) {
   return "all_matching_money_absolute";
 }
 
-function buildQueryFocusNote(matches, relevantMatches, directionIntent) {
+function buildQueryFocusNote(matches, relevantMatches, directionIntent, personalMoneyIntent) {
   const directionText =
     directionIntent === "incoming"
       ? "incoming money only because the question asks about money sent to/received by the user"
@@ -207,13 +218,15 @@ function buildQueryFocusNote(matches, relevantMatches, directionIntent) {
         : directionIntent === "net"
           ? "net money in minus money out because the question asks for an overall/net view"
           : "all matching directions because the question direction is unclear";
-
+  const personalText = personalMoneyIntent
+    ? " Rent, bills, subscriptions, business/work payments and pass-through flows have been excluded from relevant personal-payment matches."
+    : "";
   const capText =
     matches.length > 120 || relevantMatches.length > 120
       ? " Showing 120 example transactions, but totals use all direct full-history matches."
       : " Showing all direct full-history matches.";
 
-  return `${directionText}.${capText}`;
+  return `${directionText}.${personalText}${capText}`;
 }
 
 function getSearchTerms(query) {
@@ -227,6 +240,9 @@ function getSearchTerms(query) {
     "dad",
     "did",
     "does",
+    "family",
+    "friend",
+    "friends",
     "from",
     "gave",
     "give",
@@ -240,6 +256,7 @@ function getSearchTerms(query) {
     "pay",
     "payment",
     "payments",
+    "people",
     "received",
     "sent",
     "send",
@@ -289,15 +306,38 @@ function buildPersonalPaymentGroups(transactions, direction = "out") {
     const amount = Number(transaction.amount || 0);
     if (direction === "in" && amount <= 0) return false;
     if (direction === "out" && amount >= 0) return false;
-    if (isInternalTransferLike(transaction)) return false;
-
-    const description = normalizeText(transaction.description);
-    return /transfer|faster payment|fpi|payment to|payment from|bank transfer|standing order|mobile payment|online payment|from | to |credit/.test(description);
+    return isCleanPersonalPayment(transaction);
   });
 
   return buildTransactionGroups(candidates, (transaction) =>
     getPersonalPaymentLabel(transaction.description)
   ).filter((group) => group.label !== "Unlabelled personal transfer");
+}
+
+function isCleanPersonalPayment(transaction) {
+  if (isInternalTransferLike(transaction)) return false;
+  if (isBillRentOrSubscription(transaction)) return false;
+  if (isLikelyBusinessWorkOrPassThrough(transaction)) return false;
+
+  const description = normalizeText(transaction.description);
+  return /transfer|faster payment|fpi|payment to|payment from|bank transfer|standing order|mobile payment|online payment|from | to |credit/.test(description);
+}
+
+function isBillRentOrSubscription(transaction) {
+  if (transaction.is_bill || transaction.is_subscription) return true;
+  const text = normalizeText(
+    [transaction.description, transaction.merchant, transaction.category, getMeaningfulCategory(transaction)].join(" ")
+  );
+
+  return /\b(rent|landlord|mortgage|bills?|utilities|council tax|energy|electric|gas|water|broadband|internet|phone bill|insurance|subscription|netflix|spotify|apple com bill|google storage|direct debit)\b/.test(text);
+}
+
+function isLikelyBusinessWorkOrPassThrough(transaction) {
+  const text = normalizeText(
+    [transaction.description, transaction.merchant, transaction.category, getMeaningfulCategory(transaction)].join(" ")
+  );
+
+  return /\b(ltd|limited|plc|llp|mynextbike|my next bike|nextbike|proovia|salary|wages|payroll|employer|work|expenses?|reimburse|reimbursement|refund|hmrc|universal credit|dwp|trading 212|trading212|clearpay|paypal|stripe|sumup|cashback|reward|interest)\b/.test(text);
 }
 
 function getPersonalPaymentLabel(description) {
