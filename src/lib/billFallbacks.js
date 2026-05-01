@@ -1,9 +1,10 @@
 import { getFriendlyTransactionName, getRealWorldMerchant } from "./merchantIntelligence";
 import { formatCurrency, isInternalTransferLike, normalizeText, parseAppDate } from "./finance";
 
-const FIXED_BILL_CATEGORIES = ["rent", "mortgage", "council tax", "energy", "water", "broadband", "phone", "insurance", "debt / credit", "childcare", "subscription"];
+const FIXED_BILL_CATEGORIES = ["rent", "mortgage", "council tax", "energy", "water", "broadband", "phone", "insurance", "debt / credit", "childcare"];
 const EVERYDAY_SPEND_WORDS = /\b(chickie|chicken|takeaway|restaurant|mcdonald|kfc|burger king|subway|greggs|deliveroo|uber eats|just eat|cafe|coffee|bar|pub|tesco|aldi|lidl|asda|sainsbury|morrisons|one stop|premier|shop|store|vinted|ebay|amazon marketplace|fuel|petrol|parking|cash withdrawal|atm|gaming|lvl up|xsolla)\b/;
-const FIXED_BILL_WORDS = /\b(rent|mortgage|landlord|letting|council tax|energy|electric|electricity|gas|water|broadband|internet|wifi|phone bill|mobile bill|sim only|airtime|contract|insurance|tv licence|loan repayment|credit card|finance agreement|childcare|nursery|subscription|direct debit|standing order)\b/;
+const FIXED_BILL_WORDS = /\b(rent|mortgage|landlord|letting|council tax|energy|electric|electricity|gas|water|broadband|internet|wifi|phone bill|mobile bill|sim only|airtime|contract|insurance|tv licence|loan repayment|credit card|finance agreement|childcare|nursery|direct debit|standing order)\b/;
+const SUBSCRIPTION_WORDS = /\b(subscription|membership|premium|netflix|spotify|apple|itunes|icloud|google|youtube premium|openai|chatgpt|microsoft|xbox|playstation|disney|prime video|amazon prime|audible|strava|duolingo|notion|dropbox|github)\b/;
 
 export function buildStrongBillFallbackEvents(transactions, existingEvents = []) {
   const latestMonth = getLatestTransactionMonth(transactions);
@@ -29,7 +30,7 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
     const title = isRent ? "Rent" : `${merchant.known ? merchant.name : transaction._real_merchant_name || getFriendlyTransactionName(transaction)} bill around ${formatCurrency(amount)}`;
 
     if (!groups.has(key)) {
-      groups.set(key, { key, title, kind: category === "subscription" || merchant.subscription ? "subscription" : "bill", amounts: [], dates: [], transactions: [], isRent });
+      groups.set(key, { key, title, kind: "bill", amounts: [], dates: [], transactions: [], isRent });
     }
     const group = groups.get(key);
     group.amounts.push(amount);
@@ -43,10 +44,16 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
 export function mergeRecurringEvents(events) {
   return (events || []).filter(isAllowedFutureBillEvent).reduce((merged, event) => {
     const duplicateIndex = merged.findIndex((existing) => isDuplicateBillEvent(existing, event));
-    if (duplicateIndex < 0) return [...merged, event];
+    if (duplicateIndex < 0) return [...merged, cleanEventTitle(event)];
     const better = chooseBetterDuplicate(merged[duplicateIndex], event);
-    return merged.map((item, index) => (index === duplicateIndex ? better : item));
+    return merged.map((item, index) => (index === duplicateIndex ? cleanEventTitle(better) : item));
   }, []);
+}
+
+function cleanEventTitle(event) {
+  const title = String(event?.title || "").replace(/\s+/g, " ").trim();
+  const cleaned = title.replace(/^(Apple iTunes)\s+\1\b/i, "$1").replace(/^(Netflix)\s+\1\b/i, "$1").replace(/^(OpenAI)\s+\1\b/i, "$1").replace(/^(Google)\s+\1\b/i, "$1");
+  return { ...event, title: cleaned };
 }
 
 function isDuplicateBillEvent(a, b) {
@@ -58,19 +65,20 @@ function isDuplicateBillEvent(a, b) {
   const sameBase = aBase && bBase && aBase === bBase;
   const closeAmount = Math.abs(Math.abs(Number(a?.amount || 0)) - Math.abs(Number(b?.amount || 0))) <= 3;
   const closeDay = Math.abs(Number(a?.day || 0) - Number(b?.day || 0)) <= 4;
-  const subscriptionSameProvider = (a?.kind === "subscription" || b?.kind === "subscription") && sameBase && closeAmount;
-  return Boolean((sameKey && closeAmount) || (sameBase && closeAmount && closeDay) || subscriptionSameProvider);
+  const oneIsFallback = /bill around/.test(aText) || /bill around/.test(bText) || String(a?.key || "").includes(":fallback:") || String(b?.key || "").includes(":fallback:");
+  const subscriptionSameProvider = (a?.kind === "subscription" || b?.kind === "subscription") && sameBase;
+  return Boolean((sameKey && closeAmount) || (sameBase && closeAmount && closeDay) || (oneIsFallback && subscriptionSameProvider));
 }
 
 function chooseBetterDuplicate(a, b) {
-  const aScore = scoreEvent(a);
-  const bScore = scoreEvent(b);
-  if (bScore !== aScore) return bScore > aScore ? b : a;
   const aText = normalizeText(a?.title || "");
   const bText = normalizeText(b?.title || "");
-  if (/bill around/.test(aText) && !/bill around/.test(bText)) return b;
-  if (/bill around/.test(bText) && !/bill around/.test(aText)) return a;
-  return a;
+  const aFallback = /bill around/.test(aText) || String(a?.key || "").includes(":fallback:");
+  const bFallback = /bill around/.test(bText) || String(b?.key || "").includes(":fallback:");
+  if (aFallback !== bFallback) return aFallback ? b : a;
+  const aScore = scoreEvent(a);
+  const bScore = scoreEvent(b);
+  return bScore > aScore ? b : a;
 }
 
 function getBillBaseName(text) {
@@ -105,10 +113,11 @@ function isFixedCommitmentTransaction(transaction) {
   const category = normalizeText(transaction._smart_category || transaction.category || "");
   const text = normalizeText(`${transaction.description || ""} ${transaction.merchant || ""} ${category}`);
   if (EVERYDAY_SPEND_WORDS.test(text)) return false;
+  if (merchant.subscription || category === "subscription" || SUBSCRIPTION_WORDS.test(text)) return false;
 
   const fixedCategory = FIXED_BILL_CATEGORIES.some((item) => category.includes(item));
-  const knownFixedMerchant = Boolean(merchant.bill || merchant.subscription);
-  const explicitBill = Boolean(transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription);
+  const knownFixedMerchant = Boolean(merchant.bill && !merchant.subscription);
+  const explicitBill = Boolean(transaction._smart_is_bill || transaction.is_bill) && !transaction._smart_is_subscription && !transaction.is_subscription;
   const fixedByText = FIXED_BILL_WORDS.test(text);
 
   return fixedCategory || knownFixedMerchant || explicitBill || fixedByText;
