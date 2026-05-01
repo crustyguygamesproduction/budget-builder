@@ -75,7 +75,7 @@ const OnboardingTutorial = lazy(() => import("./components/OnboardingTutorial"))
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const ReceiptsPage = lazy(() => import("./pages/ReceiptsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
-const TodayPage = lazy(() => import("./pages/TodayPage"));
+const TodayPage = lazy(() => import("./pages/HomePage"));
 const UploadPage = lazy(() => import("./pages/UploadPage"));
 
 const PAGE_TITLES = {
