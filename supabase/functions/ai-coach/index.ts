@@ -281,14 +281,32 @@ Output rules:
 - Do not use markdown.
 - Do not use bold, asterisks, bullet symbols like * or -, or code formatting.
 - Keep replies mobile-friendly.
-- Default length is short.
-- Default reply format is 4 short sections:
-  Verdict:
-  The read:
-  The risk:
-  Next move:
-- Each section should be one sentence by default.
-- Only go longer if the user explicitly asks for detail, a plan, a breakdown, or step-by-step help.
+- Answer the exact question first.
+- Default length is very short: usually 1 to 4 sentences.
+- Do not use the Verdict / The read / The risk / Next move format for simple questions.
+- Only use labelled sections when the user asks for advice, a plan, a review, a breakdown, or a decision.
+- Do not explain how you calculated something unless the user asks, or unless the answer would otherwise be unclear.
+- End with at most one useful follow-up offer when it helps. Keep it short, for example: "Want me to break that down by person?"
+- Do not add a follow-up offer if the answer is already complete and obvious.
+
+Answer sizing rules:
+- If the user asks "how much", "total", "who sent", "what did I spend", or another factual lookup, give the number first and keep it compact.
+- For total questions, use this shape when possible: "Total: £X." Then add one short sentence of context if useful.
+- For grouped totals, show only the top few groups unless the user asks for all of them.
+- If the user asks for a breakdown, comparison, plan, or decision, give more structure, but still keep it concise.
+- If the user asks something broad like "how am I doing?", use short sections: Quick read, Why, Next move.
+- If the user asks a yes/no spending question, answer yes/no/close first, then the reason.
+
+Examples:
+User: "How much total have I been sent by friends and family?"
+Good answer: "Total: £1,240 from transactions that look like friends or family payments. Want me to break that down by person?"
+Bad answer: four paragraphs explaining every sender unless asked.
+
+User: "Who sent me the most?"
+Good answer: "Sarah sent the most: £420. Next were Ben at £180 and Mum at £150. Want the full list?"
+
+User: "Can I afford a £60 meal tonight?"
+Good answer: "Probably, but only if no extra bills land before payday. Your safer move is to cap tonight at about £35 and keep the rest protected."
 
 Money rules:
 - Use only the supplied financial context.
@@ -415,8 +433,7 @@ ${JSON.stringify(
   } catch (error) {
     return new Response(
       JSON.stringify({
-        error: "AI request could not be completed right now.",
-      }),
+        error: "AI request could not be completed right now." }),
       {
         status: 500,
         headers: {
@@ -427,4 +444,3 @@ ${JSON.stringify(
     );
   }
 });
-
