@@ -17,6 +17,7 @@ export function getSmartRecurringCalendarEvents(transactions) {
     const amount = Math.abs(Number(transaction?.amount || 0));
     if (!transaction?.transaction_date) return;
     if (isInternalTransferLike(transaction)) return;
+    if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return;
     if (Number(transaction.amount || 0) >= 0) return;
     if (amount < 3) return;
 
@@ -36,6 +37,7 @@ export function getSmartRecurringCalendarEvents(transactions) {
         amounts: [],
         billSignals: 0,
         mechanismSignals: 0,
+        recurringBillIntent: Boolean(groupInfo.recurringBillIntent),
       });
     }
 
@@ -60,16 +62,33 @@ function getRealWorldBillKey(transaction) {
   const rawText = normalizeText([transaction.description, transaction.merchant, transaction.category, transaction._smart_category].join(" "));
   if (!rawText) return null;
 
+  const explicitlyBillLike = isBillLike(transaction, rawText) || hasRecurringWords(rawText);
+  const recurringBillIntent = Boolean(merchant.bill || merchant.subscription || explicitlyBillLike);
+
   if (merchant.known) {
-    return { key: `merchant:${merchant.key}`, title: merchant.name, providerMatched: true, text: rawText };
+    if (!recurringBillIntent) return null;
+    if (merchant.type === "work_money" || merchant.type === "investment") return null;
+    return {
+      key: `merchant:${merchant.key}`,
+      title: merchant.name,
+      providerMatched: true,
+      recurringBillIntent,
+      text: rawText,
+    };
   }
 
   const cleaned = merchant.key;
   if (!cleaned) return null;
-  const likelyBill = isBillLike(transaction, rawText) || hasRecurringWords(rawText);
-  if (!likelyBill && amountLooksEveryday(transaction)) return null;
+  if (!explicitlyBillLike) return null;
+  if (amountLooksEveryday(transaction) && !hasRecurringWords(rawText)) return null;
 
-  return { key: `text:${cleaned}`, title: merchant.name, providerMatched: false, text: rawText };
+  return {
+    key: `text:${cleaned}`,
+    title: merchant.name,
+    providerMatched: false,
+    recurringBillIntent,
+    text: rawText,
+  };
 }
 
 function splitGroupByAmountStreams(group) {
@@ -89,12 +108,7 @@ function splitGroupByAmountStreams(group) {
       return;
     }
 
-    clusters.push({
-      transactions: [transaction],
-      dates: [date],
-      amounts: [amount],
-      average: amount,
-    });
+    clusters.push({ transactions: [transaction], dates: [date], amounts: [amount], average: amount });
   });
 
   if (clusters.length <= 1) return [group];
@@ -121,16 +135,25 @@ function buildSmartEvent(group) {
   const amountStats = getAmountStats(group.amounts);
   const dayStats = getSmartDayStats(group.dates);
   const repeated = monthCount >= 2 && count >= 2;
-  const signalled = group.providerMatched || group.billSignals > 0 || group.mechanismSignals > 0;
   const stableAmount = amountStats.spread <= 5 || amountStats.spreadRatio <= 0.25;
-  const confidenceScore = (group.providerMatched ? 3 : 0) + (repeated ? 2 : 0) + (monthCount >= 3 ? 2 : 0) + (stableAmount ? 1 : 0) + (dayStats.confidence === "stable" ? 1 : 0) + (group.billSignals > 0 ? 2 : 0) + (group.mechanismSignals > 0 ? 1 : 0);
+  const hasStrongBillSignal = group.recurringBillIntent || group.billSignals > 0 || group.mechanismSignals > 0;
+  const confidenceScore =
+    (group.providerMatched ? 2 : 0) +
+    (repeated ? 3 : 0) +
+    (monthCount >= 3 ? 2 : 0) +
+    (stableAmount ? 1 : 0) +
+    (dayStats.confidence === "stable" ? 1 : 0) +
+    (group.billSignals > 0 ? 2 : 0) +
+    (group.mechanismSignals > 0 ? 1 : 0);
 
-  if (!signalled && confidenceScore < 4) return null;
+  if (!hasStrongBillSignal) return null;
   if (amountStats.average < 3) return null;
-  if (!repeated && !group.providerMatched && group.billSignals === 0) return null;
+  if (!repeated && group.mechanismSignals === 0 && group.billSignals < 2) return null;
+  if (!repeated && !group.providerMatched) return null;
+  if (!repeated && group.providerMatched && !stableAmount) return null;
 
   const amount = stableAmount || group.providerMatched ? getLikelyAmount(group.dates, group.amounts) : amountStats.average;
-  const confidenceLabel = confidenceScore >= 8 && monthCount >= 3 ? "high" : confidenceScore >= 5 ? "medium" : "estimated";
+  const confidenceLabel = confidenceScore >= 8 && monthCount >= 3 ? "high" : confidenceScore >= 6 ? "medium" : "estimated";
   const kind = inferKind(group);
 
   return {
@@ -209,7 +232,16 @@ function inferKind(group) {
 
 function isBillLike(transaction, text) {
   const category = normalizeText(transaction?._smart_category || transaction?.category || "");
-  return Boolean(looksLikeKnownBill(transaction) || transaction?._smart_is_bill || transaction?.is_bill || transaction?._smart_is_subscription || transaction?.is_subscription || getSmartBillCategory(transaction) || /rent|mortgage|major bill|bill|council tax|energy|water|broadband|phone|mobile|insurance|subscription|utilities/.test(category) || /\b(rent|mortgage|landlord|letting|council tax|water|energy|electric|electricity|gas|utility|utilities|broadband|internet|wifi|phone|mobile|sim|contract|insurance|tv licence|licence|loan|credit card|finance|childcare|nursery|school|parking permit)\b/.test(text));
+  return Boolean(
+    looksLikeKnownBill(transaction) ||
+    transaction?._smart_is_bill ||
+    transaction?.is_bill ||
+    transaction?._smart_is_subscription ||
+    transaction?.is_subscription ||
+    getSmartBillCategory(transaction) ||
+    /rent|mortgage|major bill|bill|council tax|energy|water|broadband|phone|mobile|insurance|subscription|utilities/.test(category) ||
+    /\b(rent|mortgage|landlord|letting|council tax|water|energy|electric|electricity|gas|utility|utilities|broadband|internet|wifi|phone|mobile|sim|contract|insurance|tv licence|licence|loan|credit card|finance|childcare|nursery|school fees|parking permit)\b/.test(text)
+  );
 }
 
 function hasRecurringWords(text) {
@@ -218,7 +250,7 @@ function hasRecurringWords(text) {
 
 function isClearlyEverydayMerchant(transaction, text) {
   if (isBillLike(transaction, text) || hasRecurringWords(text)) return false;
-  return /\b(tesco|sainsbury|asda|morrisons|lidl|aldi|coop|co op|one stop|premier|greggs|mcdonald|kfc|burger king|subway|uber eats|deliveroo|just eat|restaurant|bar|pub|cafe|coffee|amazon marketplace|ebay|vinted|shop|store|petrol|fuel|parking)\b/.test(text);
+  return /\b(tesco|sainsbury|asda|morrisons|lidl|aldi|coop|co op|one stop|premier|greggs|mcdonald|kfc|burger king|subway|uber eats|deliveroo|just eat|restaurant|bar|pub|cafe|coffee|amazon marketplace|ebay|vinted|shop|store|petrol|fuel|parking|cash withdrawal|atm)\b/.test(text);
 }
 
 function amountLooksEveryday(transaction) {
