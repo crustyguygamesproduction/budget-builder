@@ -93,14 +93,14 @@ export default function GoalsPage({
     .filter((item) => item.likelySavings)
     .reduce((sum, item) => sum + item.netTransferIn, 0);
 
-  const incomeTotal = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) > 0)
+  const realIncomeTransactions = getRealIncomeTransactions(timeframeTransactions);
+  const fixedBillTransactions = getFixedBillTransactions(timeframeTransactions);
+  const incomeTotal = realIncomeTransactions
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-  const fixedBillsTotal = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && isBillLike(transaction))
+  const fixedBillsTotal = fixedBillTransactions
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
   const flexibleSpendTotal = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !isBillLike(transaction))
+    .filter((transaction) => Number(transaction.amount) < 0 && !fixedBillTransactions.includes(transaction))
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
   const monthlyIncome = incomeTotal / monthCount;
   const monthlyFixedBills = fixedBillsTotal / monthCount;
@@ -109,7 +109,7 @@ export default function GoalsPage({
   const monthlyConfirmedSavings = confirmedSavingsIn / monthCount;
 
   const categoryTotals = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !isBillLike(transaction))
+    .filter((transaction) => Number(transaction.amount) < 0 && !fixedBillTransactions.includes(transaction))
     .reduce((groups, transaction) => {
       const category = getMeaningfulCategory(transaction) || "Spending";
       groups[category] = (groups[category] || 0) + Math.abs(Number(transaction.amount || 0));
@@ -243,7 +243,7 @@ export default function GoalsPage({
     }
   }
 
-  const planPrompt = `Build my smartest goal plan. Target ${formatCurrency(target)}, current ${formatCurrency(current)}, gap ${formatCurrency(gap)}${targetDate ? `, target date ${targetDate}` : ""}. Use ${timeframeLabel}. Monthly averages: income ${formatCurrency(monthlyIncome)}, fixed bills ${formatCurrency(monthlyFixedBills)}, flexible spend ${formatCurrency(monthlyFlexibleSpend)}, confirmed savings transfers ${formatCurrency(monthlyConfirmedSavings)}. Protect rent, bills, debts and essentials first.`;
+  const planPrompt = `Build my smartest goal plan. Target ${formatCurrency(target)}, current ${formatCurrency(current)}, gap ${formatCurrency(gap)}${targetDate ? `, target date ${targetDate}` : ""}. Use ${timeframeLabel}. Monthly averages: real income ${formatCurrency(monthlyIncome)}, fixed bills including confirmed rent/major bills ${formatCurrency(monthlyFixedBills)}, flexible spend ${formatCurrency(monthlyFlexibleSpend)}, confirmed savings transfers ${formatCurrency(monthlyConfirmedSavings)}. Do not count transfers or random credits as income. Protect rent, bills, debts and essentials first.`;
 
   return (
     <>
@@ -344,7 +344,7 @@ export default function GoalsPage({
 
       <BaseSection styles={styles} title="Smart Plan">
         <p style={styles.sectionIntro}>
-          Based on {monthCount} month{monthCount === 1 ? "" : "s"} of clean data from {timeframeLabel}. Transfers are ignored unless they land in a confirmed savings-style account.
+          Based on {monthCount} month{monthCount === 1 ? "" : "s"} from {timeframeLabel}. Income is salary/benefit-style only, and fixed bills include confirmed rent, mortgage, subscriptions, and recurring commitments.
         </p>
         <div style={styles.inlineBtnRow}>
           {PERIOD_OPTIONS.map((option) => (
@@ -369,8 +369,8 @@ export default function GoalsPage({
           ))}
         </div>
         <div style={styles.inlineInfoBlock}>
-          <BaseRow styles={styles} name={`${selectedView.label} income`} value={displayAmount(monthlyIncome)} />
-          <BaseRow styles={styles} name={`${selectedView.label} fixed bills`} value={displayAmount(monthlyFixedBills)} />
+          <BaseRow styles={styles} name={`${selectedView.label} real income`} value={displayAmount(monthlyIncome)} />
+          <BaseRow styles={styles} name={`${selectedView.label} fixed bills incl. rent`} value={displayAmount(monthlyFixedBills)} />
           <BaseRow styles={styles} name={`${selectedView.label} flexible spending`} value={displayAmount(monthlyFlexibleSpend)} />
           <BaseRow styles={styles} name={`${selectedView.label} savings power`} value={likelyMonthlySaving > 0 ? displayAmount(likelyMonthlySaving) : "Not visible yet"} />
           <BaseRow styles={styles} name="Pace needed" value={targetMonths ? displayAmount(requiredMonthly) : "Set a target date"} />
@@ -462,6 +462,100 @@ export default function GoalsPage({
 
 function isBillLike(transaction) {
   return Boolean(transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription);
+}
+
+function getRealIncomeTransactions(transactions) {
+  const outgoingByAmount = new Map();
+  transactions.forEach((transaction) => {
+    if (Number(transaction.amount || 0) >= 0) return;
+    const key = Math.abs(Number(transaction.amount || 0)).toFixed(2);
+    if (!outgoingByAmount.has(key)) outgoingByAmount.set(key, []);
+    outgoingByAmount.get(key).push(transaction);
+  });
+
+  const recurringIncomeKeys = getRecurringKeys(
+    transactions.filter((transaction) => Number(transaction.amount || 0) > 0 && Math.abs(Number(transaction.amount || 0)) >= 400)
+  );
+
+  return transactions.filter((transaction) => {
+    const amount = Number(transaction.amount || 0);
+    if (amount <= 0) return false;
+    if (looksLikeTransferOrRefund(transaction)) return false;
+
+    const matchingOut = outgoingByAmount.get(Math.abs(amount).toFixed(2)) || [];
+    if (matchingOut.some((candidate) => Math.abs(dayDifference(candidate.transaction_date, transaction.transaction_date)) <= 3)) {
+      return false;
+    }
+
+    const category = String(transaction._smart_category || transaction.category || "").toLowerCase();
+    const text = `${transaction.description || ""} ${category}`.toLowerCase();
+    if (/salary|payroll|wage|paye|hmrc|universal credit|child benefit|pension|dividend|interest/.test(text)) {
+      return true;
+    }
+
+    return recurringIncomeKeys.has(getRecurringKey(transaction));
+  });
+}
+
+function getFixedBillTransactions(transactions) {
+  const recurringOutgoingKeys = getRecurringKeys(
+    transactions.filter((transaction) => Number(transaction.amount || 0) < 0 && Math.abs(Number(transaction.amount || 0)) >= 20)
+  );
+
+  return transactions.filter((transaction) => {
+    const amount = Number(transaction.amount || 0);
+    if (amount >= 0) return false;
+    if (isBillLike(transaction)) return true;
+
+    const category = String(transaction._smart_category || transaction.category || "").toLowerCase();
+    if (/rent|mortgage|major bill|council tax|energy|water|broadband|phone|insurance|subscription/.test(category)) {
+      return true;
+    }
+
+    return recurringOutgoingKeys.has(getRecurringKey(transaction));
+  });
+}
+
+function getRecurringKeys(transactions) {
+  const groups = new Map();
+  transactions.forEach((transaction) => {
+    if (looksLikeTransferOrRefund(transaction)) return;
+    const key = getRecurringKey(transaction);
+    const date = new Date(transaction.transaction_date);
+    if (!key || Number.isNaN(date.getTime())) return;
+    if (!groups.has(key)) groups.set(key, new Set());
+    groups.get(key).add(`${date.getFullYear()}-${date.getMonth()}`);
+  });
+
+  return new Set(
+    [...groups.entries()]
+      .filter(([, months]) => months.size >= 2)
+      .map(([key]) => key)
+  );
+}
+
+function getRecurringKey(transaction) {
+  const merchant = String(transaction.description || "")
+    .toLowerCase()
+    .replace(/\b(faster payment|standing order|bank transfer|payment to|payment from|card payment|direct debit|debit card|credit card|fpi|ref|reference|dd|so)\b/g, " ")
+    .replace(/\b\d{2,}\b/g, " ")
+    .replace(/[^a-z0-9&.' -]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const amountBand = Math.round(Math.abs(Number(transaction.amount || 0)) / 5) * 5;
+  return merchant ? `${merchant}|${amountBand}` : "";
+}
+
+function looksLikeTransferOrRefund(transaction) {
+  const text = String(`${transaction.description || ""} ${transaction._smart_category || transaction.category || ""}`).toLowerCase();
+  return /internal transfer|transfer to|transfer from|own account|between accounts|to savings|from savings|monzo pot|savings pot|refund|reversal|cashback|repayment/.test(text);
+}
+
+function dayDifference(a, b) {
+  const first = new Date(a);
+  const second = new Date(b);
+  if (Number.isNaN(first.getTime()) || Number.isNaN(second.getTime())) return 999;
+  return Math.round((first - second) / 86400000);
 }
 
 function getMonthsUntil(dateString) {
