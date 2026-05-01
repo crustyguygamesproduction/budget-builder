@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import {
   formatCurrency,
+  formatDateShort,
   getMeaningfulCategory,
   getTotals,
   isInternalTransferLike,
+  parseAppDate,
   isTransactionInMonth,
 } from "../lib/finance";
 import {
@@ -62,6 +64,10 @@ export default function TodayPage({
   const cashSummary = useMemo(() => getCashSummary(accounts, transactions), [getCashSummary, accounts, transactions]);
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [getSubscriptionSummary, transactions]);
   const recurringSummary = useMemo(() => getRecurringSummary(transactions), [getRecurringSummary, transactions]);
+  const cashPlan = useMemo(
+    () => buildCashPlan({ accounts, transactions, cashSummary, formatCurrency }),
+    [accounts, transactions, cashSummary]
+  );
   const intelligenceSummary = useMemo(
     () =>
       getMoneyIntelligenceSummary({
@@ -117,6 +123,7 @@ export default function TodayPage({
         transactions,
         monthSnapshot,
         cashSummary,
+        cashPlan,
         formatCurrency,
         isInternalTransferLike,
       })
@@ -271,11 +278,11 @@ export default function TodayPage({
       ]
     : [
         {
-          label: "Net movement",
-          value: `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
+          label: cashPlan.hasCashBalance ? "Spendable after bills" : "Net movement",
+          value: cashPlan.hasCashBalance ? formatCurrency(cashPlan.spendableAfterBills) : `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
         },
-        { label: "Real income", value: formatCurrency(monthSnapshot.income) },
-        { label: "Real spending", value: formatCurrency(monthSnapshot.spending) },
+        { label: cashPlan.hasCashBalance ? "Upcoming bills" : "Real income", value: cashPlan.hasCashBalance ? formatCurrency(cashPlan.upcomingBillsTotal) : formatCurrency(monthSnapshot.income) },
+        { label: cashPlan.hasCashBalance ? "Next bill" : "Real spending", value: cashPlan.nextBill ? `${formatCurrency(cashPlan.nextBill.amount)} ${cashPlan.nextBill.dateLabel}` : formatCurrency(monthSnapshot.spending) },
       ];
   const topCategory = topCategories[0] || null;
   const transferSummary = getTransferSummary(transactions);
@@ -323,16 +330,20 @@ export default function TodayPage({
   const moneyStoryCards = [
     {
       label: "Main read",
-      headline: monthSnapshot.net >= 0
+      headline: cashPlan.hasCashBalance
+        ? `${formatCurrency(cashPlan.spendableAfterBills)} safe after upcoming bills`
+        : monthSnapshot.net >= 0
         ? `${formatCurrency(monthSnapshot.net)} ahead in ${monthSnapshot.monthName}`
         : `${formatCurrency(Math.abs(monthSnapshot.net))} behind in ${monthSnapshot.monthName}`,
-      body: monthSnapshot.net >= 0
+      body: cashPlan.hasCashBalance
+        ? `${formatCurrency(cashPlan.availableCash)} visible cash minus ${formatCurrency(cashPlan.upcomingBillsTotal)} expected rent, bills and subscriptions in the next 31 days.`
+        : monthSnapshot.net >= 0
         ? `${formatCurrency(monthSnapshot.income)} came in against ${formatCurrency(monthSnapshot.spending)} going out.`
         : `${formatCurrency(monthSnapshot.spending)} went out against ${formatCurrency(monthSnapshot.income)} coming in.`,
       ctaLabel: "Ask AI why",
       onClick: () =>
         onGoToCoach(
-          `Explain my ${monthSnapshot.monthName} money read. Income is ${formatCurrency(monthSnapshot.income)}, spending is ${formatCurrency(monthSnapshot.spending)}, net is ${formatCurrency(monthSnapshot.net)}, and transfers detected are ${transferSummary.transfers.length}. Tell me what is driving it.`,
+          `Explain my money read. Visible cash is ${formatCurrency(cashPlan.availableCash)}, expected upcoming bills are ${formatCurrency(cashPlan.upcomingBillsTotal)}, safe amount after bills is ${formatCurrency(cashPlan.spendableAfterBills)}. Latest month income is ${formatCurrency(monthSnapshot.income)}, spending is ${formatCurrency(monthSnapshot.spending)}, net is ${formatCurrency(monthSnapshot.net)}, and transfers detected are ${transferSummary.transfers.length}. Tell me what is driving it.`,
           { autoSend: true }
         ),
     },
@@ -512,6 +523,18 @@ export default function TodayPage({
             styles={styles}
           />
         </div>
+      </Section>
+
+      <Section title="Safe To Spend" styles={styles}>
+        <p style={styles.sectionIntro}>
+          This protects expected rent, bills and subscriptions before treating money as spendable.
+        </p>
+        <Row name="Visible cash" value={cashPlan.hasCashBalance ? formatCurrency(cashPlan.availableCash) : "Needs account balance"} styles={styles} />
+        <Row name="Expected next 31 days" value={cashPlan.upcomingBillsTotal > 0 ? formatCurrency(cashPlan.upcomingBillsTotal) : "No fixed bills detected"} styles={styles} />
+        <Row name="Safe after bills" value={cashPlan.hasCashBalance ? formatCurrency(cashPlan.spendableAfterBills) : "Connect balance or upload latest"} styles={styles} />
+        {cashPlan.nextBill ? (
+          <Row name="Next commitment" value={`${cashPlan.nextBill.title} - ${formatCurrency(cashPlan.nextBill.amount)} on ${cashPlan.nextBill.dateLabel}`} styles={styles} />
+        ) : null}
       </Section>
 
       <Section title={subscriptionStatus?.isPremium ? "Premium Setup" : "Premium Unlocks"} styles={styles}>
@@ -787,7 +810,109 @@ function getPrimaryGoal(goals = []) {
   return datedGoals[0] || goals[0] || null;
 }
 
-function buildGoalNudge({ goal, transactions, monthSnapshot, cashSummary, formatCurrency, isInternalTransferLike }) {
+function buildCashPlan({ accounts = [], transactions = [], cashSummary }) {
+  const accountCash = getAccountCash(accounts);
+  const hasCashBalance = accountCash !== null || Boolean(cashSummary?.hasLiveBalances);
+  const availableCash = accountCash !== null ? accountCash : Number(cashSummary?.amount || 0);
+  const upcomingBills = getUpcomingFixedCommitments(transactions);
+  const upcomingBillsTotal = upcomingBills.reduce((sum, bill) => sum + bill.amount, 0);
+  const spendableAfterBills = hasCashBalance ? availableCash - upcomingBillsTotal : 0;
+
+  return {
+    hasCashBalance,
+    availableCash,
+    upcomingBills,
+    upcomingBillsTotal,
+    spendableAfterBills,
+    nextBill: upcomingBills[0] || null,
+  };
+}
+
+function getAccountCash(accounts = []) {
+  const balanceFields = ["available_balance", "current_balance", "balance", "available", "current"];
+  const balances = accounts
+    .map((account) => {
+      for (const field of balanceFields) {
+        const value = account?.[field];
+        if (value === null || value === undefined || value === "") continue;
+        const parsed = Number(value);
+        if (!Number.isNaN(parsed)) return parsed;
+      }
+      return null;
+    })
+    .filter((value) => value !== null);
+
+  if (!balances.length) return null;
+  return balances.reduce((sum, value) => sum + value, 0);
+}
+
+function getUpcomingFixedCommitments(transactions = []) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setDate(end.getDate() + 31);
+  const groups = new Map();
+
+  transactions.forEach((transaction) => {
+    const amount = Math.abs(Number(transaction.amount || 0));
+    if (Number(transaction.amount || 0) >= 0 || amount < 5 || isInternalTransferLike(transaction)) return;
+
+    const category = String(transaction._smart_category || transaction.category || "").toLowerCase();
+    const fixedByCategory = /rent|mortgage|major bill|council tax|energy|water|broadband|phone|insurance|subscription/.test(category);
+
+    const date = parseAppDate(transaction.transaction_date);
+    if (!date) return;
+    const key = `${normaliseBillTitle(transaction.description)}|${Math.round(amount / 5) * 5}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        title: normaliseBillTitle(transaction.description),
+        amount,
+        fixedByCategory,
+        isKnownBill: isBillLike(transaction),
+        dates: [],
+      });
+    }
+    groups.get(key).dates.push(date);
+  });
+
+  return [...groups.values()]
+    .filter((group) => {
+      const months = new Set(group.dates.map((date) => `${date.getFullYear()}-${date.getMonth()}`));
+      return group.fixedByCategory || group.isKnownBill || months.size >= 2;
+    })
+    .map((group) => {
+      const day = Math.round(group.dates.reduce((sum, date) => sum + date.getDate(), 0) / group.dates.length);
+      const nextDate = getNextCommitmentDate(day, today);
+      return {
+        ...group,
+        date: nextDate,
+        dateLabel: formatDateShort(nextDate),
+      };
+    })
+    .filter((group) => group.date <= end)
+    .sort((a, b) => a.date - b.date)
+    .slice(0, 8);
+}
+
+function getNextCommitmentDate(day, today) {
+  const safeDay = Math.max(1, Math.min(day, 28));
+  let candidate = new Date(today.getFullYear(), today.getMonth(), safeDay);
+  if (candidate < today) {
+    candidate = new Date(today.getFullYear(), today.getMonth() + 1, safeDay);
+  }
+  return candidate;
+}
+
+function normaliseBillTitle(description) {
+  const cleaned = String(description || "Bill")
+    .replace(/\b(faster payment|standing order|bank transfer|payment to|direct debit|card payment|reference|ref|fpi|dd|so)\b/gi, " ")
+    .replace(/\b\d{2,}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length > 26 ? `${cleaned.slice(0, 26)}...` : cleaned || "Bill";
+}
+
+function buildGoalNudge({ goal, transactions, monthSnapshot, cashSummary, cashPlan, formatCurrency, isInternalTransferLike }) {
   const target = Number(goal?.target_amount || 0);
   const current = Number(goal?.current_amount || 0);
   const gap = Math.max(target - current, 0);
@@ -804,11 +929,20 @@ function buildGoalNudge({ goal, transactions, monthSnapshot, cashSummary, format
   const todaySpend = getTodayFlexibleSpend(transactions, isInternalTransferLike);
   const latestNet = Number(monthSnapshot?.net || 0);
   const liveCash = cashSummary?.hasLiveBalances ? Number(cashSummary.amount || 0) : null;
+  const protectedCash = cashPlan?.hasCashBalance ? Number(cashPlan.spendableAfterBills || 0) : null;
   const monthlyAfterGoal = monthlyPattern.income - monthlyPattern.fixedBills - monthlyPattern.flexibleSpend - monthlyNeeded;
   const baseDailyCap = targetMonths
     ? Math.max(monthlyAfterGoal / 30, 0)
     : Math.max(monthlyPattern.flexibleSpend / 30 * 0.35, 0);
-  const dailyCap = Math.min(baseDailyCap, 20);
+  const protectedDailyCap = protectedCash !== null ? Math.max(protectedCash / 14, 0) : Infinity;
+  const dailyCap = Math.min(baseDailyCap, protectedDailyCap, 20);
+
+  if (protectedCash !== null && protectedCash <= 25) {
+    return {
+      headline: "No-spend day",
+      detail: `${formatCurrency(cashPlan.upcomingBillsTotal)} is expected soon. Essentials only.`,
+    };
+  }
 
   if (latestNet < 0 || (liveCash !== null && liveCash <= 25)) {
     return {
