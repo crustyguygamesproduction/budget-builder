@@ -66,6 +66,7 @@ export default function CoachPage({
       .slice(0, 1),
     [transactions, transactionRules, dismissedRuleKeys]
   );
+  const activeCorrectionCandidate = correctionCandidates[0] || null;
 
   const houseGoal =
     goals.find((goal) =>
@@ -295,128 +296,129 @@ export default function CoachPage({
   }
 
   return (
-    <Section
-      title="Money check"
-      sectionStyle={getCoachSectionStyle(viewportHeight, screenWidth, styles)}
-      styles={styles}
-      right={
-        <div style={getCoachActionsStyle(screenWidth, styles)}>
-          <button
-            style={styles.ghostBtn}
-            onClick={freshCutoff ? showAllHistory : startFreshView}
-            disabled={thinking}
-          >
-            {freshCutoff ? "History" : "New"}
-          </button>
-
-          <button
-            style={styles.ghostBtn}
-            onClick={clearChat}
-            disabled={clearing || aiMessages.length === 0}
-          >
-            {clearing ? "..." : "Clear"}
-          </button>
-        </div>
-      }
-    >
-      <div style={getCoachShellStyle(styles)}>
-        <div style={getQuickPromptRowStyle(screenWidth, styles)}>
-          {quickPrompts.map((prompt) => (
+    <>
+      <Section
+        title="Money check"
+        sectionStyle={getCoachSectionStyle(viewportHeight, screenWidth, styles)}
+        styles={styles}
+        right={
+          <div style={getCoachActionsStyle(screenWidth, styles)}>
             <button
-              key={prompt.label}
-              style={styles.promptChip}
-              onClick={() => sendMessage(prompt.message)}
+              style={styles.ghostBtn}
+              onClick={freshCutoff ? showAllHistory : startFreshView}
               disabled={thinking}
             >
-              {prompt.label}
+              {freshCutoff ? "History" : "New"}
             </button>
-          ))}
-        </div>
 
-        <div style={getChatMessagesStyle(styles)}>
-          {freshCutoff && hiddenOlderByFreshView > 0 && (
-            <div style={styles.historyNote}>New chat. History is still saved.</div>
-          )}
-
-          {!freshCutoff && hiddenCount > 0 && (
-            <div style={styles.historyNote}>Showing the latest messages.</div>
-          )}
-
-          {correctionCandidates.map((candidate) => (
-            <CorrectionCard
-              key={candidate.key}
-              candidate={candidate}
-              styles={styles}
-              saving={savingRuleKey === candidate.key}
-              onSave={(rule) => saveCorrectionRule(candidate, rule)}
-              onDismiss={() => dismissCorrection(candidate)}
-            />
-          ))}
-
-          {chatError && <div style={styles.errorNote}>{chatError}</div>}
-
-          {visibleMessages.length === 0 && !pendingUserMessage ? (
-            <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
-              <p style={styles.emptyCoachTitle}>What do you want to check?</p>
-              <p style={styles.emptyText}>
-                Ask about bills, goals, spending, debt, or whether you can afford something.
-              </p>
-            </div>
-          ) : (
-            visibleMessages.map((msg, index) => (
-              <div
-                key={msg.id || `${msg.role}-${msg.created_at}-${index}`}
-                ref={index === visibleMessages.length - 1 && !pendingUserMessage ? latestMessageRef : null}
+            <button
+              style={styles.ghostBtn}
+              onClick={clearChat}
+              disabled={clearing || aiMessages.length === 0}
+            >
+              {clearing ? "..." : "Clear"}
+            </button>
+          </div>
+        }
+      >
+        <div style={getCoachShellStyle(styles)}>
+          <div style={getQuickPromptRowStyle(screenWidth, styles)}>
+            {quickPrompts.map((prompt) => (
+              <button
+                key={prompt.label}
+                style={styles.promptChip}
+                onClick={() => sendMessage(prompt.message)}
+                disabled={thinking}
               >
-                <ChatMessage msg={msg} styles={styles} />
+                {prompt.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={getChatMessagesStyle(styles)}>
+            {freshCutoff && hiddenOlderByFreshView > 0 && (
+              <div style={styles.historyNote}>New chat. History is still saved.</div>
+            )}
+
+            {!freshCutoff && hiddenCount > 0 && (
+              <div style={styles.historyNote}>Showing the latest messages.</div>
+            )}
+
+            {chatError && <div style={styles.errorNote}>{chatError}</div>}
+
+            {visibleMessages.length === 0 && !pendingUserMessage ? (
+              <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
+                <p style={styles.emptyCoachTitle}>What do you want to check?</p>
+                <p style={styles.emptyText}>
+                  Ask about bills, goals, spending, debt, or whether you can afford something.
+                </p>
               </div>
-            ))
-          )}
+            ) : (
+              visibleMessages.map((msg, index) => (
+                <div
+                  key={msg.id || `${msg.role}-${msg.created_at}-${index}`}
+                  ref={index === visibleMessages.length - 1 && !pendingUserMessage ? latestMessageRef : null}
+                >
+                  <ChatMessage msg={msg} styles={styles} />
+                </div>
+              ))
+            )}
 
-          {pendingUserMessage ? (
-            <div ref={latestMessageRef}>
-              <ChatMessage msg={pendingUserMessage} styles={styles} />
-            </div>
-          ) : null}
-
-          {thinking && (
-            <div style={styles.aiBubbleModern}>
-              <div style={styles.chatMetaRow}>
-                <span style={styles.chatRoleLabel}>Money Hub</span>
-                <span style={styles.chatTimeLabel}>now</span>
+            {pendingUserMessage ? (
+              <div ref={latestMessageRef}>
+                <ChatMessage msg={pendingUserMessage} styles={styles} />
               </div>
-              Checking your money...
-            </div>
-          )}
+            ) : null}
 
-          <div ref={chatBottomRef} />
+            {thinking && (
+              <div style={styles.aiBubbleModern}>
+                <div style={styles.chatMetaRow}>
+                  <span style={styles.chatRoleLabel}>Money Hub</span>
+                  <span style={styles.chatTimeLabel}>now</span>
+                </div>
+                Checking your money...
+              </div>
+            )}
+
+            <div ref={chatBottomRef} />
+          </div>
+
+          <div style={getChatInputBarStyle(styles)}>
+            <input
+              style={styles.chatInput}
+              placeholder="Ask a money question..."
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") sendMessage();
+              }}
+            />
+
+            <button
+              style={getChatSendBtnStyle(styles)}
+              onClick={() => sendMessage()}
+              disabled={thinking || !message.trim()}
+            >
+              Send
+            </button>
+          </div>
         </div>
+      </Section>
 
-        <div style={getChatInputBarStyle(styles)}>
-          <input
-            style={styles.chatInput}
-            placeholder="Ask a money question..."
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") sendMessage();
-            }}
-          />
-
-          <button
-            style={getChatSendBtnStyle(styles)}
-            onClick={() => sendMessage()}
-            disabled={thinking || !message.trim()}
-          >
-            Send
-          </button>
-        </div>
-      </div>
-    </Section>
+      {activeCorrectionCandidate ? (
+        <CorrectionModal
+          candidate={activeCorrectionCandidate}
+          styles={styles}
+          saving={savingRuleKey === activeCorrectionCandidate.key}
+          onSave={(rule) => saveCorrectionRule(activeCorrectionCandidate, rule)}
+          onDismiss={() => dismissCorrection(activeCorrectionCandidate)}
+        />
+      ) : null}
+    </>
   );
 }
 
-function CorrectionCard({ candidate, styles, saving, onSave, onDismiss }) {
+function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
   const rules = [
     { label: "Rent", category: "Rent", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
     { label: "Friend/family", category: "Personal payment", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
@@ -425,37 +427,39 @@ function CorrectionCard({ candidate, styles, saving, onSave, onDismiss }) {
   ];
 
   return (
-    <div style={getCorrectionCardStyle(styles)}>
-      <div style={styles.chatMetaRow}>
-        <span style={styles.chatRoleLabel}>Quick check</span>
-        <span style={styles.chatTimeLabel}>helps the maths</span>
-      </div>
-      <div style={{ fontWeight: 800, marginBottom: 4 }}>
-        What is {candidate.label}?
-      </div>
-      <div style={{ fontSize: 13, lineHeight: 1.45, color: "#64748b", marginBottom: 10 }}>
-        I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. If you confirm it, future totals and AI answers will use that rule.
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {rules.map((rule) => (
+    <div style={getModalOverlayStyle()} role="dialog" aria-modal="true">
+      <div style={getCorrectionSheetStyle(styles)}>
+        <div style={styles.chatMetaRow}>
+          <span style={styles.chatRoleLabel}>Quick check</span>
+          <span style={styles.chatTimeLabel}>keeps maths right</span>
+        </div>
+        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>
+          What is {candidate.label}?
+        </div>
+        <div style={{ fontSize: 14, lineHeight: 1.45, color: "#64748b", marginBottom: 12 }}>
+          I am not fully sure how to treat this. I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. Your answer will be saved as a rule and future totals will update.
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {rules.map((rule) => (
+            <button
+              key={rule.label}
+              type="button"
+              style={getCorrectionOptionStyle(styles)}
+              onClick={() => onSave(rule)}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : rule.label}
+            </button>
+          ))}
           <button
-            key={rule.label}
             type="button"
-            style={styles.secondaryInlineBtn || styles.ghostBtn}
-            onClick={() => onSave(rule)}
+            style={styles.ghostBtn}
+            onClick={onDismiss}
             disabled={saving}
           >
-            {saving ? "Saving..." : rule.label}
+            Ask me later
           </button>
-        ))}
-        <button
-          type="button"
-          style={styles.ghostBtn}
-          onClick={onDismiss}
-          disabled={saving}
-        >
-          Not now
-        </button>
+        </div>
       </div>
     </div>
   );
@@ -589,11 +593,36 @@ function getEmptyCoachStateStyle(screenWidth, styles) {
   };
 }
 
-function getCorrectionCardStyle(styles) {
+function getModalOverlayStyle() {
+  return {
+    position: "fixed",
+    inset: 0,
+    zIndex: 1000,
+    background: "rgba(15, 23, 42, 0.42)",
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    padding: "18px",
+  };
+}
+
+function getCorrectionSheetStyle(styles) {
   return {
     ...styles.aiBubbleModern,
+    width: "100%",
+    maxWidth: "460px",
+    borderRadius: "24px",
     border: "1px solid rgba(14, 165, 233, 0.25)",
-    boxShadow: "0 12px 30px rgba(15, 23, 42, 0.08)",
+    boxShadow: "0 24px 70px rgba(15, 23, 42, 0.28)",
+  };
+}
+
+function getCorrectionOptionStyle(styles) {
+  return {
+    ...(styles.secondaryInlineBtn || styles.ghostBtn),
+    width: "100%",
+    justifyContent: "center",
+    padding: "12px 14px",
   };
 }
 
