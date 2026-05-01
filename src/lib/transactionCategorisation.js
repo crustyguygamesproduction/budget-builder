@@ -98,17 +98,10 @@ export function getMatchingTransactionRule(transaction, transactionRules = []) {
   return (transactionRules || []).find((rule) => {
     const matchText = normalizeText(rule?.match_text);
     if (!matchText) return false;
-
-    const textMatches =
-      text.includes(matchText) ||
-      merchantKey.includes(matchText) ||
-      (merchantKey.length >= 8 && matchText.length >= 8 && matchText.includes(merchantKey));
-
+    const textMatches = text.includes(matchText) || merchantKey.includes(matchText) || (merchantKey.length >= 8 && matchText.length >= 8 && matchText.includes(merchantKey));
     if (!textMatches) return false;
-
     const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
     if (ruleAmount > 0 && Math.abs(amount - ruleAmount) > 1) return false;
-
     return true;
   });
 }
@@ -133,13 +126,13 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
     const date = parseAppDate(transaction?.transaction_date);
     if (!date) return;
 
-    const amountBand = merchant.known ? "known" : Math.round(amount / 5) * 5;
+    const amountBand = merchant.known ? getBillStreamBand(amount) : Math.round(amount / 5) * 5;
     const key = `${merchantKey}|${amountBand}`;
     if (!groups.has(key)) {
       groups.set(key, {
         key,
         matchText: merchantKey,
-        label: merchant.known ? merchant.name : toTitleCase(merchantKey).slice(0, 48),
+        label: merchant.known ? `${merchant.name} bill around £${amount.toFixed(2)}` : toTitleCase(merchantKey).slice(0, 48),
         amount,
         amountBand,
         transactions: [],
@@ -167,13 +160,7 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
     .map((group) => {
       const text = normalizeText(group.matchText);
       const inferred = inferTransactionCategory(group.sampleDescription || group.matchText, -group.amount);
-      const category = /mortgage/.test(text)
-        ? "Mortgage"
-        : /rent|landlord|letting/.test(text) || group.amount >= 500
-        ? "Rent"
-        : inferred.is_bill || inferred.is_subscription
-        ? inferred.category
-        : "Major bill";
+      const category = /mortgage/.test(text) ? "Mortgage" : /rent|landlord|letting/.test(text) || group.amount >= 500 ? "Rent" : inferred.is_bill || inferred.is_subscription ? inferred.category : "Major bill";
       const confidence = group.knownMerchant || group.billSignalCount > 0 || group.months.size >= 3 ? "medium" : "low";
       return {
         key: group.key,
@@ -193,15 +180,11 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
 
 export function inferRecurringPersonalBills(transactions) {
   const groups = new Map();
-
   transactions.forEach((transaction) => {
     const amount = Math.abs(Number(transaction.amount || 0));
     if (Number(transaction.amount) >= 0 || amount < 300) return;
     const merchant = getRealWorldMerchant(transaction);
-    const text = merchant.known ? merchant.key : normalizeText(transaction.description)
-      .replace(/\b(faster payment|standing order|bank transfer|payment to|fpi|ref|reference|mobile payment)\b/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const text = merchant.known ? `${merchant.key}|${getBillStreamBand(amount)}` : normalizeText(transaction.description).replace(/\b(faster payment|standing order|bank transfer|payment to|fpi|ref|reference|mobile payment)\b/g, " ").replace(/\s+/g, " ").trim();
     if (!text) return;
     const key = `${text}|${merchant.known ? "known" : Math.round(amount / 10) * 10}`;
     if (!groups.has(key)) groups.set(key, { text, amount, transactions: [] });
@@ -214,6 +197,13 @@ export function inferRecurringPersonalBills(transactions) {
   });
 }
 
+function getBillStreamBand(amount) {
+  const value = Math.abs(Number(amount || 0));
+  if (value < 25) return `under25:${Math.round(value / 2) * 2}`;
+  if (value < 80) return `mid:${Math.round(value / 5) * 5}`;
+  return `large:${Math.round(value / 10) * 10}`;
+}
+
 function hasGenericBillSignal(text) {
   return /\b(rent|mortgage|landlord|letting|council|tax|energy|electric|electricity|gas|water|utility|utilities|broadband|internet|wifi|phone|mobile|sim|contract|insurance|assurance|loan|finance|credit card|childcare|nursery|school fees|tv licence|licence|subscription|membership|direct debit|standing order|monthly|instalment|installment)\b/.test(text);
 }
@@ -223,9 +213,5 @@ function isLikelyEverydaySpend(text) {
 }
 
 function toTitleCase(value) {
-  return String(value || "")
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  return String(value || "").split(" ").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
