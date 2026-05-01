@@ -281,8 +281,8 @@ export default function TodayPage({
           label: cashPlan.hasCashBalance ? "Spendable after bills" : "Net movement",
           value: cashPlan.hasCashBalance ? formatCurrency(cashPlan.spendableAfterBills) : `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
         },
-        { label: cashPlan.hasCashBalance ? "Upcoming bills" : "Real income", value: cashPlan.hasCashBalance ? formatCurrency(cashPlan.upcomingBillsTotal) : formatCurrency(monthSnapshot.income) },
-        { label: cashPlan.hasCashBalance ? "Next bill" : "Real spending", value: cashPlan.nextBill ? `${formatCurrency(cashPlan.nextBill.amount)} ${cashPlan.nextBill.dateLabel}` : formatCurrency(monthSnapshot.spending) },
+        { label: cashPlan.hasCashBalance ? "Due out soon" : "Real income", value: cashPlan.hasCashBalance ? `${formatCurrency(cashPlan.upcomingBillsTotal)} out` : formatCurrency(monthSnapshot.income) },
+        { label: cashPlan.hasCashBalance ? "Next outgoing" : "Real spending", value: cashPlan.nextBill ? `${formatCurrency(cashPlan.nextBill.amount)} ${cashPlan.nextBill.relativeLabel}` : formatCurrency(monthSnapshot.spending) },
       ];
   const topCategory = topCategories[0] || null;
   const transferSummary = getTransferSummary(transactions);
@@ -336,14 +336,14 @@ export default function TodayPage({
         ? `${formatCurrency(monthSnapshot.net)} ahead in ${monthSnapshot.monthName}`
         : `${formatCurrency(Math.abs(monthSnapshot.net))} behind in ${monthSnapshot.monthName}`,
       body: cashPlan.hasCashBalance
-        ? `${formatCurrency(cashPlan.availableCash)} visible cash minus ${formatCurrency(cashPlan.upcomingBillsTotal)} expected rent, bills and subscriptions in the next 31 days.`
+        ? `${formatCurrency(cashPlan.availableCash)} visible cash minus ${formatCurrency(cashPlan.upcomingBillsTotal)} due out for rent, bills and subscriptions by ${cashPlan.windowEndLabel}.`
         : monthSnapshot.net >= 0
         ? `${formatCurrency(monthSnapshot.income)} came in against ${formatCurrency(monthSnapshot.spending)} going out.`
         : `${formatCurrency(monthSnapshot.spending)} went out against ${formatCurrency(monthSnapshot.income)} coming in.`,
       ctaLabel: "Ask AI why",
       onClick: () =>
         onGoToCoach(
-          `Explain my money read. Visible cash is ${formatCurrency(cashPlan.availableCash)}, expected upcoming bills are ${formatCurrency(cashPlan.upcomingBillsTotal)}, safe amount after bills is ${formatCurrency(cashPlan.spendableAfterBills)}. Latest month income is ${formatCurrency(monthSnapshot.income)}, spending is ${formatCurrency(monthSnapshot.spending)}, net is ${formatCurrency(monthSnapshot.net)}, and transfers detected are ${transferSummary.transfers.length}. Tell me what is driving it.`,
+          `Explain my money read. Visible cash is ${formatCurrency(cashPlan.availableCash)}, upcoming outgoing bills due by ${cashPlan.windowEndLabel} are ${formatCurrency(cashPlan.upcomingBillsTotal)}, safe amount after bills is ${formatCurrency(cashPlan.spendableAfterBills)}. Latest month income is ${formatCurrency(monthSnapshot.income)}, spending is ${formatCurrency(monthSnapshot.spending)}, net is ${formatCurrency(monthSnapshot.net)}, and transfers detected are ${transferSummary.transfers.length}. Tell me what is driving it.`,
           { autoSend: true }
         ),
     },
@@ -527,13 +527,13 @@ export default function TodayPage({
 
       <Section title="Safe To Spend" styles={styles}>
         <p style={styles.sectionIntro}>
-          This protects expected rent, bills and subscriptions before treating money as spendable.
+          This protects outgoing rent, bills and subscriptions due by {cashPlan.windowEndLabel} before treating money as spendable.
         </p>
         <Row name="Visible cash" value={cashPlan.hasCashBalance ? formatCurrency(cashPlan.availableCash) : "Needs account balance"} styles={styles} />
-        <Row name="Expected next 31 days" value={cashPlan.upcomingBillsTotal > 0 ? formatCurrency(cashPlan.upcomingBillsTotal) : "No fixed bills detected"} styles={styles} />
+        <Row name={`Due out by ${cashPlan.windowEndLabel}`} value={cashPlan.upcomingBillsTotal > 0 ? formatCurrency(cashPlan.upcomingBillsTotal) : "No fixed bills detected"} styles={styles} />
         <Row name="Safe after bills" value={cashPlan.hasCashBalance ? formatCurrency(cashPlan.spendableAfterBills) : "Connect balance or upload latest"} styles={styles} />
         {cashPlan.nextBill ? (
-          <Row name="Next commitment" value={`${cashPlan.nextBill.title} - ${formatCurrency(cashPlan.nextBill.amount)} on ${cashPlan.nextBill.dateLabel}`} styles={styles} />
+          <Row name="Next outgoing" value={`${cashPlan.nextBill.title} - ${formatCurrency(cashPlan.nextBill.amount)} ${cashPlan.nextBill.relativeLabel}`} styles={styles} />
         ) : null}
       </Section>
 
@@ -814,7 +814,11 @@ function buildCashPlan({ accounts = [], transactions = [], cashSummary }) {
   const accountCash = getAccountCash(accounts);
   const hasCashBalance = accountCash !== null || Boolean(cashSummary?.hasLiveBalances);
   const availableCash = accountCash !== null ? accountCash : Number(cashSummary?.amount || 0);
-  const upcomingBills = getUpcomingFixedCommitments(transactions);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const windowEnd = new Date(today);
+  windowEnd.setDate(windowEnd.getDate() + 31);
+  const upcomingBills = getUpcomingFixedCommitments(transactions, today, windowEnd);
   const upcomingBillsTotal = upcomingBills.reduce((sum, bill) => sum + bill.amount, 0);
   const spendableAfterBills = hasCashBalance ? availableCash - upcomingBillsTotal : 0;
 
@@ -825,6 +829,7 @@ function buildCashPlan({ accounts = [], transactions = [], cashSummary }) {
     upcomingBillsTotal,
     spendableAfterBills,
     nextBill: upcomingBills[0] || null,
+    windowEndLabel: formatDateShort(windowEnd),
   };
 }
 
@@ -846,11 +851,7 @@ function getAccountCash(accounts = []) {
   return balances.reduce((sum, value) => sum + value, 0);
 }
 
-function getUpcomingFixedCommitments(transactions = []) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const end = new Date(today);
-  end.setDate(end.getDate() + 31);
+function getUpcomingFixedCommitments(transactions = [], today, end) {
   const groups = new Map();
 
   transactions.forEach((transaction) => {
@@ -887,11 +888,20 @@ function getUpcomingFixedCommitments(transactions = []) {
         ...group,
         date: nextDate,
         dateLabel: formatDateShort(nextDate),
+        relativeLabel: formatRelativeBillDate(nextDate, today),
       };
     })
     .filter((group) => group.date <= end)
     .sort((a, b) => a.date - b.date)
     .slice(0, 8);
+}
+
+function formatRelativeBillDate(date, today) {
+  const diff = Math.max(Math.round((date - today) / 86400000), 0);
+  if (diff === 0) return "today";
+  if (diff === 1) return "tomorrow";
+  if (diff <= 7) return `in ${diff} days`;
+  return `on ${formatDateShort(date)}`;
 }
 
 function getNextCommitmentDate(day, today) {
@@ -940,7 +950,7 @@ function buildGoalNudge({ goal, transactions, monthSnapshot, cashSummary, cashPl
   if (protectedCash !== null && protectedCash <= 25) {
     return {
       headline: "No-spend day",
-      detail: `${formatCurrency(cashPlan.upcomingBillsTotal)} is expected soon. Essentials only.`,
+      detail: `${formatCurrency(cashPlan.upcomingBillsTotal)} due out by ${cashPlan.windowEndLabel}. Essentials only.`,
     };
   }
 
