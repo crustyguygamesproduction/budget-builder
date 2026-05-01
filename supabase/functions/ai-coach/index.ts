@@ -41,6 +41,50 @@ function isImageUrl(url: string) {
   return /\.(png|jpg|jpeg|webp|gif)(\?|$)/i.test(url || "");
 }
 
+function isCompactLookup(message: string) {
+  const text = String(message || "").toLowerCase();
+  const asksForDetail = /\b(break ?down|detail|detailed|explain|why|analysis|analyse|analyze|plan|review|full|list all|every|step|compare)\b/.test(text);
+  const factualLookup = /\b(how much|total|totals|who sent|sent me|been sent|received|paid me|what did i spend|spent on|paid to|income from|sum|add up)\b/.test(text);
+  return factualLookup && !asksForDetail;
+}
+
+function getCoachMaxOutputTokens(message: string) {
+  return isCompactLookup(message) ? 140 : 420;
+}
+
+function getCoachLengthInstruction(message: string) {
+  if (!isCompactLookup(message)) {
+    return "This is not a compact lookup unless the user's wording is purely factual. Answer naturally, but stay concise.";
+  }
+
+  return [
+    "COMPACT LOOKUP MODE IS ON.",
+    "Return at most 2 short lines.",
+    "First line must answer the exact number or result, starting with Total: when suitable.",
+    "Second line may contain one short caveat or one short follow-up offer.",
+    "Do not give paragraphs, sender-by-sender explanations, or method notes unless the user asked for a breakdown.",
+  ].join("\n");
+}
+
+function enforceCompactReply(reply: string, message: string) {
+  const cleaned = cleanReply(reply);
+
+  if (!isCompactLookup(message) || cleaned.length <= 360) {
+    return cleaned;
+  }
+
+  const paragraphs = cleaned
+    .split(/\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const firstUseful = paragraphs.find((item) => /£|total|sent|received|paid|spent/i.test(item)) || paragraphs[0] || cleaned;
+  const compact = firstUseful.length > 240 ? `${firstUseful.slice(0, 237).trim()}...` : firstUseful;
+  const hasFollowUp = /want me|shall i|do you want/i.test(compact);
+
+  return hasFollowUp ? compact : `${compact}\nWant me to break that down?`;
+}
+
 async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -289,6 +333,9 @@ Output rules:
 - End with at most one useful follow-up offer when it helps. Keep it short, for example: "Want me to break that down by person?"
 - Do not add a follow-up offer if the answer is already complete and obvious.
 
+Hard length override:
+${getCoachLengthInstruction(message)}
+
 Answer sizing rules:
 - If the user asks "how much", "total", "who sent", "what did I spend", or another factual lookup, give the number first and keep it compact.
 - For total questions, use this shape when possible: "Total: £X." Then add one short sentence of context if useful.
@@ -331,6 +378,9 @@ Statement intelligence rules:
 User message:
 ${message}
 
+Response mode:
+${isCompactLookup(message) ? "compact_lookup" : "normal_coach"}
+
 Financial context:
 ${JSON.stringify(
   {
@@ -370,6 +420,7 @@ ${JSON.stringify(
     if (!responseBody) {
       responseBody = {
         model: "gpt-5.1",
+        max_output_tokens: getCoachMaxOutputTokens(message),
         input: [
           {
             role: "system",
@@ -415,7 +466,7 @@ ${JSON.stringify(
       );
     }
 
-    const reply = cleanReply(rawReply);
+    const reply = enforceCompactReply(rawReply, message);
 
     return new Response(
       JSON.stringify({
