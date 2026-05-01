@@ -1,5 +1,6 @@
 import { enhanceTransactions } from "./dashboardIntelligence";
 import { getSmartRecurringCalendarEvents } from "./calendarSmartRecurring";
+import { buildStrongBillFallbackEvents, mergeRecurringEvents } from "./billFallbacks";
 import { getRealWorldMerchant, getFriendlyTransactionName } from "./merchantIntelligence";
 import { buildRecurringMajorPaymentCandidates } from "./transactionCategorisation";
 import { formatCurrency, normalizeText } from "./finance";
@@ -16,7 +17,11 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
     };
   });
 
-  const recurringEvents = getSmartRecurringCalendarEvents(smartTransactions);
+  const detectedRecurringEvents = getSmartRecurringCalendarEvents(smartTransactions);
+  const recurringEvents = mergeRecurringEvents([
+    ...detectedRecurringEvents,
+    ...buildStrongBillFallbackEvents(smartTransactions, detectedRecurringEvents),
+  ]);
   const billStreams = recurringEvents
     .filter((event) => Number(event.amount || 0) < 0)
     .map((event) => ({
