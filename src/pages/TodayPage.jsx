@@ -902,10 +902,7 @@ function getUpcomingFixedCommitments(transactions = [], today, end) {
   });
 
   return [...groups.values()]
-    .filter((group) => {
-      const months = new Set(group.dates.map((date) => `${date.getFullYear()}-${date.getMonth()}`));
-      return group.fixedByCategory || group.isKnownBill || months.size >= 2;
-    })
+    .filter((group) => group.fixedByCategory || group.isKnownBill)
     .map((group) => {
       const day = Math.round(group.dates.reduce((sum, date) => sum + date.getDate(), 0) / group.dates.length);
       const nextDate = getNextCommitmentDate(day, today);
