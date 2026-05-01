@@ -62,13 +62,7 @@ export default function CoachPage({
   const visibleMessages = baseMessages.slice(-COACH_DISPLAY_LIMIT);
   const hiddenCount = Math.max(baseMessages.length - visibleMessages.length, 0);
   const hiddenOlderByFreshView = Math.max(aiMessages.length - baseMessages.length, 0);
-
-  const quickPrompts = helpers.getCoachPromptIdeas({
-    topCategories,
-    houseGoal,
-    debtSignals,
-    investmentSignals,
-  });
+  const quickPrompts = getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -213,17 +207,17 @@ export default function CoachPage({
 
   return (
     <Section
-      title="AI Money Coach"
+      title="Money check"
       sectionStyle={getCoachSectionStyle(viewportHeight, screenWidth, styles)}
       styles={styles}
       right={
-        <div style={styles.sectionActions}>
+        <div style={getCoachActionsStyle(screenWidth, styles)}>
           <button
             style={styles.ghostBtn}
             onClick={freshCutoff ? showAllHistory : startFreshView}
             disabled={thinking}
           >
-            {freshCutoff ? "Show history" : "Fresh chat"}
+            {freshCutoff ? "History" : "New"}
           </button>
 
           <button
@@ -231,62 +225,41 @@ export default function CoachPage({
             onClick={clearChat}
             disabled={clearing || aiMessages.length === 0}
           >
-            {clearing ? "Clearing..." : "Clear chat"}
+            {clearing ? "..." : "Clear"}
           </button>
         </div>
       }
     >
       <div style={styles.coachShell}>
-        <div style={styles.coachStatusCard}>
-          <div>
-            <p style={styles.insightLabel}>Coach status</p>
-            <h4 style={styles.coachStatusTitle}>
-              {thinking ? "Thinking through it now" : "Ready for a money sanity check"}
-            </h4>
-            <p style={styles.insightBody}>
-              {freshCutoff
-                ? "Fresh session view is on. Older messages are hidden by default, not deleted."
-                : "Short answers first, practical actions next, no fake numbers."}
-            </p>
-          </div>
-        </div>
-
         <div style={getQuickPromptRowStyle(screenWidth, styles)}>
           {quickPrompts.map((prompt) => (
             <button
-              key={prompt}
+              key={prompt.label}
               style={styles.promptChip}
-              onClick={() => sendMessage(prompt)}
+              onClick={() => sendMessage(prompt.message)}
               disabled={thinking}
             >
-              {prompt}
+              {prompt.label}
             </button>
           ))}
         </div>
 
         <div style={getChatMessagesStyle(viewportHeight, screenWidth, styles)}>
           {freshCutoff && hiddenOlderByFreshView > 0 && (
-            <div style={styles.historyNote}>
-              Fresh chat view is hiding {hiddenOlderByFreshView} older message
-              {hiddenOlderByFreshView === 1 ? "" : "s"}.
-            </div>
+            <div style={styles.historyNote}>New chat. History is still saved.</div>
           )}
 
           {!freshCutoff && hiddenCount > 0 && (
-            <div style={styles.historyNote}>
-              Showing latest {visibleMessages.length} messages. Older chat is
-              hidden to keep things tidy.
-            </div>
+            <div style={styles.historyNote}>Showing the latest messages.</div>
           )}
 
           {chatError && <div style={styles.errorNote}>{chatError}</div>}
 
           {visibleMessages.length === 0 ? (
             <div style={getEmptyCoachStateStyle(viewportHeight, screenWidth, styles)}>
-              <p style={styles.emptyCoachTitle}>Ask me anything about your money.</p>
+              <p style={styles.emptyCoachTitle}>What do you want to check?</p>
               <p style={styles.emptyText}>
-                Try spending checks, debt questions, investing sanity checks, or
-                asking whether you are getting better or worse over time.
+                Ask about bills, goals, spending, debt, or whether you can afford something.
               </p>
             </div>
           ) : (
@@ -303,7 +276,7 @@ export default function CoachPage({
           {thinking && (
             <div style={styles.aiBubbleModern}>
               <div style={styles.chatMetaRow}>
-                <span style={styles.chatRoleLabel}>AI Coach</span>
+                <span style={styles.chatRoleLabel}>Money Hub</span>
                 <span style={styles.chatTimeLabel}>now</span>
               </div>
               Thinking...
@@ -316,7 +289,7 @@ export default function CoachPage({
         <div style={getChatInputBarStyle(screenWidth, styles)}>
           <input
             style={styles.chatInput}
-            placeholder="Ask about your money..."
+            placeholder="Ask a money question..."
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) => {
@@ -343,7 +316,7 @@ function ChatMessage({ msg, styles }) {
   return (
     <div style={isUser ? styles.userBubbleModern : styles.aiBubbleModern}>
       <div style={styles.chatMetaRow}>
-        <span style={styles.chatRoleLabel}>{isUser ? "You" : "AI Coach"}</span>
+        <span style={styles.chatRoleLabel}>{isUser ? "You" : "Money Hub"}</span>
         <span style={styles.chatTimeLabel}>{formatChatTime(msg.created_at)}</span>
       </div>
       {msg.content}
@@ -363,9 +336,48 @@ function formatChatTime(value) {
   }).format(date);
 }
 
+function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals }) {
+  const prompts = [
+    { label: "Can I afford this?", message: "Can I afford something right now? Check my bills, goals and spending room first." },
+    { label: "What should I fix?", message: "What is the first thing I should fix with my money? Keep it practical." },
+    { label: "Am I on track?", message: "Am I on track with my money and goals? Give me the honest version." },
+    { label: "Bills due soon", message: "What bills or regular payments should I be ready for soon?" },
+    { label: "Find waste", message: "Find the easiest waste or leaks in my spending." },
+  ];
+
+  const topCategory = topCategories.find((item) => {
+    const category = String(item?.category || "").trim().toLowerCase();
+    return category && !["spending", "uncategorised", "income"].includes(category);
+  });
+
+  if (topCategory) {
+    prompts.push({
+      label: `Cut ${topCategory.category}`,
+      message: `Look at my ${topCategory.category} spending and tell me what is realistic to cut.`,
+    });
+  } else if (houseGoal) {
+    prompts.push({
+      label: "Goal plan",
+      message: "Help me protect my main goal without making life miserable.",
+    });
+  } else if (debtSignals.length > 0) {
+    prompts.push({
+      label: "Debt check",
+      message: "Check whether my debt-looking payments seem under control.",
+    });
+  } else if (investmentSignals.length > 0) {
+    prompts.push({
+      label: "Investing check",
+      message: "Does my investing activity look sensible?",
+    });
+  }
+
+  return prompts.slice(0, 6);
+}
+
 function getCoachSectionStyle(viewportHeight, screenWidth, styles) {
   const reservedHeight =
-    screenWidth <= 480 ? 150 : screenWidth <= 768 ? 180 : 220;
+    screenWidth <= 480 ? 126 : screenWidth <= 768 ? 160 : 210;
 
   return {
     ...styles.coachSection,
@@ -374,27 +386,38 @@ function getCoachSectionStyle(viewportHeight, screenWidth, styles) {
   };
 }
 
+function getCoachActionsStyle(screenWidth, styles) {
+  return {
+    ...styles.sectionActions,
+    gap: screenWidth <= 480 ? "6px" : "8px",
+  };
+}
+
 function getQuickPromptRowStyle(screenWidth, styles) {
   return {
     ...styles.quickPromptRow,
-    flexWrap: screenWidth <= 768 ? "wrap" : "nowrap",
-    overflowX: screenWidth > 768 ? "auto" : "visible",
+    flexWrap: "nowrap",
+    overflowX: "auto",
+    paddingBottom: "2px",
+    WebkitOverflowScrolling: "touch",
+    scrollbarWidth: "none",
+    marginBottom: screenWidth <= 480 ? "2px" : 0,
   };
 }
 
 function getChatMessagesStyle(viewportHeight, screenWidth, styles) {
-  let minHeight = 180;
-  let maxHeight = Math.max(220, viewportHeight - 420);
+  let minHeight = 140;
+  let maxHeight = Math.max(240, viewportHeight - 330);
 
   if (screenWidth <= 480) {
-    minHeight = 160;
-    maxHeight = Math.max(200, viewportHeight - 400);
+    minHeight = 128;
+    maxHeight = Math.max(220, viewportHeight - 315);
   } else if (screenWidth <= 768) {
-    minHeight = 180;
-    maxHeight = Math.max(240, viewportHeight - 430);
+    minHeight = 160;
+    maxHeight = Math.max(260, viewportHeight - 360);
   } else if (screenWidth <= 1100) {
     minHeight = 220;
-    maxHeight = Math.max(260, viewportHeight - 440);
+    maxHeight = Math.max(300, viewportHeight - 400);
   }
 
   return {
@@ -406,10 +429,10 @@ function getChatMessagesStyle(viewportHeight, screenWidth, styles) {
 }
 
 function getEmptyCoachStateStyle(viewportHeight, screenWidth, styles) {
-  let minHeight = Math.max(100, Math.min(180, viewportHeight * 0.18));
+  let minHeight = Math.max(74, Math.min(118, viewportHeight * 0.12));
 
   if (screenWidth <= 480) {
-    minHeight = Math.max(90, Math.min(140, viewportHeight * 0.14));
+    minHeight = Math.max(70, Math.min(104, viewportHeight * 0.1));
   }
 
   return {
