@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { buildCoachContext } from "../lib/coachContext";
 import { getTotals } from "../lib/finance";
+import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
 import { Section } from "../components/ui";
 
 const COACH_DISPLAY_LIMIT = 18;
@@ -11,6 +12,7 @@ const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
 
 export default function CoachPage({
   transactions,
+  transactionRules = [],
   goals,
   debts,
   investments,
@@ -20,6 +22,7 @@ export default function CoachPage({
   subscriptionStatus,
   bankFeedReadiness,
   onChange,
+  onTransactionRulesChange,
   screenWidth,
   viewportHeight,
   styles,
@@ -32,6 +35,15 @@ export default function CoachPage({
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
   const [thinking, setThinking] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [savingRuleKey, setSavingRuleKey] = useState("");
+  const [dismissedRuleKeys, setDismissedRuleKeys] = useState(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      return JSON.parse(localStorage.getItem("moneyhub-dismissed-rule-checks") || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [chatError, setChatError] = useState("");
   const [freshCutoff, setFreshCutoff] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -48,6 +60,12 @@ export default function CoachPage({
     [helpers, transactions]
   );
   const dataFreshness = useMemo(() => helpers.getDataFreshness(transactions), [helpers, transactions]);
+  const correctionCandidates = useMemo(
+    () => buildRecurringMajorPaymentCandidates(transactions, transactionRules)
+      .filter((candidate) => !dismissedRuleKeys.includes(candidate.key))
+      .slice(0, 1),
+    [transactions, transactionRules, dismissedRuleKeys]
+  );
 
   const houseGoal =
     goals.find((goal) =>
@@ -90,6 +108,11 @@ export default function CoachPage({
     // This only consumes a one-shot draft left by navigation into the coach.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("moneyhub-dismissed-rule-checks", JSON.stringify(dismissedRuleKeys));
+  }, [dismissedRuleKeys]);
 
   useEffect(() => {
     if (thinking) {
@@ -168,6 +191,49 @@ export default function CoachPage({
     } finally {
       setThinking(false);
     }
+  }
+
+  async function saveCorrectionRule(candidate, rule) {
+    if (!candidate || savingRuleKey) return;
+
+    setSavingRuleKey(candidate.key);
+    setChatError("");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const { error } = await supabase.from("transaction_rules").upsert(
+        {
+          user_id: user.id,
+          rule_type: "coach_confirmation",
+          match_text: candidate.matchText,
+          match_amount: rule.matchAmount ? candidate.amount : null,
+          category: rule.category,
+          is_bill: Boolean(rule.isBill),
+          is_subscription: Boolean(rule.isSubscription),
+          is_internal_transfer: Boolean(rule.isInternalTransfer),
+          notes: `User confirmed in AI Coach: ${rule.label}. ${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,rule_type,match_text,match_amount" }
+      );
+
+      if (error) throw error;
+
+      setDismissedRuleKeys((prev) => [...new Set([...prev, candidate.key])]);
+      await onTransactionRulesChange?.();
+    } catch (error) {
+      setChatError(error.message || "Could not save that correction yet.");
+    } finally {
+      setSavingRuleKey("");
+    }
+  }
+
+  function dismissCorrection(candidate) {
+    if (!candidate) return;
+    setDismissedRuleKeys((prev) => [...new Set([...prev, candidate.key])]);
   }
 
   async function clearChat() {
@@ -276,6 +342,17 @@ export default function CoachPage({
             <div style={styles.historyNote}>Showing the latest messages.</div>
           )}
 
+          {correctionCandidates.map((candidate) => (
+            <CorrectionCard
+              key={candidate.key}
+              candidate={candidate}
+              styles={styles}
+              saving={savingRuleKey === candidate.key}
+              onSave={(rule) => saveCorrectionRule(candidate, rule)}
+              onDismiss={() => dismissCorrection(candidate)}
+            />
+          ))}
+
           {chatError && <div style={styles.errorNote}>{chatError}</div>}
 
           {visibleMessages.length === 0 && !pendingUserMessage ? (
@@ -336,6 +413,51 @@ export default function CoachPage({
         </div>
       </div>
     </Section>
+  );
+}
+
+function CorrectionCard({ candidate, styles, saving, onSave, onDismiss }) {
+  const rules = [
+    { label: "Rent", category: "Rent", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
+    { label: "Friend/family", category: "Personal payment", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
+    { label: "Work/pass-through", category: "Work / pass-through", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
+    { label: "Transfer", category: "Internal Transfer", isBill: false, isSubscription: false, isInternalTransfer: true, matchAmount: false },
+  ];
+
+  return (
+    <div style={getCorrectionCardStyle(styles)}>
+      <div style={styles.chatMetaRow}>
+        <span style={styles.chatRoleLabel}>Quick check</span>
+        <span style={styles.chatTimeLabel}>helps the maths</span>
+      </div>
+      <div style={{ fontWeight: 800, marginBottom: 4 }}>
+        What is {candidate.label}?
+      </div>
+      <div style={{ fontSize: 13, lineHeight: 1.45, color: "#64748b", marginBottom: 10 }}>
+        I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. If you confirm it, future totals and AI answers will use that rule.
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {rules.map((rule) => (
+          <button
+            key={rule.label}
+            type="button"
+            style={styles.secondaryInlineBtn || styles.ghostBtn}
+            onClick={() => onSave(rule)}
+            disabled={saving}
+          >
+            {saving ? "Saving..." : rule.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          style={styles.ghostBtn}
+          onClick={onDismiss}
+          disabled={saving}
+        >
+          Not now
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -464,6 +586,14 @@ function getEmptyCoachStateStyle(screenWidth, styles) {
   return {
     ...styles.emptyCoachState,
     minHeight: screenWidth <= 480 ? "74px" : "96px",
+  };
+}
+
+function getCorrectionCardStyle(styles) {
+  return {
+    ...styles.aiBubbleModern,
+    border: "1px solid rgba(14, 165, 233, 0.25)",
+    boxShadow: "0 12px 30px rgba(15, 23, 42, 0.08)",
   };
 }
 
