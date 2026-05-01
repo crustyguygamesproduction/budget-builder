@@ -240,7 +240,7 @@ export default function CoachPage({
         </div>
       }
     >
-      <div style={styles.coachShell}>
+      <div style={getCoachShellStyle(styles)}>
         <div style={getQuickPromptRowStyle(screenWidth, styles)}>
           {quickPrompts.map((prompt) => (
             <button
@@ -254,7 +254,7 @@ export default function CoachPage({
           ))}
         </div>
 
-        <div style={getChatMessagesStyle(viewportHeight, screenWidth, styles)}>
+        <div style={getChatMessagesStyle(styles)}>
           {freshCutoff && hiddenOlderByFreshView > 0 && (
             <div style={styles.historyNote}>New chat. History is still saved.</div>
           )}
@@ -266,7 +266,7 @@ export default function CoachPage({
           {chatError && <div style={styles.errorNote}>{chatError}</div>}
 
           {visibleMessages.length === 0 ? (
-            <div style={getEmptyCoachStateStyle(viewportHeight, screenWidth, styles)}>
+            <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
               <p style={styles.emptyCoachTitle}>What do you want to check?</p>
               <p style={styles.emptyText}>
                 Ask about bills, goals, spending, debt, or whether you can afford something.
@@ -296,7 +296,7 @@ export default function CoachPage({
           <div ref={chatBottomRef} />
         </div>
 
-        <div style={getChatInputBarStyle(screenWidth, styles)}>
+        <div style={getChatInputBarStyle(styles)}>
           <input
             style={styles.chatInput}
             placeholder="Ask a money question..."
@@ -308,7 +308,7 @@ export default function CoachPage({
           />
 
           <button
-            style={getChatSendBtnStyle(screenWidth, styles)}
+            style={getChatSendBtnStyle(styles)}
             onClick={() => sendMessage()}
             disabled={thinking || !message.trim()}
           >
@@ -386,13 +386,26 @@ function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmen
 }
 
 function getCoachSectionStyle(viewportHeight, screenWidth, styles) {
-  const reservedHeight =
-    screenWidth <= 480 ? 126 : screenWidth <= 768 ? 160 : 210;
+  const reservedHeight = screenWidth <= 480 ? 300 : screenWidth <= 768 ? 250 : 220;
+  const height = Math.max(360, viewportHeight - reservedHeight);
 
   return {
     ...styles.coachSection,
-    minHeight: `calc(${viewportHeight}px - ${reservedHeight}px)`,
-    height: `calc(${viewportHeight}px - ${reservedHeight}px)`,
+    height: `${height}px`,
+    minHeight: `${height}px`,
+    maxHeight: `${height}px`,
+    overflow: "hidden",
+    padding: screenWidth <= 480 ? "14px" : "18px",
+    marginBottom: screenWidth <= 480 ? "0" : styles.section.marginBottom,
+  };
+}
+
+function getCoachShellStyle(styles) {
+  return {
+    ...styles.coachShell,
+    gap: "8px",
+    minHeight: 0,
+    overflow: "hidden",
   };
 }
 
@@ -400,6 +413,7 @@ function getCoachActionsStyle(screenWidth, styles) {
   return {
     ...styles.sectionActions,
     gap: screenWidth <= 480 ? "6px" : "8px",
+    flexWrap: "nowrap",
   };
 }
 
@@ -407,6 +421,7 @@ function getQuickPromptRowStyle(screenWidth, styles) {
   return {
     ...styles.quickPromptRow,
     flexWrap: "nowrap",
+    flexShrink: 0,
     overflowX: "auto",
     paddingBottom: "2px",
     WebkitOverflowScrolling: "touch",
@@ -415,55 +430,40 @@ function getQuickPromptRowStyle(screenWidth, styles) {
   };
 }
 
-function getChatMessagesStyle(viewportHeight, screenWidth, styles) {
-  let minHeight = 140;
-  let maxHeight = Math.max(240, viewportHeight - 330);
-
-  if (screenWidth <= 480) {
-    minHeight = 128;
-    maxHeight = Math.max(220, viewportHeight - 315);
-  } else if (screenWidth <= 768) {
-    minHeight = 160;
-    maxHeight = Math.max(260, viewportHeight - 360);
-  } else if (screenWidth <= 1100) {
-    minHeight = 220;
-    maxHeight = Math.max(300, viewportHeight - 400);
-  }
-
+function getChatMessagesStyle(styles) {
   return {
     ...styles.chatMessages,
-    minHeight: `${minHeight}px`,
-    maxHeight: `${maxHeight}px`,
     flex: 1,
+    minHeight: 0,
+    maxHeight: "none",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
   };
 }
 
-function getEmptyCoachStateStyle(viewportHeight, screenWidth, styles) {
-  let minHeight = Math.max(74, Math.min(118, viewportHeight * 0.12));
-
-  if (screenWidth <= 480) {
-    minHeight = Math.max(70, Math.min(104, viewportHeight * 0.1));
-  }
-
+function getEmptyCoachStateStyle(screenWidth, styles) {
   return {
     ...styles.emptyCoachState,
-    minHeight: `${minHeight}px`,
+    minHeight: screenWidth <= 480 ? "74px" : "96px",
   };
 }
 
-function getChatInputBarStyle(_screenWidth, styles) {
+function getChatInputBarStyle(styles) {
   return {
     ...styles.chatInputBar,
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
     gap: "8px",
-    padding: "10px 0 calc(96px + env(safe-area-inset-bottom))",
-    marginTop: "auto",
+    padding: "8px 0 0",
+    marginTop: 0,
+    position: "relative",
+    bottom: "auto",
     zIndex: 30,
   };
 }
 
-function getChatSendBtnStyle(_screenWidth, styles) {
+function getChatSendBtnStyle(styles) {
   return {
     ...styles.chatSendBtn,
     width: "auto",
