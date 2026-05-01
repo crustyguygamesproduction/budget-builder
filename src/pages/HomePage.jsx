@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import { formatCurrency, getMeaningfulCategory, getTotals, isInternalTransferLike } from "../lib/finance";
+import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
 import { ActionCard, InsightCard, Row, Section } from "../components/ui";
 
 export default function HomePage({
   transactions,
+  transactionRules = [],
   accounts,
   goals,
   debts,
@@ -41,6 +43,8 @@ export default function HomePage({
   const transferSummary = useMemo(() => getTransferSummary(transactions), [getTransferSummary, transactions]);
   const visibleCash = useMemo(() => getVisibleCash(accounts), [accounts]);
   const fixedCommitments = useMemo(() => estimateMonthlyFixedCommitments(transactions, subscriptionSummary), [transactions, subscriptionSummary]);
+  const confidenceCheckCount = useMemo(() => buildRecurringMajorPaymentCandidates(transactions, transactionRules).length, [transactions, transactionRules]);
+  const hasConfidenceChecks = confidenceCheckCount > 0;
   const safeToSpend = visibleCash.hasBalance ? Math.max(visibleCash.total - fixedCommitments.total, 0) : null;
   const topCategory = topCategories[0] || null;
   const primaryGoal = getPrimaryGoal(goals);
@@ -59,7 +63,7 @@ export default function HomePage({
     recurringSummary: { count: fixedCommitments.count, total: fixedCommitments.total },
     bankFeedReadiness,
   });
-  const status = getHomeStatus({ dataFreshness, monthSnapshot, statementCoverage, visibleCash, safeToSpend });
+  const status = getHomeStatus({ dataFreshness, monthSnapshot, statementCoverage, visibleCash, safeToSpend, hasConfidenceChecks });
 
   const headlineValue = visibleCash.hasBalance
     ? formatCurrency(safeToSpend)
@@ -83,7 +87,7 @@ export default function HomePage({
       headline: status.headline,
       body: status.body,
       ctaLabel: status.actionLabel,
-      onClick: status.action === "upload" ? () => onNavigate("upload") : () => onNavigate("confidence"),
+      onClick: status.action === "upload" ? () => onNavigate("upload") : status.action === "checks" ? () => onNavigate("confidence") : () => onNavigate("calendar"),
     },
     {
       label: topCategory ? "Biggest leak" : "Spending pattern",
@@ -106,6 +110,8 @@ export default function HomePage({
     primaryGoal,
     subscriptionStatus,
     bankFeedReadiness,
+    hasConfidenceChecks,
+    confidenceCheckCount,
     onNavigate,
     onGoToCoach,
   });
@@ -129,7 +135,7 @@ export default function HomePage({
         <div style={styles.balancePills}>
           <StatPill label="History" value={statementCoverage.monthCountLabel || "None"} styles={styles} />
           <StatPill label="Bills found" value={`${fixedCommitments.count}`} styles={styles} />
-          <StatPill label="Transfers ignored" value={`${transferSummary.transfers?.length || 0}`} styles={styles} />
+          <StatPill label="Checks waiting" value={`${confidenceCheckCount}`} styles={styles} />
           <StatPill label="AI score" value={`${intelligenceSummary.score || 0}/100`} styles={styles} />
         </div>
       </section>
@@ -187,25 +193,37 @@ function estimateMonthlyFixedCommitments(transactions, subscriptionSummary) {
   return { count: source.length || subscriptionSummary?.count || 0, total: Math.max(total, subscriptionTotal) };
 }
 
-function getHomeStatus({ dataFreshness, monthSnapshot, statementCoverage, visibleCash, safeToSpend }) {
+function getHomeStatus({ dataFreshness, monthSnapshot, statementCoverage, visibleCash, safeToSpend, hasConfidenceChecks }) {
   if (!dataFreshness.hasData) return { label: "Set up", tone: "neutral", headline: "Upload a statement first", body: "Home becomes useful once Money Hub can see real transactions.", action: "upload", actionLabel: "Upload" };
   if (dataFreshness.needsUpload) return { label: "Stale", tone: "warn", headline: `Latest data is ${dataFreshness.latestMonthLabel || "not current"}`, body: "The read is useful history, but not a fresh today view.", action: "upload", actionLabel: "Refresh data" };
-  if (visibleCash.hasBalance && safeToSpend <= 0) return { label: "Tight", tone: "bad", headline: "Do not spend freely", body: "Visible cash is already protected by upcoming commitments.", action: "checks", actionLabel: "Check bills" };
-  if (monthSnapshot.net < 0) return { label: "Watch", tone: "warn", headline: `${monthSnapshot.monthName} is behind`, body: "Money out is ahead of money in for the visible month.", action: "checks", actionLabel: "Check categories" };
+  if (visibleCash.hasBalance && safeToSpend <= 0) return { label: "Tight", tone: "bad", headline: "Do not spend freely", body: hasConfidenceChecks ? "Visible cash is already protected by upcoming commitments. Confirm the checks before relying on the number." : "Visible cash is already protected by upcoming commitments. No confidence checks are waiting.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Check bills" : "Open Calendar" };
+  if (monthSnapshot.net < 0) return { label: "Watch", tone: "warn", headline: `${monthSnapshot.monthName} is behind`, body: hasConfidenceChecks ? "Money out is ahead of money in. Some checks may improve the read." : "Money out is ahead of money in. No checks are waiting, so look at Calendar or spending next.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Check categories" : "Open Calendar" };
   if ((statementCoverage.monthCount || 0) < 3) return { label: "Learning", tone: "neutral", headline: "Good start, still learning", body: "Three months of data makes the app much more confident.", action: "upload", actionLabel: "Add history" };
-  return { label: "Ready", tone: "good", headline: "Home has enough data to be useful", body: "The app has a decent base for trends, bills and AI coaching.", action: "checks", actionLabel: "Improve accuracy" };
+  return { label: "Ready", tone: "good", headline: hasConfidenceChecks ? "A few checks can improve accuracy" : "No urgent checks waiting", body: hasConfidenceChecks ? "Answer the real checks waiting, then the rest of the app gets smarter." : "The app has a decent base and nothing is currently asking for confirmation.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Improve accuracy" : "Review Calendar" };
 }
 
-function buildNextActions({ dataFreshness, statementCoverage, fixedCommitments, subscriptionSummary, unlinkedDebtSignals, unlinkedInvestmentSignals, debts, investments, primaryGoal, subscriptionStatus, bankFeedReadiness, onNavigate, onGoToCoach }) {
+function buildNextActions({ dataFreshness, statementCoverage, fixedCommitments, subscriptionSummary, unlinkedDebtSignals, unlinkedInvestmentSignals, debts, investments, primaryGoal, subscriptionStatus, bankFeedReadiness, hasConfidenceChecks, confidenceCheckCount, onNavigate, onGoToCoach }) {
   if (!dataFreshness.hasData || dataFreshness.needsUpload) {
-    return [
+    const actions = [
       { label: "Step 1", headline: dataFreshness.hasData ? "Upload the newest statement" : "Upload your first statement", body: statementCoverage.hasCoverageGap ? "Uploaded ranges and visible transactions do not line up. Re-upload or check the latest statement." : "Fresh data makes Home, Calendar, Checks and AI much more useful.", actionLabel: "Go to Upload", onClick: () => onNavigate("upload") },
-      { label: "Step 2", headline: "Answer Confidence Checks", body: "Confirm rent, bills, transfers and work/pass-through payments so totals stop being guessy.", actionLabel: "Open Checks", onClick: () => onNavigate("confidence") },
-      { label: "Step 3", headline: "Ask AI what to fix first", body: "Use the coach once the latest statement is in. It should give one practical next move, not a lecture.", actionLabel: "Ask AI", onClick: () => onGoToCoach("What should I fix first after uploading my latest statement?", { autoSend: true }) },
     ];
+
+    if (hasConfidenceChecks) {
+      actions.push({ label: "Step 2", headline: `${confidenceCheckCount} Confidence Check${confidenceCheckCount === 1 ? "" : "s"} waiting`, body: "Confirm rent, bills, transfers and work/pass-through payments so totals stop being guessy.", actionLabel: "Open Checks", onClick: () => onNavigate("confidence") });
+    } else {
+      actions.push({ label: "Step 2", headline: "No checks waiting", body: "There is nothing to answer in Checks right now, so the next useful move is Calendar or AI after uploading fresh data.", actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") });
+    }
+
+    actions.push({ label: "Step 3", headline: "Ask AI what to fix first", body: "Use the coach once the latest statement is in. It should give one practical next move, not a lecture.", actionLabel: "Ask AI", onClick: () => onGoToCoach("What should I fix first after uploading my latest statement?", { autoSend: true }) });
+    return actions;
   }
+
+  const firstAction = hasConfidenceChecks
+    ? { label: "Checks", headline: `${confidenceCheckCount} Confidence Check${confidenceCheckCount === 1 ? "" : "s"} waiting`, body: "Answer these because they change totals, bills, transfers or AI advice.", actionLabel: "Open Checks", onClick: () => onNavigate("confidence") }
+    : { label: "Accuracy", headline: "No checks waiting", body: "The app has no unanswered classification questions right now. Review Calendar instead of sending users to an empty page.", actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") };
+
   return [
-    { label: "Checks", headline: fixedCommitments.count ? `${fixedCommitments.count} protected payments found` : "Confirm the important payments", body: "The better Checks is, the better every other page becomes.", actionLabel: "Open Checks", onClick: () => onNavigate("confidence") },
+    firstAction,
     { label: "Calendar", headline: subscriptionSummary.count ? "Review upcoming bills" : "Look for future payments", body: "Calendar should show rent, bills, subscriptions and estimates before they hurt you.", actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") },
     { label: subscriptionStatus?.isPremium ? "Premium" : "Upgrade path", headline: subscriptionStatus?.isPremium ? bankFeedReadiness.headline : "Live feeds can come later", body: subscriptionStatus?.isPremium ? bankFeedReadiness.body : "Manual uploads prove the intelligence. Live feeds should be the paid automatic layer once trust is solid.", actionLabel: "Open Settings", onClick: () => onNavigate("settings") },
     { label: "Debt/investing", headline: unlinkedDebtSignals.length || unlinkedInvestmentSignals.length ? "Confirm detected money streams" : "Optional trackers are quiet", body: debts.length || investments.length ? "Debt and investing are set up enough to monitor." : "Set these up only if relevant. They should not shout at people with nothing to track.", actionLabel: unlinkedDebtSignals.length ? "Open Debts" : "Open Investments", onClick: () => onNavigate(unlinkedDebtSignals.length ? "debts" : "investments") },
