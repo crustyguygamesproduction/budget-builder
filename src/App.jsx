@@ -539,6 +539,7 @@ export default function App() {
         {page === "coach" && (
           <CoachPage
             transactions={smartTransactions}
+            transactionRules={transactionRules}
             goals={goals}
             debts={debts}
             investments={investments}
@@ -548,6 +549,7 @@ export default function App() {
             subscriptionStatus={subscriptionStatus}
             bankFeedReadiness={bankFeedReadiness}
             onChange={loadAiMessages}
+            onTransactionRulesChange={loadTransactionRules}
             screenWidth={screenWidth}
             viewportHeight={viewportHeight}
             styles={styles}
