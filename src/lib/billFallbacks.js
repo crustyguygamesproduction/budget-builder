@@ -7,14 +7,12 @@ const FIXED_BILL_WORDS = /\b(rent|mortgage|landlord|letting|council tax|energy|e
 const SUBSCRIPTION_WORDS = /\b(subscription|membership|premium|netflix|spotify|apple|itunes|icloud|google|youtube premium|openai|chatgpt|microsoft|xbox|playstation|disney|prime video|amazon prime|audible|strava|duolingo|notion|dropbox|github)\b/;
 
 export function buildStrongBillFallbackEvents(transactions, existingEvents = []) {
-  const latestMonth = getLatestTransactionMonth(transactions);
-  if (!latestMonth) return [];
   const groups = new Map();
   const rentProfile = getRentProfile(transactions);
+  const billProfiles = getFixedBillProfiles(transactions);
 
   (transactions || []).forEach((transaction) => {
     if (!isFixedCommitmentTransaction(transaction)) return;
-    if (!String(transaction.transaction_date || "").startsWith(latestMonth)) return;
 
     const merchant = getRealWorldMerchant(transaction);
     const category = normalizeText(transaction._smart_category || transaction.category || "");
@@ -24,13 +22,12 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
     if (!date || !amount) return;
 
     const isRent = isRentTransaction(transaction);
-    const key = isRent
-      ? "fallback:rent"
-      : `${merchant.known ? `merchant:${merchant.key}` : `text:${transaction._real_merchant_key || merchant.key || normalizeText(transaction.description || "")}`}:fallback:${getAmountBand(amount)}`;
-    const title = isRent ? "Rent" : `${merchant.known ? merchant.name : transaction._real_merchant_name || getFriendlyTransactionName(transaction)} bill around ${formatCurrency(amount)}`;
+    const baseKey = getBillBaseKey(transaction, merchant, isRent);
+    const key = isRent ? "fallback:rent" : `${baseKey}:fallback:${getStableAmountBand(amount, billProfiles.get(baseKey))}`;
+    const baseTitle = isRent ? "Rent" : merchant.known ? merchant.name : transaction._real_merchant_name || getFriendlyTransactionName(transaction);
 
     if (!groups.has(key)) {
-      groups.set(key, { key, title, kind: "bill", amounts: [], dates: [], transactions: [], isRent });
+      groups.set(key, { key, baseKey, baseTitle, title: baseTitle, kind: "bill", amounts: [], dates: [], transactions: [], isRent });
     }
     const group = groups.get(key);
     group.amounts.push(amount);
@@ -38,7 +35,7 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
     group.transactions.push(transaction);
   });
 
-  return [...groups.values()].map((group) => toFallbackEvent(group, existingEvents, rentProfile)).filter(Boolean);
+  return [...groups.values()].map((group) => toFallbackEvent(group, existingEvents, rentProfile, billProfiles)).filter(Boolean);
 }
 
 export function mergeRecurringEvents(events) {
@@ -48,6 +45,40 @@ export function mergeRecurringEvents(events) {
     const better = chooseBetterDuplicate(merged[duplicateIndex], event);
     return merged.map((item, index) => (index === duplicateIndex ? cleanEventTitle(better) : item));
   }, []);
+}
+
+function getBillBaseKey(transaction, merchant, isRent) {
+  if (isRent) return "rent";
+  return merchant.known ? `merchant:${merchant.key}` : `text:${transaction._real_merchant_key || merchant.key || normalizeText(transaction.description || "")}`;
+}
+
+function getStableAmountBand(amount, profile) {
+  const usual = Number(profile?.usualAmount || 0);
+  if (usual && amountIsOutlier(amount, usual)) return getAmountBand(usual);
+  return getAmountBand(amount);
+}
+
+function getFixedBillProfiles(transactions) {
+  const profiles = new Map();
+  (transactions || []).forEach((transaction) => {
+    if (!isFixedCommitmentTransaction(transaction) || isRentTransaction(transaction)) return;
+    const merchant = getRealWorldMerchant(transaction);
+    const amount = Math.abs(Number(transaction.amount || 0));
+    const date = parseAppDate(transaction.transaction_date);
+    if (!date || !amount) return;
+    const baseKey = getBillBaseKey(transaction, merchant, false);
+    if (!profiles.has(baseKey)) profiles.set(baseKey, { amounts: [], dates: [] });
+    profiles.get(baseKey).amounts.push(amount);
+    profiles.get(baseKey).dates.push(date);
+  });
+
+  profiles.forEach((profile) => {
+    profile.usualAmount = getUsualAmount(profile.amounts);
+    profile.usualDay = getLikelyDay(profile.dates);
+    profile.monthCount = new Set(profile.dates.map((date) => `${date.getFullYear()}-${date.getMonth()}`)).size;
+  });
+
+  return profiles;
 }
 
 function cleanEventTitle(event) {
@@ -123,23 +154,39 @@ function isFixedCommitmentTransaction(transaction) {
   return fixedCategory || knownFixedMerchant || explicitBill || fixedByText;
 }
 
-function toFallbackEvent(group, existingEvents, rentProfile) {
-  const amount = group.isRent ? getRentAmountForCalendar(group, rentProfile) : getLikelyAmount(group.dates, group.amounts);
+function toFallbackEvent(group, existingEvents, rentProfile, billProfiles) {
+  const profile = billProfiles.get(group.baseKey);
+  const amount = group.isRent ? getRentAmountForCalendar(group, rentProfile) : getBillAmountForCalendar(group, profile);
   if (!amount) return null;
+  const title = group.isRent ? "Rent" : `${group.baseTitle} bill around ${formatCurrency(amount)}`;
   const event = {
     key: group.key,
-    title: group.title,
+    title,
     amount: -Math.abs(amount),
-    day: group.isRent ? rentProfile.day || getLikelyDay(group.dates) : getLikelyDay(group.dates),
+    day: group.isRent ? rentProfile.day || getLikelyDay(group.dates) : profile?.usualDay || getLikelyDay(group.dates),
     month: null,
     kind: group.kind || "bill",
-    kindLabel: group.kind === "subscription" ? "Subscription" : "Bill",
-    confidenceLabel: group.isRent || group.transactions.length >= 2 ? "medium" : "estimated",
-    estimateNote: group.isRent ? "Rent is estimated from the usual monthly total, so early or split payments do not become the rent amount." : "Added from a fixed bill-like payment in your latest statement. Confirm it in Checks if this looks wrong.",
+    kindLabel: "Bill",
+    confidenceLabel: group.isRent || group.transactions.length >= 2 || Number(profile?.monthCount || 0) >= 2 ? "medium" : "estimated",
+    estimateNote: group.isRent ? "Rent is estimated from the usual monthly total, so early or split payments do not become the rent amount." : "Estimated from your usual bill amount, so one-off discounts or odd charges do not replace the normal bill.",
     sourceCount: group.transactions.length,
-    sourceMonths: group.isRent ? rentProfile.monthCount || 1 : 1,
+    sourceMonths: group.isRent ? rentProfile.monthCount || 1 : profile?.monthCount || 1,
   };
   return hasMatchingEvent(event, existingEvents) ? null : event;
+}
+
+function getBillAmountForCalendar(group, profile) {
+  const currentAmount = getLikelyAmount(group.dates, group.amounts);
+  const usual = Number(profile?.usualAmount || 0);
+  if (usual && amountIsOutlier(currentAmount, usual)) return usual;
+  return usual || currentAmount;
+}
+
+function amountIsOutlier(amount, usual) {
+  if (!amount || !usual) return false;
+  if (usual >= 10 && amount < usual * 0.55) return true;
+  if (usual >= 10 && amount > usual * 1.8) return true;
+  return false;
 }
 
 function getRentAmountForCalendar(group, rentProfile) {
@@ -161,11 +208,7 @@ function getRentProfile(transactions) {
     rentDates.push(date);
   });
   const totals = [...monthTotals.values()].filter((value) => value > 0).sort((a, b) => a - b);
-  return {
-    usualMonthlyTotal: getUsualRentTotal(totals),
-    monthCount: totals.length,
-    day: getLikelyDay(rentDates),
-  };
+  return { usualMonthlyTotal: getUsualRentTotal(totals), monthCount: totals.length, day: getLikelyDay(rentDates) };
 }
 
 function getUsualRentTotal(totals) {
@@ -180,6 +223,23 @@ function getUsualRentTotal(totals) {
   return totals[Math.floor(totals.length / 2)] || totals[0];
 }
 
+function getUsualAmount(amounts) {
+  const safe = amounts.map(Number).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (!safe.length) return 0;
+  const clusters = [];
+  safe.forEach((amount) => {
+    const cluster = clusters.find((item) => Math.abs(item.average - amount) <= Math.max(2, item.average * 0.18));
+    if (cluster) {
+      cluster.values.push(amount);
+      cluster.average = average(cluster.values);
+    } else {
+      clusters.push({ values: [amount], average: amount });
+    }
+  });
+  const best = clusters.sort((a, b) => b.values.length - a.values.length || b.average - a.average)[0];
+  return Math.round((best?.average || safe[Math.floor(safe.length / 2)] || safe[0]) * 100) / 100;
+}
+
 function isRentTransaction(transaction) {
   if (!transaction || isInternalTransferLike(transaction)) return false;
   if (Number(transaction.amount || 0) >= 0) return false;
@@ -189,12 +249,6 @@ function isRentTransaction(transaction) {
 
 function hasMatchingEvent(event, existingEvents) {
   return (existingEvents || []).some((existing) => isDuplicateBillEvent(existing, event));
-}
-
-function getLatestTransactionMonth(transactions) {
-  const dates = (transactions || []).map((transaction) => parseAppDate(transaction.transaction_date)).filter(Boolean).sort((a, b) => b - a);
-  if (!dates.length) return "";
-  return `${dates[0].getFullYear()}-${String(dates[0].getMonth() + 1).padStart(2, "0")}`;
 }
 
 function getAmountBand(amount) {
