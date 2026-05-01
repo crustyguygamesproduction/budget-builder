@@ -29,6 +29,7 @@ export default function CoachPage({
     if (typeof window === "undefined") return "";
     return localStorage.getItem(COACH_DRAFT_KEY) || "";
   });
+  const [pendingUserMessage, setPendingUserMessage] = useState(null);
   const [thinking, setThinking] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [chatError, setChatError] = useState("");
@@ -96,12 +97,19 @@ export default function CoachPage({
       return;
     }
     latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [latestVisibleMessageKey, thinking]);
+  }, [latestVisibleMessageKey, pendingUserMessage, thinking]);
 
   async function sendMessage(nextMessage) {
     const text = String(nextMessage ?? message).trim();
     if (!text || thinking) return;
 
+    setMessage("");
+    setPendingUserMessage({
+      id: `pending-${Date.now()}`,
+      role: "user",
+      content: text,
+      created_at: new Date().toISOString(),
+    });
     setThinking(true);
     setChatError("");
 
@@ -151,9 +159,11 @@ export default function CoachPage({
         content: data?.reply || "No reply received.",
       });
 
-      setMessage("");
+      setPendingUserMessage(null);
       await onChange();
     } catch (error) {
+      setMessage(text);
+      setPendingUserMessage(null);
       setChatError(error.message || "Something went wrong sending that message.");
     } finally {
       setThinking(false);
@@ -183,6 +193,7 @@ export default function CoachPage({
 
       if (error) throw error;
 
+      setPendingUserMessage(null);
       setFreshCutoff("");
       if (typeof window !== "undefined") {
         localStorage.removeItem(COACH_FRESH_CUTOFF_KEY);
@@ -199,6 +210,7 @@ export default function CoachPage({
   function startFreshView() {
     const cutoff = new Date().toISOString();
     setFreshCutoff(cutoff);
+    setPendingUserMessage(null);
     setChatError("");
 
     if (typeof window !== "undefined") {
@@ -208,6 +220,7 @@ export default function CoachPage({
 
   function showAllHistory() {
     setFreshCutoff("");
+    setPendingUserMessage(null);
     setChatError("");
 
     if (typeof window !== "undefined") {
@@ -265,7 +278,7 @@ export default function CoachPage({
 
           {chatError && <div style={styles.errorNote}>{chatError}</div>}
 
-          {visibleMessages.length === 0 ? (
+          {visibleMessages.length === 0 && !pendingUserMessage ? (
             <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
               <p style={styles.emptyCoachTitle}>What do you want to check?</p>
               <p style={styles.emptyText}>
@@ -276,12 +289,18 @@ export default function CoachPage({
             visibleMessages.map((msg, index) => (
               <div
                 key={msg.id || `${msg.role}-${msg.created_at}-${index}`}
-                ref={index === visibleMessages.length - 1 ? latestMessageRef : null}
+                ref={index === visibleMessages.length - 1 && !pendingUserMessage ? latestMessageRef : null}
               >
                 <ChatMessage msg={msg} styles={styles} />
               </div>
             ))
           )}
+
+          {pendingUserMessage ? (
+            <div ref={latestMessageRef}>
+              <ChatMessage msg={pendingUserMessage} styles={styles} />
+            </div>
+          ) : null}
 
           {thinking && (
             <div style={styles.aiBubbleModern}>
@@ -289,7 +308,7 @@ export default function CoachPage({
                 <span style={styles.chatRoleLabel}>Money Hub</span>
                 <span style={styles.chatTimeLabel}>now</span>
               </div>
-              Thinking...
+              Checking your money...
             </div>
           )}
 
