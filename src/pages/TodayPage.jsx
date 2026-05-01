@@ -398,6 +398,28 @@ export default function TodayPage({
         ),
     },
   ];
+  const refreshEducationCards = dataFreshness.hasData
+    ? [
+        {
+          label: "Keep it current",
+          headline: `Latest useful month is ${dataFreshness.latestMonthLabel}`,
+          body: "You already have statement history. Upload only the newest missing statement so Today can stop talking from old data.",
+          ctaLabel: "Upload latest",
+          onClick: () => onNavigate("upload"),
+        },
+        {
+          label: "What improves",
+          headline: "Fresh data beats more old data",
+          body: "The next useful step is the latest month, not starting again. That sharpens Today, Goals, Calendar, and AI advice.",
+          ctaLabel: "Ask what to upload",
+          onClick: () =>
+            onGoToCoach(
+              "I already have statements uploaded. Tell me the single most useful next statement to upload and why.",
+              { autoSend: true }
+            ),
+        },
+      ]
+    : milestoneCards;
 
   return (
     <>
@@ -537,7 +559,7 @@ export default function TodayPage({
       {dataFreshness.needsUpload ? (
         <>
           <Section
-            title="Why Uploading More Statements Helps"
+            title={dataFreshness.hasData ? "Refresh Your Data" : "Why Uploading Statements Helps"}
             styles={styles}
             right={
               <button
@@ -550,7 +572,7 @@ export default function TodayPage({
             }
           >
             <div style={styles.aiInsightGrid}>
-              {milestoneCards.map((card) => (
+              {refreshEducationCards.map((card) => (
                 <InsightCard
                   key={card.label}
                   label={card.label}
