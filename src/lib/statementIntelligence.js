@@ -65,7 +65,7 @@ export function getStatementIntelligenceContext(transactions, query = "") {
       outgoing_personal_payment_groups: outgoingPersonalPaymentGroups,
       personal_payment_groups: outgoingPersonalPaymentGroups,
       personal_payment_note:
-        "Incoming and outgoing personal payments are split. Use incoming_personal_payment_groups for money sent to the user, and outgoing_personal_payment_groups for money the user sent out. Rent, bills, subscriptions, business payments, work income and pass-through flows are excluded from these personal groups. The legacy personal_payment_groups field is outgoing-only.",
+        "Incoming and outgoing personal payments are split. Use incoming_personal_payment_groups for money sent to the user, and outgoing_personal_payment_groups for money the user sent out. Rent, bills, subscriptions, business payments, work income and pass-through flows are excluded from these personal groups. Payees with rent/bill-tagged transactions in this user's data are also excluded from personal groups. The legacy personal_payment_groups field is outgoing-only.",
       recurring_outgoings: recurringOutgoings,
       large_outgoings: largeOutgoings,
       large_income: largeIncome,
@@ -78,6 +78,7 @@ function getQueryFocus(transactions, query) {
   const terms = getSearchTerms(query);
   const directionIntent = getQueryDirectionIntent(query);
   const personalMoneyIntent = hasPersonalMoneyIntent(query);
+  const rentBillLikePersonalLabels = getRentBillLikePersonalLabels(transactions);
 
   if (terms.length === 0) {
     return {
@@ -111,7 +112,7 @@ function getQueryFocus(transactions, query) {
   const matches = scoredMatches.map((item) => item.transaction);
   const directionMatches = filterByDirectionIntent(matches, directionIntent);
   const relevantMatches = personalMoneyIntent
-    ? directionMatches.filter((transaction) => isCleanPersonalPayment(transaction))
+    ? directionMatches.filter((transaction) => isCleanPersonalPayment(transaction, rentBillLikePersonalLabels))
     : directionMatches;
   const moneyIn = matches
     .filter((transaction) => Number(transaction.amount) > 0)
@@ -219,7 +220,7 @@ function buildQueryFocusNote(matches, relevantMatches, directionIntent, personal
           ? "net money in minus money out because the question asks for an overall/net view"
           : "all matching directions because the question direction is unclear";
   const personalText = personalMoneyIntent
-    ? " Rent, bills, subscriptions, business/work payments and pass-through flows have been excluded from relevant personal-payment matches."
+    ? " Rent, bills, subscriptions, business/work payments, pass-through flows and payees with rent/bill-tagged transactions have been excluded from relevant personal-payment matches."
     : "";
   const capText =
     matches.length > 120 || relevantMatches.length > 120
@@ -302,11 +303,12 @@ function scoreTransactionForTerms(transaction, terms) {
 }
 
 function buildPersonalPaymentGroups(transactions, direction = "out") {
+  const rentBillLikePersonalLabels = getRentBillLikePersonalLabels(transactions);
   const candidates = transactions.filter((transaction) => {
     const amount = Number(transaction.amount || 0);
     if (direction === "in" && amount <= 0) return false;
     if (direction === "out" && amount >= 0) return false;
-    return isCleanPersonalPayment(transaction);
+    return isCleanPersonalPayment(transaction, rentBillLikePersonalLabels);
   });
 
   return buildTransactionGroups(candidates, (transaction) =>
@@ -314,10 +316,29 @@ function buildPersonalPaymentGroups(transactions, direction = "out") {
   ).filter((group) => group.label !== "Unlabelled personal transfer");
 }
 
-function isCleanPersonalPayment(transaction) {
+function getRentBillLikePersonalLabels(transactions) {
+  const labels = new Set();
+
+  transactions.forEach((transaction) => {
+    if (Number(transaction.amount || 0) >= 0) return;
+    if (!isBillRentOrSubscription(transaction)) return;
+
+    const label = normalizeText(getPersonalPaymentLabel(transaction.description));
+    if (label && label !== normalizeText("Unlabelled personal transfer")) {
+      labels.add(label);
+    }
+  });
+
+  return labels;
+}
+
+function isCleanPersonalPayment(transaction, rentBillLikePersonalLabels = new Set()) {
   if (isInternalTransferLike(transaction)) return false;
   if (isBillRentOrSubscription(transaction)) return false;
   if (isLikelyBusinessWorkOrPassThrough(transaction)) return false;
+
+  const personalLabel = normalizeText(getPersonalPaymentLabel(transaction.description));
+  if (rentBillLikePersonalLabels.has(personalLabel)) return false;
 
   const description = normalizeText(transaction.description);
   return /transfer|faster payment|fpi|payment to|payment from|bank transfer|standing order|mobile payment|online payment|from | to |credit/.test(description);
