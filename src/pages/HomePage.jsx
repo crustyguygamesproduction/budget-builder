@@ -53,11 +53,11 @@ export default function HomePage({
 
   const mainCards = [
     {
-      label: "Money warning",
+      label: pressure.isBroke ? "Right now" : "Money warning",
       headline: pressure.mainHeadline,
       body: pressure.mainBody,
       ctaLabel: pressure.primaryActionLabel,
-      onClick: pressure.primaryAction === "upload" ? () => onNavigate("upload") : pressure.primaryAction === "calendar" ? () => onNavigate("calendar") : () => onGoToCoach(`Be honest and practical. My visible balance is ${visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "not available"}. Money Hub has found ${formatCurrency(billMoney.total)} that may be needed for bills in ${billMoney.timeframeLabel}. It ${billMoney.includesRent ? "does" : "does not"} include rent. Tell me what I should do next, but do not pretend historical net is cash I can spend.`, { autoSend: true }),
+      onClick: pressure.primaryAction === "upload" ? () => onNavigate("upload") : pressure.primaryAction === "calendar" ? () => onNavigate("calendar") : () => onGoToCoach(`I have £0 or almost £0 showing and bills may be coming. Give me a practical 7-day plan. Be direct, simple and specific. Tell me what to stop spending on today, what bills to check, what income to look for, and what to do if a bill is due before payday. Do not just tell me to upload a statement.`, { autoSend: true }),
     },
     {
       label: "How reliable is this?",
@@ -69,9 +69,9 @@ export default function HomePage({
     {
       label: topCategory ? "Where money went" : "Spending pattern",
       headline: topCategory ? `${topCategory.category}: ${formatCurrency(topCategory.total)}` : "No spending pattern yet",
-      body: topCategory ? "This is the biggest spending area in your uploaded data. Some of it may still include bills or one-off payments, so check before cutting blindly." : "Add your latest bank statement and Money Hub will show where your money is going.",
+      body: topCategory ? "This is the biggest spending area in your uploaded data. If you are broke, this is the first place to look for cuts." : "Add your latest bank statement and Money Hub will show where your money is going.",
       ctaLabel: topCategory ? "Ask AI what to cut" : "Add statement",
-      onClick: topCategory ? () => onGoToCoach(`Look at my ${topCategory.category} spending and tell me what is realistic to cut without making life miserable.`, { autoSend: true }) : () => onNavigate("upload"),
+      onClick: topCategory ? () => onGoToCoach(`Look at my ${topCategory.category} spending and tell me what is realistic to cut this week. Be practical and human.`, { autoSend: true }) : () => onNavigate("upload"),
     },
   ];
 
@@ -95,7 +95,7 @@ export default function HomePage({
   });
 
   const aiPrompts = [
-    pressure.isBroke ? "I have no money showing. What should I do first?" : "What is the one thing I should fix this week?",
+    pressure.isBroke ? "Make me a 7-day broke plan." : "What is the one thing I should fix this week?",
     "Can I spend anything before payday?",
     billMoney.count > 0 ? "Which bills or subscriptions are most urgent?" : "Help me find my regular bills and subscriptions.",
     primaryGoal ? `Help me protect my goal: ${primaryGoal.name}.` : "Help me set one realistic money goal.",
@@ -121,13 +121,25 @@ export default function HomePage({
         <div style={styles.compactInsightGrid}>{mainCards.map((card) => <InsightCard key={card.label} {...card} styles={styles} />)}</div>
       </Section>
 
-      <Section title="Why It Says That" styles={styles}>
-        <p style={styles.sectionIntro}>Simple breakdown of the warning above. This is deliberately cautious.</p>
-        <Row name="Money showing now" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "No current balance connected"} styles={styles} />
-        <Row name={billMoney.timeframeLabel} value={billMoney.count ? `${formatCurrency(billMoney.total)} across ${billMoney.count} payments` : "No bills found yet"} styles={styles} />
-        <Row name="Rent included?" value={billMoney.includesRent ? "Yes, where Money Hub can see it" : "Not found yet"} styles={styles} />
-        <Row name="Left after bills" value={moneyLeft == null ? "Needs your latest balance" : formatCurrency(moneyLeft)} styles={styles} />
-        <Row name="Latest statement" value={dataFreshness.hasData ? dataFreshness.latestMonthLabel : "No statement yet"} styles={styles} />
+      <Section title={pressure.isBroke ? "What To Do First" : "Why It Says That"} styles={styles}>
+        {pressure.isBroke ? (
+          <>
+            <p style={styles.sectionIntro}>This is the simple plan when the app shows no money and bills have been found.</p>
+            <Row name="1. Spend" value="Do not spend from this account today" styles={styles} />
+            <Row name="2. Food/travel" value="Use what you already have, walk/cycle/bus if possible" styles={styles} />
+            <Row name="3. Bills" value="Open Calendar and check what is due next" styles={styles} />
+            <Row name="4. Accuracy" value="Add your latest bank statement after the urgent checks" styles={styles} />
+          </>
+        ) : (
+          <>
+            <p style={styles.sectionIntro}>Simple breakdown of the warning above. This is deliberately cautious.</p>
+            <Row name="Money showing now" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "No current balance connected"} styles={styles} />
+            <Row name={billMoney.timeframeLabel} value={billMoney.count ? `${formatCurrency(billMoney.total)} across ${billMoney.count} payments` : "No bills found yet"} styles={styles} />
+            <Row name="Rent included?" value={billMoney.includesRent ? "Yes, where Money Hub can see it" : "Not found yet"} styles={styles} />
+            <Row name="Left after bills" value={moneyLeft == null ? "Needs your latest balance" : formatCurrency(moneyLeft)} styles={styles} />
+            <Row name="Latest statement" value={dataFreshness.hasData ? dataFreshness.latestMonthLabel : "No statement yet"} styles={styles} />
+          </>
+        )}
       </Section>
 
       <Section title="Next Best Moves" styles={styles}>
@@ -191,11 +203,11 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       badge: "Urgent",
       heroLabel: "No money showing",
       heroAmount: "£0.00",
-      heroCopy: `${formatCurrency(billMoney.total)} of bills/subscriptions have been found from your uploaded history, but your visible balance is £0.00. Do not spend from this account until you add your latest bank statement or check your real bank balance.`,
+      heroCopy: `${formatCurrency(billMoney.total)} of bills/subscriptions have been found from your uploaded history, but your visible balance is £0.00. Do not spend from this account today. First check what bill is due next, then ask AI for a 7-day plan.`,
       mainHeadline: "You look broke right now",
-      mainBody: `Money Hub can see ${formatCurrency(billMoney.total)} that may be needed for bills and £0.00 showing in the app. Add your latest bank statement so the warning is based on fresh data, not old history.`,
-      primaryAction: "upload",
-      primaryActionLabel: "Add latest statement",
+      mainBody: `The plan is: stop spending from this account today, check upcoming bills, avoid non-essentials like takeaways, taxis and gaming, then add your latest statement so the numbers are fresh.`,
+      primaryAction: "coach",
+      primaryActionLabel: "Get 7-day plan",
     };
   }
 
@@ -208,7 +220,7 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       heroAmount: formatCurrency(moneyLeft),
       heroCopy: `Your visible balance is ${formatCurrency(balance)}, but Money Hub has found ${formatCurrency(billMoney.total)} that may be needed for bills. Keep spending locked down until this is checked.`,
       mainHeadline: "Your balance looks short",
-      mainBody: "Your bills and subscriptions look bigger than the money currently showing. Check Calendar and add your latest statement before spending.",
+      mainBody: "Your bills and subscriptions look bigger than the money currently showing. Check Calendar before spending.",
       primaryAction: "calendar",
       primaryActionLabel: "Check Calendar",
     };
@@ -223,7 +235,7 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       heroAmount: "No current balance",
       heroCopy: "Money Hub has uploaded history, but no current balance. It can explain patterns, but it cannot honestly say what you can spend today.",
       mainHeadline: "This is not today’s balance",
-      mainBody: "Add your latest bank statement or current balances before using Home as a spending guide.",
+      mainBody: "Check your real bank balance first. Then add your latest statement so Home can guide you properly.",
       primaryAction: "upload",
       primaryActionLabel: "Add latest statement",
     };
@@ -260,18 +272,26 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
 
 function getHomeStatus({ dataFreshness, statementCoverage, hasConfidenceChecks, billMoney, pressure }) {
   if (!dataFreshness.hasData) return { label: "Set up", tone: "neutral", headline: "Add your first bank statement", body: "Home becomes useful once Money Hub can see your real transactions.", action: "upload", actionLabel: "Add statement" };
-  if (dataFreshness.needsUpload) return { label: "Stale", tone: "warn", headline: "Add your latest bank statement", body: `Your newest uploaded data is ${dataFreshness.latestMonthLabel || "not current"}. The warning may be right, but it needs fresh data before you trust it.`, action: "upload", actionLabel: "Add latest statement" };
-  if (pressure.isBroke) return { label: "Urgent", tone: "bad", headline: "You need a fresh balance check", body: "£0 showing with bills found means the app should warn you, not soften it.", action: "upload", actionLabel: "Add latest statement" };
+  if (dataFreshness.needsUpload && !pressure.isBroke) return { label: "Stale", tone: "warn", headline: "Add your latest bank statement", body: `Your newest uploaded data is ${dataFreshness.latestMonthLabel || "not current"}. Use the plan first, then update the data.`, action: "upload", actionLabel: "Add latest statement" };
+  if (pressure.isBroke) return { label: "Urgent", tone: "bad", headline: "Use a survival plan first", body: "£0 showing with bills found means the app should tell you what to do today, not only ask for more data.", action: "calendar", actionLabel: "Check bills" };
   if (hasConfidenceChecks) return { label: "Check", tone: "warn", headline: "Some payments need checking", body: "Answer the checks that are actually waiting so bills, transfers and AI advice stay accurate.", action: "checks", actionLabel: "Open Checks" };
   if ((statementCoverage.monthCount || 0) < 3) return { label: "Learning", tone: "neutral", headline: "Add more history when you can", body: "Three months of data makes bills, Calendar and AI much more confident.", action: "upload", actionLabel: "Add history" };
   return { label: "Ready", tone: "good", headline: billMoney.count ? "Bills are being counted" : "No bills found yet", body: billMoney.count ? "Money Hub is using your regular payments to make the Home warning more realistic." : "Calendar may still improve as you add more history.", action: "calendar", actionLabel: "Review Calendar" };
 }
 
 function buildNextActions({ dataFreshness, statementCoverage, billMoney, subscriptionSummary, unlinkedDebtSignals, unlinkedInvestmentSignals, debts, investments, primaryGoal, subscriptionStatus, bankFeedReadiness, hasConfidenceChecks, confidenceCheckCount, pressure, onNavigate, onGoToCoach }) {
+  if (pressure.isBroke) {
+    return [
+      { label: "Step 1", headline: "Freeze spending today", body: "Do not spend from this account unless it is genuinely essential. No takeaways, taxis, gaming, random shops or top-ups until you know what is due.", actionLabel: "Get 7-day plan", onClick: () => onGoToCoach("I have no money showing and bills coming. Give me a practical 7-day plan. Be direct and simple.", { autoSend: true }) },
+      { label: "Step 2", headline: "Check the next bill", body: `${billMoney.count || "Some"} bill payment${billMoney.count === 1 ? "" : "s"} found from your bank history. Open Calendar and see what might hit next.`, actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") },
+      { label: "Step 3", headline: "Make the numbers fresh", body: dataFreshness.needsUpload ? "After the urgent checks, add your latest bank statement so the plan is based on today’s reality." : "Your data is fairly fresh, but adding the latest statement still makes the warning sharper.", actionLabel: "Add statement", onClick: () => onNavigate("upload") },
+    ];
+  }
+
   const actions = [];
 
-  if (!dataFreshness.hasData || dataFreshness.needsUpload || pressure.isBroke) {
-    actions.push({ label: "Step 1", headline: "Add your latest bank statement", body: "This is the fastest way to make the warning trustworthy. Without fresh data, the app can only work from old history.", actionLabel: "Go to Upload", onClick: () => onNavigate("upload") });
+  if (!dataFreshness.hasData || dataFreshness.needsUpload) {
+    actions.push({ label: "Step 1", headline: "Add your latest bank statement", body: "This makes the warning trustworthy. Without fresh data, the app can only work from older bank history.", actionLabel: "Go to Upload", onClick: () => onNavigate("upload") });
   } else {
     actions.push({ label: "Step 1", headline: "Check your upcoming bills", body: `${billMoney.count || "No"} bill payment${billMoney.count === 1 ? "" : "s"} found. Check Calendar so nothing surprises you.`, actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") });
   }
@@ -282,7 +302,7 @@ function buildNextActions({ dataFreshness, statementCoverage, billMoney, subscri
     actions.push({ label: "Step 2", headline: "No checks waiting", body: "There is nothing to answer in Checks right now. Do not waste time there.", actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") });
   }
 
-  actions.push({ label: "Step 3", headline: pressure.isBroke ? "Ask AI for a 7-day plan" : "Ask AI what to fix first", body: pressure.isBroke ? "The coach should give practical next steps, not a lecture: what to avoid, what to check and what to upload." : "The coach should give one practical next move based on your real data.", actionLabel: "Ask AI", onClick: () => onGoToCoach(pressure.isBroke ? "I have no money showing and bills coming. Give me a practical plan for the next 7 days." : "What should I fix first this week?", { autoSend: true }) });
+  actions.push({ label: "Step 3", headline: "Ask AI what to fix first", body: "The coach should give one practical next move based on your real data.", actionLabel: "Ask AI", onClick: () => onGoToCoach("What should I fix first this week?", { autoSend: true }) });
 
   if (unlinkedDebtSignals.length || unlinkedInvestmentSignals.length || debts.length || investments.length) {
     actions.push({ label: "Optional", headline: "Check debts or investments", body: "Only set these up if they apply to you. They should not make Home noisy.", actionLabel: unlinkedDebtSignals.length ? "Open Debts" : "Open Investments", onClick: () => onNavigate(unlinkedDebtSignals.length ? "debts" : "investments") });
