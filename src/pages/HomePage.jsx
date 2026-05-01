@@ -25,11 +25,9 @@ export default function HomePage({
     getDataFreshness,
     getDisplayedMonthSnapshot,
     getHomeStatusPillStyle,
-    getMoneyIntelligenceSummary,
     getStatementCoverageSummary,
     getSubscriptionSummary,
     getTopCategories,
-    getTransferSummary,
     hasMatchingDebt,
     hasMatchingInvestment,
   } = helpers;
@@ -40,7 +38,6 @@ export default function HomePage({
   const subscriptionSummary = useMemo(() => getSubscriptionSummary(transactions), [getSubscriptionSummary, transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [getTopCategories, transactions]);
   const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
-  const transferSummary = useMemo(() => getTransferSummary(transactions), [getTransferSummary, transactions]);
   const visibleCash = useMemo(() => getVisibleCash(accounts), [accounts]);
   const fixedCommitments = useMemo(() => estimateMonthlyFixedCommitments(transactions, subscriptionSummary), [transactions, subscriptionSummary]);
   const confidenceCheckCount = useMemo(() => buildRecurringMajorPaymentCandidates(transactions, transactionRules).length, [transactions, transactionRules]);
@@ -51,36 +48,29 @@ export default function HomePage({
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const unlinkedInvestmentSignals = investmentSignals.filter((signal) => !hasMatchingInvestment(signal, investments));
   const recentTransactions = transactions.slice(0, 4);
-
-  const intelligenceSummary = getMoneyIntelligenceSummary({
-    transactions,
-    accounts,
-    debts,
-    investments,
-    dataFreshness,
-    statementCoverage,
-    subscriptionSummary,
-    recurringSummary: { count: fixedCommitments.count, total: fixedCommitments.total },
-    bankFeedReadiness,
-  });
   const status = getHomeStatus({ dataFreshness, monthSnapshot, statementCoverage, visibleCash, safeToSpend, hasConfidenceChecks });
 
   const headlineValue = visibleCash.hasBalance
     ? formatCurrency(safeToSpend)
     : `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net || totals.net || 0))}`;
+  const headlineLabel = visibleCash.hasBalance ? "Estimated spending room" : monthSnapshot.monthName || "Month movement";
   const headlineSubcopy = visibleCash.hasBalance
-    ? `Estimated safe after protecting about ${formatCurrency(fixedCommitments.total)} of bills/subscriptions.`
+    ? `Current balance minus ${fixedCommitments.timeframeLabel.toLowerCase()} bills/subscriptions found by Money Hub. ${fixedCommitments.includesRent ? "This includes rent where tagged." : "Rent is only included if it is tagged or detected as a bill."}`
     : dataFreshness.hasData
-      ? `Historical movement for ${monthSnapshot.monthName}. This is not current cash.`
+      ? `This is historical money in minus money out for ${monthSnapshot.monthName}. It is not cash you have today.`
       : "Upload a statement to get your first useful money read.";
 
   const mainCards = [
     {
       label: "Main read",
-      headline: visibleCash.hasBalance ? `${formatCurrency(safeToSpend)} looks safe to spend` : dataFreshness.hasData ? `${monthSnapshot.monthName} is ${monthSnapshot.net >= 0 ? "ahead" : "behind"}` : "No statement data yet",
-      body: visibleCash.hasBalance ? `Visible balance ${formatCurrency(visibleCash.total)} minus protected payments ${formatCurrency(fixedCommitments.total)}. Treat estimates carefully until live feeds exist.` : dataFreshness.hasData ? `${formatCurrency(monthSnapshot.income)} came in and ${formatCurrency(monthSnapshot.spending)} went out. This is history, not cash in your account today.` : "Start with one statement. Three months makes bills, subscriptions and AI much sharper.",
+      headline: visibleCash.hasBalance ? `${formatCurrency(safeToSpend)} estimated spending room` : dataFreshness.hasData ? `${monthSnapshot.monthName} is ${monthSnapshot.net >= 0 ? "ahead" : "behind"} on paper` : "No statement data yet",
+      body: visibleCash.hasBalance
+        ? `This uses visible balance ${formatCurrency(visibleCash.total)} minus ${formatCurrency(fixedCommitments.total)} of ${fixedCommitments.timeframeLabel.toLowerCase()} protected payments. Treat it as a guide until live feeds are connected.`
+        : dataFreshness.hasData
+          ? `${formatCurrency(monthSnapshot.income)} came in and ${formatCurrency(monthSnapshot.spending)} went out. This explains history, not your current bank balance.`
+          : "Start with one statement. Three months makes bills, subscriptions and AI much sharper.",
       ctaLabel: "Ask AI why",
-      onClick: () => onGoToCoach(`Explain my Home page money read in plain English. Visible cash: ${visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "not available"}. Protected payments: ${formatCurrency(fixedCommitments.total)}. Safe-to-spend estimate: ${safeToSpend == null ? "not available" : formatCurrency(safeToSpend)}. This month income: ${formatCurrency(monthSnapshot.income)}. This month spending: ${formatCurrency(monthSnapshot.spending)}. Month net: ${formatCurrency(monthSnapshot.net)}. Do not confuse historical net with current cash.`, { autoSend: true }),
+      onClick: () => onGoToCoach(`Explain my Home page money read in plain English. Current balance available: ${visibleCash.hasBalance ? "yes" : "no"}. Visible balance: ${visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "not available"}. Protected payments: ${formatCurrency(fixedCommitments.total)} for ${fixedCommitments.timeframeLabel}. Includes rent: ${fixedCommitments.includesRent ? "yes" : "no"}. Spending room estimate: ${safeToSpend == null ? "not available" : formatCurrency(safeToSpend)}. This month income: ${formatCurrency(monthSnapshot.income)}. This month spending: ${formatCurrency(monthSnapshot.spending)}. Month net: ${formatCurrency(monthSnapshot.net)}. Do not confuse historical net with current cash.`, { autoSend: true }),
     },
     {
       label: "Confidence",
@@ -127,16 +117,15 @@ export default function HomePage({
     <>
       <section style={styles.balanceCard}>
         <div style={styles.balanceTopRow}>
-          <p style={styles.smallWhite}>{visibleCash.hasBalance ? "Safe money" : monthSnapshot.monthName || "Today"}</p>
+          <p style={styles.smallWhite}>{headlineLabel}</p>
           <button type="button" style={getHomeStatusPillStyle(status.tone)} onClick={() => onGoToCoach(`Explain this Home status: ${status.label}. ${status.headline}. ${status.body}`, { autoSend: true })}>{status.label}</button>
         </div>
         <h1 style={getBigMoneyStyle(screenWidth)}>{headlineValue}</h1>
         <p style={styles.balanceSubcopy}>{headlineSubcopy}</p>
-        <div style={styles.balancePills}>
+        <div style={getHeroPillsStyle()}>
           <StatPill label="History" value={statementCoverage.monthCountLabel || "None"} styles={styles} />
-          <StatPill label="Bills found" value={`${fixedCommitments.count}`} styles={styles} />
-          <StatPill label="Checks waiting" value={`${confidenceCheckCount}`} styles={styles} />
-          <StatPill label="AI score" value={`${intelligenceSummary.score || 0}/100`} styles={styles} />
+          <StatPill label="Protected" value={`${fixedCommitments.count} payments`} styles={styles} />
+          <StatPill label="Checks" value={`${confidenceCheckCount} waiting`} styles={styles} />
         </div>
       </section>
 
@@ -144,11 +133,12 @@ export default function HomePage({
         <div style={styles.compactInsightGrid}>{mainCards.map((card) => <InsightCard key={card.label} {...card} styles={styles} />)}</div>
       </Section>
 
-      <Section title="Safe To Spend" styles={styles}>
-        <p style={styles.sectionIntro}>Conservative by design. Money Hub should protect bills before calling anything spare.</p>
-        <Row name="Current balance" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "Not connected yet"} styles={styles} />
-        <Row name="Bills/subs protected" value={fixedCommitments.count ? formatCurrency(fixedCommitments.total) : "None detected yet"} styles={styles} />
-        <Row name="Safe after bills" value={safeToSpend == null ? "Needs current balance" : formatCurrency(safeToSpend)} styles={styles} />
+      <Section title="Spending Room" styles={styles}>
+        <p style={styles.sectionIntro}>This is conservative. Bills and subscriptions are protected before anything is shown as spare.</p>
+        <Row name="Current account balance" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "Not connected yet"} styles={styles} />
+        <Row name={fixedCommitments.timeframeLabel} value={fixedCommitments.count ? `${formatCurrency(fixedCommitments.total)} (${fixedCommitments.count} payments)` : "None detected yet"} styles={styles} />
+        <Row name="Includes rent?" value={fixedCommitments.includesRent ? "Yes, where tagged/detected" : "Not detected yet"} styles={styles} />
+        <Row name="Spending room" value={safeToSpend == null ? "Needs current balance" : formatCurrency(safeToSpend)} styles={styles} />
         <Row name="Data freshness" value={dataFreshness.hasData ? dataFreshness.latestMonthLabel : "No statement yet"} styles={styles} />
       </Section>
 
@@ -180,23 +170,29 @@ function getVisibleCash(accounts) {
 
 function estimateMonthlyFixedCommitments(transactions, subscriptionSummary) {
   const currentMonth = new Date();
+  const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`;
   const fixed = (transactions || []).filter((transaction) => {
     if (isInternalTransferLike(transaction)) return false;
     if (Number(transaction.amount || 0) >= 0) return false;
     return transaction.is_bill || transaction.is_subscription || transaction._smart_is_bill || transaction._smart_is_subscription;
   });
-  const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`;
   const monthFixed = fixed.filter((transaction) => String(transaction.transaction_date || "").startsWith(monthKey));
   const source = monthFixed.length ? monthFixed : fixed.slice(0, 20);
   const total = source.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
   const subscriptionTotal = Number(subscriptionSummary?.total || 0);
-  return { count: source.length || subscriptionSummary?.count || 0, total: Math.max(total, subscriptionTotal) };
+  const includesRent = source.some((transaction) => /rent|landlord|letting/i.test(String(transaction.category || transaction._smart_category || transaction.description || "")));
+  return {
+    count: source.length || subscriptionSummary?.count || 0,
+    total: Math.max(total, subscriptionTotal),
+    includesRent,
+    timeframeLabel: monthFixed.length ? "Protected this month" : "Protected from recent history",
+  };
 }
 
 function getHomeStatus({ dataFreshness, monthSnapshot, statementCoverage, visibleCash, safeToSpend, hasConfidenceChecks }) {
   if (!dataFreshness.hasData) return { label: "Set up", tone: "neutral", headline: "Upload a statement first", body: "Home becomes useful once Money Hub can see real transactions.", action: "upload", actionLabel: "Upload" };
   if (dataFreshness.needsUpload) return { label: "Stale", tone: "warn", headline: `Latest data is ${dataFreshness.latestMonthLabel || "not current"}`, body: "The read is useful history, but not a fresh today view.", action: "upload", actionLabel: "Refresh data" };
-  if (visibleCash.hasBalance && safeToSpend <= 0) return { label: "Tight", tone: "bad", headline: "Do not spend freely", body: hasConfidenceChecks ? "Visible cash is already protected by upcoming commitments. Confirm the checks before relying on the number." : "Visible cash is already protected by upcoming commitments. No confidence checks are waiting.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Check bills" : "Open Calendar" };
+  if (visibleCash.hasBalance && safeToSpend <= 0) return { label: "Tight", tone: "bad", headline: "No clear spending room", body: hasConfidenceChecks ? "Current balance is already covered by protected payments. Confirm the checks before relying on the number." : "Current balance is already covered by protected payments. No confidence checks are waiting.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Check bills" : "Open Calendar" };
   if (monthSnapshot.net < 0) return { label: "Watch", tone: "warn", headline: `${monthSnapshot.monthName} is behind`, body: hasConfidenceChecks ? "Money out is ahead of money in. Some checks may improve the read." : "Money out is ahead of money in. No checks are waiting, so look at Calendar or spending next.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Check categories" : "Open Calendar" };
   if ((statementCoverage.monthCount || 0) < 3) return { label: "Learning", tone: "neutral", headline: "Good start, still learning", body: "Three months of data makes the app much more confident.", action: "upload", actionLabel: "Add history" };
   return { label: "Ready", tone: "good", headline: hasConfidenceChecks ? "A few checks can improve accuracy" : "No urgent checks waiting", body: hasConfidenceChecks ? "Answer the real checks waiting, then the rest of the app gets smarter." : "The app has a decent base and nothing is currently asking for confirmation.", action: hasConfidenceChecks ? "checks" : "calendar", actionLabel: hasConfidenceChecks ? "Improve accuracy" : "Review Calendar" };
@@ -239,8 +235,17 @@ function getBigMoneyStyle(screenWidth) {
   return { fontSize: screenWidth <= 390 ? 42 : screenWidth <= 520 ? 48 : 58, lineHeight: 0.95, margin: "6px 0 8px", letterSpacing: "-0.06em" };
 }
 
+function getHeroPillsStyle() {
+  return { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 12 };
+}
+
 function StatPill({ label, value, styles }) {
-  return <div style={styles.balancePill}><span>{label}</span><strong>{value}</strong></div>;
+  return (
+    <div style={{ ...styles.balancePill, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, whiteSpace: "normal" }}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
 }
 
 function TransactionRow({ name, meta, amount, styles }) {
