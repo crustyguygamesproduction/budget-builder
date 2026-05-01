@@ -1,7 +1,9 @@
 import { getFriendlyTransactionName, getRealWorldMerchant } from "./merchantIntelligence";
 import { formatCurrency, isInternalTransferLike, normalizeText, parseAppDate } from "./finance";
 
-const STRONG_BILL_CATEGORIES = ["rent", "mortgage", "council tax", "energy", "water", "broadband", "phone", "insurance", "debt / credit", "childcare", "subscription", "major bill"];
+const FIXED_BILL_CATEGORIES = ["rent", "mortgage", "council tax", "energy", "water", "broadband", "phone", "insurance", "debt / credit", "childcare", "subscription"];
+const EVERYDAY_SPEND_WORDS = /\b(chickie|chicken|takeaway|restaurant|mcdonald|kfc|burger king|subway|greggs|deliveroo|uber eats|just eat|cafe|coffee|bar|pub|tesco|aldi|lidl|asda|sainsbury|morrisons|one stop|premier|shop|store|vinted|ebay|amazon marketplace|fuel|petrol|parking|cash withdrawal|atm|gaming|lvl up|xsolla)\b/;
+const FIXED_BILL_WORDS = /\b(rent|mortgage|landlord|letting|council tax|energy|electric|electricity|gas|water|broadband|internet|wifi|phone bill|mobile bill|sim only|airtime|contract|insurance|tv licence|loan repayment|credit card|finance agreement|childcare|nursery|subscription|direct debit|standing order)\b/;
 
 export function buildStrongBillFallbackEvents(transactions, existingEvents = []) {
   const latestMonth = getLatestTransactionMonth(transactions);
@@ -9,7 +11,7 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
   const groups = new Map();
 
   (transactions || []).forEach((transaction) => {
-    if (!isStrongBillTransaction(transaction)) return;
+    if (!isFixedCommitmentTransaction(transaction)) return;
     if (!String(transaction.transaction_date || "").startsWith(latestMonth)) return;
 
     const merchant = getRealWorldMerchant(transaction);
@@ -38,8 +40,7 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
 }
 
 export function mergeRecurringEvents(events) {
-  return (events || []).reduce((merged, event) => {
-    if (!event) return merged;
+  return (events || []).filter(isAllowedFutureBillEvent).reduce((merged, event) => {
     const duplicateIndex = merged.findIndex((existing) => {
       const sameKey = existing.key === event.key;
       const sameName = normalizeText(existing.title || "") === normalizeText(event.title || "");
@@ -52,7 +53,17 @@ export function mergeRecurringEvents(events) {
   }, []);
 }
 
-function isStrongBillTransaction(transaction) {
+function isAllowedFutureBillEvent(event) {
+  if (!event) return false;
+  const text = normalizeText(`${event.title || ""} ${event.kind || ""} ${event.kindLabel || ""}`);
+  if (EVERYDAY_SPEND_WORDS.test(text)) return false;
+  if (/work|pass.?through|investment|trading|proovia|mynextbike/.test(text)) return false;
+  if (event.kind === "subscription") return true;
+  if (/rent|mortgage|council tax|energy|water|broadband|phone|mobile|insurance|debt|credit|loan|finance|childcare|bill around/.test(text)) return true;
+  return false;
+}
+
+function isFixedCommitmentTransaction(transaction) {
   if (!transaction || isInternalTransferLike(transaction)) return false;
   if (transaction._smart_internal_transfer || transaction.is_internal_transfer) return false;
   if (Number(transaction.amount || 0) >= 0) return false;
@@ -62,11 +73,14 @@ function isStrongBillTransaction(transaction) {
 
   const category = normalizeText(transaction._smart_category || transaction.category || "");
   const text = normalizeText(`${transaction.description || ""} ${transaction.merchant || ""} ${category}`);
-  const strongCategory = STRONG_BILL_CATEGORIES.some((item) => category.includes(item));
-  const userOrSmartBill = Boolean(transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription);
-  const knownBillMerchant = Boolean(merchant.bill || merchant.subscription);
-  const rentByText = /rent|landlord|letting|mortgage/.test(text);
-  return strongCategory || userOrSmartBill || knownBillMerchant || rentByText;
+  if (EVERYDAY_SPEND_WORDS.test(text)) return false;
+
+  const fixedCategory = FIXED_BILL_CATEGORIES.some((item) => category.includes(item));
+  const knownFixedMerchant = Boolean(merchant.bill || merchant.subscription);
+  const explicitBill = Boolean(transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription);
+  const fixedByText = FIXED_BILL_WORDS.test(text);
+
+  return fixedCategory || knownFixedMerchant || explicitBill || fixedByText;
 }
 
 function toFallbackEvent(group, existingEvents) {
@@ -81,7 +95,7 @@ function toFallbackEvent(group, existingEvents) {
     kind: group.kind || "bill",
     kindLabel: group.kind === "subscription" ? "Subscription" : "Bill",
     confidenceLabel: group.isRent || group.transactions.length >= 2 ? "medium" : "estimated",
-    estimateNote: group.isRent ? "Rent was added from bill-like payments in your latest statement, even if it was split into several payments." : "Added from a strong bill-like payment in your latest statement. Confirm it in Checks if this looks wrong.",
+    estimateNote: group.isRent ? "Rent was added from bill-like payments in your latest statement, even if it was split into several payments." : "Added from a fixed bill-like payment in your latest statement. Confirm it in Checks if this looks wrong.",
     sourceCount: group.transactions.length,
     sourceMonths: 1,
   };
