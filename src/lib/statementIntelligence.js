@@ -18,6 +18,7 @@ export function getStatementIntelligenceContext(transactions, query = "") {
     transaction.accounts?.name || transaction.account_name || transaction.account || "Unassigned account"
   );
   const personalPaymentGroups = buildPersonalPaymentGroups(transactions).slice(0, 40);
+  const passThroughAnalysis = buildPassThroughAnalysis(settled);
   const recurringOutgoings = merchantGroups
     .filter((group) => group.count >= 2)
     .sort((a, b) => b.count - a.count || b.total - a.total)
@@ -54,6 +55,7 @@ export function getStatementIntelligenceContext(transactions, query = "") {
       total_transactions: transactions.length,
       settled_transaction_count: settled.length,
       transfer_transaction_count: transfers.length,
+      pass_through_analysis: passThroughAnalysis,
       category_totals: categoryGroups.slice(0, 20),
       merchant_totals: merchantGroups.slice(0, 30),
       income_streams: incomeGroups.slice(0, 20),
@@ -205,6 +207,112 @@ function getPersonalPaymentLabel(description) {
 
   if (!tokens.length) return "Unlabelled personal transfer";
   return toTitleCase(tokens.slice(0, 6).join(" "));
+}
+
+function buildPassThroughAnalysis(transactions) {
+  const realTransactions = transactions.filter((transaction) => !isInternalTransferLike(transaction));
+  const income = realTransactions.filter((transaction) => Number(transaction.amount) > 0);
+  const spending = realTransactions.filter((transaction) => Number(transaction.amount) < 0);
+  const standardTotals = getTotals(realTransactions);
+
+  const explicitOut = spending.filter((transaction) => isKnownPassThroughOutgoing(transaction));
+  const matchingIncomePool = income.filter((transaction) => isLikelyPassThroughIncome(transaction));
+  const explicitPassThroughSpending = sumAbs(explicitOut);
+  const matchingIncomePoolTotal = sumSigned(matchingIncomePool);
+  const explicitPassThroughIncome = Math.min(matchingIncomePoolTotal, explicitPassThroughSpending);
+  const explicitAdjustedIncome = standardTotals.income - explicitPassThroughIncome;
+  const explicitAdjustedSpending = standardTotals.spending - explicitPassThroughSpending;
+
+  return {
+    note:
+      "Surplus views are deterministic app calculations. Known pass-through removes Proovia-like outgoings and only the matching amount of likely reimbursement income, rather than treating that income as spendable personal money.",
+    standard_view: {
+      income: roundMoney(standardTotals.income),
+      spending: roundMoney(standardTotals.spending),
+      net: roundMoney(standardTotals.net),
+    },
+    known_pass_through_view: {
+      excluded_spending: roundMoney(explicitPassThroughSpending),
+      excluded_matching_income: roundMoney(explicitPassThroughIncome),
+      adjusted_income: roundMoney(explicitAdjustedIncome),
+      adjusted_spending: roundMoney(explicitAdjustedSpending),
+      adjusted_net: roundMoney(explicitAdjustedIncome - explicitAdjustedSpending),
+      confidence: explicitPassThroughSpending > 0 ? "known_pattern" : "none_found",
+      explanation:
+        explicitPassThroughSpending > 0
+          ? "Proovia-like work pass-through detected. Excluded the outgoing spend and only the matching reimbursement-sized portion of likely work income. Rent, bills and normal lifestyle spending stay included."
+          : "No explicit Proovia-like pass-through found in the supplied transactions.",
+      example_outgoings: explicitOut.slice(0, 8).map(toCoachTransaction),
+      example_income_pool: matchingIncomePool.slice(0, 8).map(toCoachTransaction),
+    },
+    possible_pass_through_candidates: detectPassThroughCandidates(spending, income),
+    warning:
+      "Do not tell the user they are personally ahead just because pass-through income exists. If current balances are low, explain that net-over-period and current cash are different, and use adjusted_net as a historical flow only.",
+  };
+}
+
+function detectPassThroughCandidates(spending, income) {
+  const outgoingGroups = buildTransactionGroups(
+    spending.filter((transaction) => Math.abs(Number(transaction.amount || 0)) >= 50),
+    (transaction) => cleanEventTitle(transaction.description || "Outgoing")
+  );
+  const incomeGroups = buildTransactionGroups(
+    income.filter((transaction) => Number(transaction.amount || 0) >= 50),
+    (transaction) => cleanEventTitle(transaction.description || "Income")
+  );
+
+  return outgoingGroups
+    .filter((group) => group.count >= 2 && group.money_out >= 150 && !isKnownPassThroughLabel(group.label))
+    .map((group) => {
+      const bestIncomeMatch = incomeGroups.find((incomeGroup) => {
+        const smaller = Math.min(group.money_out, incomeGroup.money_in);
+        const larger = Math.max(group.money_out, incomeGroup.money_in);
+        return larger > 0 && smaller / larger >= 0.65;
+      });
+
+      if (!bestIncomeMatch) return null;
+
+      return {
+        outgoing_label: group.label,
+        outgoing_total: roundMoney(group.money_out),
+        outgoing_count: group.count,
+        possible_reimbursement_label: bestIncomeMatch.label,
+        possible_reimbursement_total: roundMoney(bestIncomeMatch.money_in),
+        confidence: "possible",
+        reason:
+          "Repeated larger outgoings have a similar-sized income stream. This may be work reimbursement/resale/pass-through, but needs user confirmation before excluding from personal surplus.",
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function isKnownPassThroughOutgoing(transaction) {
+  return /\bproovia\b|proovia\.delivery|proovia delivery/.test(normalizeText(transaction.description));
+}
+
+function isLikelyPassThroughIncome(transaction) {
+  const text = normalizeText(
+    [transaction.description, transaction.merchant, transaction.category, getMeaningfulCategory(transaction)].join(" ")
+  );
+
+  return /\bmynextbike\b|\bmy next bike\b|\bnextbike\b|\bproovia\b|reimburse|reimbursement|expenses?|repayment|refund/.test(text);
+}
+
+function isKnownPassThroughLabel(label) {
+  return /\bproovia\b|proovia\.delivery|proovia delivery/.test(normalizeText(label));
+}
+
+function sumAbs(transactions) {
+  return transactions.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+}
+
+function sumSigned(transactions) {
+  return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+}
+
+function roundMoney(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
 }
 
 function getTotals(transactions) {
