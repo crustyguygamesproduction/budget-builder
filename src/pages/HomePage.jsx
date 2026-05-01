@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { formatCurrency, getMeaningfulCategory, getTotals, isInternalTransferLike } from "../lib/finance";
 import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
-import { ActionCard, InsightCard, Row, Section } from "../components/ui";
+import { Row, Section } from "../components/ui";
 
 export default function HomePage({
   transactions,
@@ -40,6 +40,7 @@ export default function HomePage({
   const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
   const visibleCash = useMemo(() => getVisibleCash(accounts), [accounts]);
   const billMoney = useMemo(() => estimateBillMoney(transactions, subscriptionSummary), [transactions, subscriptionSummary]);
+  const regularPayments = useMemo(() => estimateRegularMonthlyPayments(subscriptionSummary, statementCoverage), [subscriptionSummary, statementCoverage]);
   const confidenceCheckCount = useMemo(() => buildRecurringMajorPaymentCandidates(transactions, transactionRules).length, [transactions, transactionRules]);
   const hasConfidenceChecks = confidenceCheckCount > 0;
   const moneyLeft = visibleCash.hasBalance ? Math.max(visibleCash.total - billMoney.total, 0) : null;
@@ -49,50 +50,8 @@ export default function HomePage({
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const unlinkedInvestmentSignals = investmentSignals.filter((signal) => !hasMatchingInvestment(signal, investments));
   const recentTransactions = transactions.slice(0, 4);
-  const status = getHomeStatus({ dataFreshness, statementCoverage, hasConfidenceChecks, billMoney, pressure });
-
-  const mainCards = [
-    {
-      label: pressure.isBroke ? "Right now" : "Money warning",
-      headline: pressure.mainHeadline,
-      body: pressure.mainBody,
-      ctaLabel: pressure.primaryActionLabel,
-      onClick: pressure.primaryAction === "upload" ? () => onNavigate("upload") : pressure.primaryAction === "calendar" ? () => onNavigate("calendar") : () => onGoToCoach(`I have £0 or almost £0 showing and bills may be coming. Give me a practical 7-day plan. Be direct, simple and specific. Tell me what to stop spending on today, what bills to check, what income to look for, and what to do if a bill is due before payday. Do not just tell me to upload a statement.`, { autoSend: true }),
-    },
-    {
-      label: "How reliable is this?",
-      headline: status.headline,
-      body: status.body,
-      ctaLabel: status.actionLabel,
-      onClick: status.action === "upload" ? () => onNavigate("upload") : status.action === "checks" ? () => onNavigate("confidence") : () => onNavigate("calendar"),
-    },
-    {
-      label: topCategory ? "Where money went" : "Spending pattern",
-      headline: topCategory ? `${topCategory.category}: ${formatCurrency(topCategory.total)}` : "No spending pattern yet",
-      body: topCategory ? "This is the biggest spending area in your uploaded data. If you are broke, this is the first place to look for cuts." : "Add your latest bank statement and Money Hub will show where your money is going.",
-      ctaLabel: topCategory ? "Ask AI what to cut" : "Add statement",
-      onClick: topCategory ? () => onGoToCoach(`Look at my ${topCategory.category} spending and tell me what is realistic to cut this week. Be practical and human.`, { autoSend: true }) : () => onNavigate("upload"),
-    },
-  ];
-
-  const nextActions = buildNextActions({
-    dataFreshness,
-    statementCoverage,
-    billMoney,
-    subscriptionSummary,
-    unlinkedDebtSignals,
-    unlinkedInvestmentSignals,
-    debts,
-    investments,
-    primaryGoal,
-    subscriptionStatus,
-    bankFeedReadiness,
-    hasConfidenceChecks,
-    confidenceCheckCount,
-    pressure,
-    onNavigate,
-    onGoToCoach,
-  });
+  const planSteps = buildPlanSteps({ pressure, billMoney, dataFreshness, hasConfidenceChecks, confidenceCheckCount, topCategory, onNavigate, onGoToCoach });
+  const optionalActions = buildOptionalActions({ unlinkedDebtSignals, unlinkedInvestmentSignals, debts, investments, primaryGoal, subscriptionStatus, bankFeedReadiness, onNavigate });
 
   const aiPrompts = [
     pressure.isBroke ? "Make me a 7-day broke plan." : "What is the one thing I should fix this week?",
@@ -117,45 +76,58 @@ export default function HomePage({
         </div>
       </section>
 
-      <Section title="What You Need To Know" styles={styles}>
-        <div style={styles.compactInsightGrid}>{mainCards.map((card) => <InsightCard key={card.label} {...card} styles={styles} />)}</div>
+      <Section title={pressure.isBroke ? "Your Plan Right Now" : "Your Next Move"} styles={styles}>
+        <p style={styles.sectionIntro}>{pressure.isBroke ? "Do these in this order. The app should help you act, not just describe the problem." : "One clear plan first. Extra detail is tucked away below."}</p>
+        <div style={getPlanListStyle()}>
+          {planSteps.map((step, index) => (
+            <button key={step.title} type="button" onClick={step.onClick} style={getPlanStepStyle(index === 0)}>
+              <span style={getPlanNumberStyle(index === 0)}>{index + 1}</span>
+              <span style={{ flex: 1 }}>
+                <strong>{step.title}</strong>
+                <span style={getPlanBodyStyle()}>{step.body}</span>
+              </span>
+              <span style={getPlanCtaStyle()}>{step.cta}</span>
+            </button>
+          ))}
+        </div>
       </Section>
 
-      <Section title={pressure.isBroke ? "What To Do First" : "Why It Says That"} styles={styles}>
-        {pressure.isBroke ? (
-          <>
-            <p style={styles.sectionIntro}>This is the simple plan when the app shows no money and bills have been found.</p>
-            <Row name="1. Spend" value="Do not spend from this account today" styles={styles} />
-            <Row name="2. Food/travel" value="Use what you already have, walk/cycle/bus if possible" styles={styles} />
-            <Row name="3. Bills" value="Open Calendar and check what is due next" styles={styles} />
-            <Row name="4. Accuracy" value="Add your latest bank statement after the urgent checks" styles={styles} />
-          </>
+      <CollapsiblePanel title="Why Money Hub says this" summary={pressure.shortReason} defaultOpen={false} styles={styles}>
+        <p style={styles.sectionIntro}>This is the plain breakdown behind the warning. It is cautious on purpose.</p>
+        <Row name="Money showing now" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "No current balance connected"} styles={styles} />
+        <Row name={billMoney.timeframeLabel} value={billMoney.count ? `${formatCurrency(billMoney.total)} across ${billMoney.count} payments` : "No bills found yet"} styles={styles} />
+        <Row name="Rent included?" value={billMoney.includesRent ? "Yes, where Money Hub can see it" : "Not found yet"} styles={styles} />
+        <Row name="Left after bills" value={moneyLeft == null ? "Needs your latest balance" : formatCurrency(moneyLeft)} styles={styles} />
+        <Row name="Latest statement" value={dataFreshness.hasData ? dataFreshness.latestMonthLabel : "No statement yet"} styles={styles} />
+      </CollapsiblePanel>
+
+      <CollapsiblePanel title="Regular payments found" summary={regularPayments.summary} defaultOpen={false} styles={styles} right={<button style={styles.ghostBtn} onClick={(event) => { event.preventDefault(); onNavigate("calendar"); }}>Calendar</button>}>
+        <p style={styles.sectionIntro}>These are monthly estimates from your uploaded history, not the all-time total across every statement.</p>
+        {regularPayments.items.length > 0 ? (
+          regularPayments.items.slice(0, 5).map((item) => (
+            <Row key={item.name} name={item.name} value={`${formatCurrency(item.monthlyEstimate)} / month · seen ${item.count} time${item.count === 1 ? "" : "s"}`} styles={styles} />
+          ))
         ) : (
-          <>
-            <p style={styles.sectionIntro}>Simple breakdown of the warning above. This is deliberately cautious.</p>
-            <Row name="Money showing now" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "No current balance connected"} styles={styles} />
-            <Row name={billMoney.timeframeLabel} value={billMoney.count ? `${formatCurrency(billMoney.total)} across ${billMoney.count} payments` : "No bills found yet"} styles={styles} />
-            <Row name="Rent included?" value={billMoney.includesRent ? "Yes, where Money Hub can see it" : "Not found yet"} styles={styles} />
-            <Row name="Left after bills" value={moneyLeft == null ? "Needs your latest balance" : formatCurrency(moneyLeft)} styles={styles} />
-            <Row name="Latest statement" value={dataFreshness.hasData ? dataFreshness.latestMonthLabel : "No statement yet"} styles={styles} />
-          </>
+          <p style={styles.emptyText}>No regular payments found yet. Add more history or check Calendar.</p>
         )}
-      </Section>
+      </CollapsiblePanel>
 
-      <Section title="Next Best Moves" styles={styles}>
-        <div style={styles.compactInsightGrid}>{nextActions.slice(0, 3).map((card) => <ActionCard key={card.label} {...card} styles={styles} />)}</div>
-      </Section>
-
-      {subscriptionSummary.items.length > 0 ? (
-        <Section title="Regular Payments Found" styles={styles} right={<button style={styles.ghostBtn} onClick={() => onNavigate("calendar")}>Calendar</button>}>
-          <p style={styles.sectionIntro}>These are repeated payments from your uploaded bank history. Use Calendar to check what may be coming next.</p>
-          {subscriptionSummary.items.slice(0, 3).map((item) => <Row key={item.name} name={item.name} value={`${formatCurrency(item.total)} · ${item.count} time${item.count === 1 ? "" : "s"}`} styles={styles} />)}
-        </Section>
-      ) : null}
-
-      <Section title="Latest Transactions Uploaded" styles={styles}>
+      <CollapsiblePanel title="Latest transactions uploaded" summary={recentTransactions.length ? `${recentTransactions.length} latest items shown` : "No transactions yet"} defaultOpen={false} styles={styles}>
         {recentTransactions.length === 0 ? <p style={styles.emptyText}>Add your latest bank statement to unlock your Home page.</p> : recentTransactions.map((transaction) => <TransactionRow key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`} name={transaction.description || "Transaction"} meta={`${transaction.transaction_date || "No date"} · ${getMeaningfulCategory(transaction)}`} amount={Number(transaction.amount || 0)} styles={styles} />)}
-      </Section>
+      </CollapsiblePanel>
+
+      {optionalActions.length > 0 ? (
+        <CollapsiblePanel title="Other useful things" summary="Goals, debts, investments and settings" defaultOpen={false} styles={styles}>
+          <div style={getSmallActionGridStyle()}>
+            {optionalActions.map((action) => (
+              <button key={action.title} type="button" onClick={action.onClick} style={getSmallActionStyle()}>
+                <strong>{action.title}</strong>
+                <span>{action.body}</span>
+              </button>
+            ))}
+          </div>
+        </CollapsiblePanel>
+      ) : null}
 
       <Section title="Ask AI Next" styles={styles}>
         <div style={styles.actionChipWrap}>{aiPrompts.map((prompt) => <button key={prompt} style={styles.actionChip} onClick={() => onGoToCoach(prompt)}>{prompt}</button>)}</div>
@@ -190,6 +162,20 @@ function estimateBillMoney(transactions, subscriptionSummary) {
   };
 }
 
+function estimateRegularMonthlyPayments(subscriptionSummary, statementCoverage) {
+  const monthCount = Math.max(Number(statementCoverage?.monthCount || 0), 1);
+  const items = (subscriptionSummary?.items || []).map((item) => ({
+    ...item,
+    monthlyEstimate: Number(item.total || 0) / monthCount,
+  })).sort((a, b) => b.monthlyEstimate - a.monthlyEstimate);
+  const monthlyTotal = items.reduce((sum, item) => sum + item.monthlyEstimate, 0);
+  return {
+    items,
+    monthlyTotal,
+    summary: items.length ? `About ${formatCurrency(monthlyTotal)} / month from ${items.length} regular payment${items.length === 1 ? "" : "s"}` : "No regular payments found yet",
+  };
+}
+
 function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) {
   const hasBills = billMoney.total > 0;
   const balance = visibleCash.total;
@@ -205,7 +191,8 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       heroAmount: "£0.00",
       heroCopy: `${formatCurrency(billMoney.total)} of bills/subscriptions have been found from your uploaded history, but your visible balance is £0.00. Do not spend from this account today. First check what bill is due next, then ask AI for a 7-day plan.`,
       mainHeadline: "You look broke right now",
-      mainBody: `The plan is: stop spending from this account today, check upcoming bills, avoid non-essentials like takeaways, taxis and gaming, then add your latest statement so the numbers are fresh.`,
+      mainBody: "Stop spending from this account today, check upcoming bills, avoid non-essentials like takeaways, taxis and gaming, then update your bank history when the urgent checks are done.",
+      shortReason: `£0 showing and ${formatCurrency(billMoney.total)} of bills found`,
       primaryAction: "coach",
       primaryActionLabel: "Get 7-day plan",
     };
@@ -221,6 +208,7 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       heroCopy: `Your visible balance is ${formatCurrency(balance)}, but Money Hub has found ${formatCurrency(billMoney.total)} that may be needed for bills. Keep spending locked down until this is checked.`,
       mainHeadline: "Your balance looks short",
       mainBody: "Your bills and subscriptions look bigger than the money currently showing. Check Calendar before spending.",
+      shortReason: `${formatCurrency(balance)} showing versus ${formatCurrency(billMoney.total)} bills found`,
       primaryAction: "calendar",
       primaryActionLabel: "Check Calendar",
     };
@@ -236,6 +224,7 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       heroCopy: "Money Hub has uploaded history, but no current balance. It can explain patterns, but it cannot honestly say what you can spend today.",
       mainHeadline: "This is not today’s balance",
       mainBody: "Check your real bank balance first. Then add your latest statement so Home can guide you properly.",
+      shortReason: "No current balance is connected",
       primaryAction: "upload",
       primaryActionLabel: "Add latest statement",
     };
@@ -251,6 +240,7 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       heroCopy: "Add your first bank statement so Money Hub can find your bills, spending leaks and what needs attention.",
       mainHeadline: "Add your first statement",
       mainBody: "One statement gives a first read. Three months makes bills, Calendar and AI much more useful.",
+      shortReason: "No bank history uploaded yet",
       primaryAction: "upload",
       primaryActionLabel: "Add statement",
     };
@@ -265,64 +255,65 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
     heroCopy: `Current visible balance minus ${billMoney.timeframeLabel.toLowerCase()} found by Money Hub. ${billMoney.includesRent ? "Rent is included where Money Hub can see it." : "Rent is only included if Money Hub can see it."}`,
     mainHeadline: moneyLeft <= 0 ? "No clear spare money" : `${formatCurrency(moneyLeft)} left after bills`,
     mainBody: moneyLeft <= 0 ? "Your visible balance is already used up by bills Money Hub can see. Spend carefully until the data is fresh." : "This is a cautious estimate, not permission to spend everything.",
+    shortReason: `${formatCurrency(moneyLeft)} left after bills found`,
     primaryAction: "coach",
     primaryActionLabel: "Ask AI why",
   };
 }
 
-function getHomeStatus({ dataFreshness, statementCoverage, hasConfidenceChecks, billMoney, pressure }) {
-  if (!dataFreshness.hasData) return { label: "Set up", tone: "neutral", headline: "Add your first bank statement", body: "Home becomes useful once Money Hub can see your real transactions.", action: "upload", actionLabel: "Add statement" };
-  if (dataFreshness.needsUpload && !pressure.isBroke) return { label: "Stale", tone: "warn", headline: "Add your latest bank statement", body: `Your newest uploaded data is ${dataFreshness.latestMonthLabel || "not current"}. Use the plan first, then update the data.`, action: "upload", actionLabel: "Add latest statement" };
-  if (pressure.isBroke) return { label: "Urgent", tone: "bad", headline: "Use a survival plan first", body: "£0 showing with bills found means the app should tell you what to do today, not only ask for more data.", action: "calendar", actionLabel: "Check bills" };
-  if (hasConfidenceChecks) return { label: "Check", tone: "warn", headline: "Some payments need checking", body: "Answer the checks that are actually waiting so bills, transfers and AI advice stay accurate.", action: "checks", actionLabel: "Open Checks" };
-  if ((statementCoverage.monthCount || 0) < 3) return { label: "Learning", tone: "neutral", headline: "Add more history when you can", body: "Three months of data makes bills, Calendar and AI much more confident.", action: "upload", actionLabel: "Add history" };
-  return { label: "Ready", tone: "good", headline: billMoney.count ? "Bills are being counted" : "No bills found yet", body: billMoney.count ? "Money Hub is using your regular payments to make the Home warning more realistic." : "Calendar may still improve as you add more history.", action: "calendar", actionLabel: "Review Calendar" };
-}
-
-function buildNextActions({ dataFreshness, statementCoverage, billMoney, subscriptionSummary, unlinkedDebtSignals, unlinkedInvestmentSignals, debts, investments, primaryGoal, subscriptionStatus, bankFeedReadiness, hasConfidenceChecks, confidenceCheckCount, pressure, onNavigate, onGoToCoach }) {
+function buildPlanSteps({ pressure, billMoney, dataFreshness, hasConfidenceChecks, confidenceCheckCount, topCategory, onNavigate, onGoToCoach }) {
   if (pressure.isBroke) {
     return [
-      { label: "Step 1", headline: "Freeze spending today", body: "Do not spend from this account unless it is genuinely essential. No takeaways, taxis, gaming, random shops or top-ups until you know what is due.", actionLabel: "Get 7-day plan", onClick: () => onGoToCoach("I have no money showing and bills coming. Give me a practical 7-day plan. Be direct and simple.", { autoSend: true }) },
-      { label: "Step 2", headline: "Check the next bill", body: `${billMoney.count || "Some"} bill payment${billMoney.count === 1 ? "" : "s"} found from your bank history. Open Calendar and see what might hit next.`, actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") },
-      { label: "Step 3", headline: "Make the numbers fresh", body: dataFreshness.needsUpload ? "After the urgent checks, add your latest bank statement so the plan is based on today’s reality." : "Your data is fairly fresh, but adding the latest statement still makes the warning sharper.", actionLabel: "Add statement", onClick: () => onNavigate("upload") },
+      { title: "Freeze spending today", body: "Only spend if it is genuinely essential. No takeaways, taxis, gaming, random shops or top-ups.", cta: "Plan", onClick: () => onGoToCoach("I have no money showing and bills coming. Give me a practical 7-day plan. Be direct and simple.", { autoSend: true }) },
+      { title: "Check the next bill", body: `${billMoney.count || "Some"} bill payment${billMoney.count === 1 ? "" : "s"} found. See what might hit next.`, cta: "Calendar", onClick: () => onNavigate("calendar") },
+      { title: dataFreshness.needsUpload ? "Then add your latest statement" : "Keep the numbers fresh", body: dataFreshness.needsUpload ? "Do this after the urgent check, so the plan is based on today’s reality." : "Your data is fairly fresh, but the latest statement still helps.", cta: "Upload", onClick: () => onNavigate("upload") },
     ];
   }
 
-  const actions = [];
-
-  if (!dataFreshness.hasData || dataFreshness.needsUpload) {
-    actions.push({ label: "Step 1", headline: "Add your latest bank statement", body: "This makes the warning trustworthy. Without fresh data, the app can only work from older bank history.", actionLabel: "Go to Upload", onClick: () => onNavigate("upload") });
-  } else {
-    actions.push({ label: "Step 1", headline: "Check your upcoming bills", body: `${billMoney.count || "No"} bill payment${billMoney.count === 1 ? "" : "s"} found. Check Calendar so nothing surprises you.`, actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") });
-  }
+  const steps = [
+    { title: "Check your upcoming bills", body: `${billMoney.count || "No"} bill payment${billMoney.count === 1 ? "" : "s"} found. Check Calendar so nothing surprises you.`, cta: "Calendar", onClick: () => onNavigate("calendar") },
+  ];
 
   if (hasConfidenceChecks) {
-    actions.push({ label: "Step 2", headline: `${confidenceCheckCount} payment check${confidenceCheckCount === 1 ? "" : "s"} waiting`, body: "Only answer these when the app genuinely needs help. This keeps totals and AI advice from going weird.", actionLabel: "Open Checks", onClick: () => onNavigate("confidence") });
+    steps.push({ title: `${confidenceCheckCount} payment check${confidenceCheckCount === 1 ? "" : "s"} waiting`, body: "Answer only the checks that are actually waiting.", cta: "Checks", onClick: () => onNavigate("confidence") });
+  } else if (topCategory) {
+    steps.push({ title: `Look at ${topCategory.category}`, body: `${formatCurrency(topCategory.total)} is the loudest spending area in the uploaded data.`, cta: "Ask AI", onClick: () => onGoToCoach(`Look at my ${topCategory.category} spending and tell me what is realistic to cut this week.`, { autoSend: true }) });
   } else {
-    actions.push({ label: "Step 2", headline: "No checks waiting", body: "There is nothing to answer in Checks right now. Do not waste time there.", actionLabel: "Open Calendar", onClick: () => onNavigate("calendar") });
+    steps.push({ title: dataFreshness.needsUpload ? "Add your latest statement" : "Ask AI what to fix first", body: dataFreshness.needsUpload ? "Fresh data makes every page more useful." : "Get one practical next move from your data.", cta: dataFreshness.needsUpload ? "Upload" : "Ask AI", onClick: () => dataFreshness.needsUpload ? onNavigate("upload") : onGoToCoach("What should I fix first this week?", { autoSend: true }) });
   }
 
-  actions.push({ label: "Step 3", headline: "Ask AI what to fix first", body: "The coach should give one practical next move based on your real data.", actionLabel: "Ask AI", onClick: () => onGoToCoach("What should I fix first this week?", { autoSend: true }) });
+  return steps;
+}
 
-  if (unlinkedDebtSignals.length || unlinkedInvestmentSignals.length || debts.length || investments.length) {
-    actions.push({ label: "Optional", headline: "Check debts or investments", body: "Only set these up if they apply to you. They should not make Home noisy.", actionLabel: unlinkedDebtSignals.length ? "Open Debts" : "Open Investments", onClick: () => onNavigate(unlinkedDebtSignals.length ? "debts" : "investments") });
-  }
-
-  if (primaryGoal) {
-    actions.push({ label: "Goal", headline: `Protect ${primaryGoal.name}`, body: "Your goal should shape the advice so the app does not just say spend whatever is left.", actionLabel: "Open Goals", onClick: () => onNavigate("goals") });
-  }
-
-  if (!subscriptionStatus?.isPremium) {
-    actions.push({ label: "Later", headline: "Live feeds can wait", body: "Manual uploads should feel trustworthy first. Live feeds can become the paid automatic layer later.", actionLabel: "Open Settings", onClick: () => onNavigate("settings") });
-  } else if (bankFeedReadiness) {
-    actions.push({ label: "Premium", headline: bankFeedReadiness.headline, body: bankFeedReadiness.body, actionLabel: "Open Settings", onClick: () => onNavigate("settings") });
-  }
-
+function buildOptionalActions({ unlinkedDebtSignals, unlinkedInvestmentSignals, debts, investments, primaryGoal, subscriptionStatus, bankFeedReadiness, onNavigate }) {
+  const actions = [];
+  if (unlinkedDebtSignals.length || debts.length) actions.push({ title: "Debts", body: "Check loans, cards or finance payments.", onClick: () => onNavigate("debts") });
+  if (unlinkedInvestmentSignals.length || investments.length) actions.push({ title: "Investments", body: "Keep investing separate from spending.", onClick: () => onNavigate("investments") });
+  if (primaryGoal) actions.push({ title: "Goal", body: `Protect ${primaryGoal.name}.`, onClick: () => onNavigate("goals") });
+  if (!subscriptionStatus?.isPremium) actions.push({ title: "Settings", body: "Live feeds can wait until manual uploads feel solid.", onClick: () => onNavigate("settings") });
+  else if (bankFeedReadiness) actions.push({ title: "Premium", body: bankFeedReadiness.headline, onClick: () => onNavigate("settings") });
   return actions;
 }
 
 function getPrimaryGoal(goals) {
   return (goals || []).slice().sort((a, b) => Number(a.priority || 99) - Number(b.priority || 99))[0] || null;
+}
+
+function CollapsiblePanel({ title, summary, children, defaultOpen = false, styles, right = null }) {
+  return (
+    <Section title="" styles={styles}>
+      <details open={defaultOpen} style={getDetailsStyle()}>
+        <summary style={getSummaryStyle()}>
+          <span>
+            <strong>{title}</strong>
+            <small style={getSummarySmallStyle()}>{summary}</small>
+          </span>
+          {right ? <span onClick={(event) => event.stopPropagation()}>{right}</span> : <span style={getChevronStyle()}>Open</span>}
+        </summary>
+        <div style={getDetailsBodyStyle()}>{children}</div>
+      </details>
+    </Section>
+  );
 }
 
 function getBigMoneyStyle(screenWidth) {
@@ -344,4 +335,75 @@ function StatPill({ label, value, styles }) {
 
 function TransactionRow({ name, meta, amount, styles }) {
   return <div style={styles.transactionRow}><div><strong>{name}</strong><p style={styles.transactionMeta}>{meta}</p></div><strong style={{ color: amount < 0 ? "#dc2626" : "#059669" }}>{amount < 0 ? "-" : "+"}{formatCurrency(Math.abs(amount))}</strong></div>;
+}
+
+function getPlanListStyle() {
+  return { display: "grid", gap: 10 };
+}
+
+function getPlanStepStyle(primary) {
+  return {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 12,
+    width: "100%",
+    textAlign: "left",
+    border: primary ? "1px solid rgba(37, 99, 235, 0.35)" : "1px solid rgba(148, 163, 184, 0.24)",
+    borderRadius: 18,
+    padding: 14,
+    background: primary ? "rgba(239, 246, 255, 0.95)" : "rgba(248, 250, 252, 0.86)",
+    color: "#0f172a",
+    cursor: "pointer",
+  };
+}
+
+function getPlanNumberStyle(primary) {
+  return {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: primary ? "#2563eb" : "#e2e8f0",
+    color: primary ? "white" : "#334155",
+    fontWeight: 800,
+    flexShrink: 0,
+  };
+}
+
+function getPlanBodyStyle() {
+  return { display: "block", color: "#64748b", marginTop: 4, lineHeight: 1.35 };
+}
+
+function getPlanCtaStyle() {
+  return { color: "#2563eb", fontWeight: 800, whiteSpace: "nowrap", marginLeft: "auto" };
+}
+
+function getDetailsStyle() {
+  return { border: "1px solid rgba(148, 163, 184, 0.22)", borderRadius: 20, overflow: "hidden", background: "rgba(255,255,255,0.72)" };
+}
+
+function getSummaryStyle() {
+  return { listStyle: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: 16 };
+}
+
+function getSummarySmallStyle() {
+  return { display: "block", color: "#64748b", fontSize: 14, marginTop: 4, fontWeight: 500 };
+}
+
+function getChevronStyle() {
+  return { color: "#2563eb", fontWeight: 800, fontSize: 14 };
+}
+
+function getDetailsBodyStyle() {
+  return { padding: "0 16px 16px" };
+}
+
+function getSmallActionGridStyle() {
+  return { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 };
+}
+
+function getSmallActionStyle() {
+  return { textAlign: "left", border: "1px solid rgba(148, 163, 184, 0.22)", borderRadius: 16, padding: 12, background: "#f8fafc", color: "#0f172a", cursor: "pointer", display: "grid", gap: 4 };
 }
