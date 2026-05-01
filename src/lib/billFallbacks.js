@@ -9,6 +9,7 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
   const latestMonth = getLatestTransactionMonth(transactions);
   if (!latestMonth) return [];
   const groups = new Map();
+  const rentProfile = getRentProfile(transactions);
 
   (transactions || []).forEach((transaction) => {
     if (!isFixedCommitmentTransaction(transaction)) return;
@@ -21,7 +22,7 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
     const date = parseAppDate(transaction.transaction_date);
     if (!date || !amount) return;
 
-    const isRent = /rent|mortgage|landlord|letting/.test(text);
+    const isRent = isRentTransaction(transaction);
     const key = isRent
       ? "fallback:rent"
       : `${merchant.known ? `merchant:${merchant.key}` : `text:${transaction._real_merchant_key || merchant.key || normalizeText(transaction.description || "")}`}:fallback:${getAmountBand(amount)}`;
@@ -36,21 +37,51 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
     group.transactions.push(transaction);
   });
 
-  return [...groups.values()].map((group) => toFallbackEvent(group, existingEvents)).filter(Boolean);
+  return [...groups.values()].map((group) => toFallbackEvent(group, existingEvents, rentProfile)).filter(Boolean);
 }
 
 export function mergeRecurringEvents(events) {
   return (events || []).filter(isAllowedFutureBillEvent).reduce((merged, event) => {
-    const duplicateIndex = merged.findIndex((existing) => {
-      const sameKey = existing.key === event.key;
-      const sameName = normalizeText(existing.title || "") === normalizeText(event.title || "");
-      const closeAmount = Math.abs(Math.abs(Number(existing.amount || 0)) - Math.abs(Number(event.amount || 0))) <= 3;
-      return (sameKey || sameName) && closeAmount;
-    });
+    const duplicateIndex = merged.findIndex((existing) => isDuplicateBillEvent(existing, event));
     if (duplicateIndex < 0) return [...merged, event];
-    const better = scoreEvent(event) > scoreEvent(merged[duplicateIndex]) ? event : merged[duplicateIndex];
+    const better = chooseBetterDuplicate(merged[duplicateIndex], event);
     return merged.map((item, index) => (index === duplicateIndex ? better : item));
   }, []);
+}
+
+function isDuplicateBillEvent(a, b) {
+  const aText = normalizeText(a?.title || "");
+  const bText = normalizeText(b?.title || "");
+  const aBase = getBillBaseName(aText);
+  const bBase = getBillBaseName(bText);
+  const sameKey = a?.key === b?.key;
+  const sameBase = aBase && bBase && aBase === bBase;
+  const closeAmount = Math.abs(Math.abs(Number(a?.amount || 0)) - Math.abs(Number(b?.amount || 0))) <= 3;
+  const closeDay = Math.abs(Number(a?.day || 0) - Number(b?.day || 0)) <= 4;
+  const subscriptionSameProvider = (a?.kind === "subscription" || b?.kind === "subscription") && sameBase && closeAmount;
+  return Boolean((sameKey && closeAmount) || (sameBase && closeAmount && closeDay) || subscriptionSameProvider);
+}
+
+function chooseBetterDuplicate(a, b) {
+  const aScore = scoreEvent(a);
+  const bScore = scoreEvent(b);
+  if (bScore !== aScore) return bScore > aScore ? b : a;
+  const aText = normalizeText(a?.title || "");
+  const bText = normalizeText(b?.title || "");
+  if (/bill around/.test(aText) && !/bill around/.test(bText)) return b;
+  if (/bill around/.test(bText) && !/bill around/.test(aText)) return a;
+  return a;
+}
+
+function getBillBaseName(text) {
+  return normalizeText(text)
+    .replace(/\bbill around\b/g, " ")
+    .replace(/\baround\b/g, " ")
+    .replace(/£?\d+(\.\d{1,2})?/g, " ")
+    .replace(/\bbill\b/g, " ")
+    .replace(/\bsubscription\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isAllowedFutureBillEvent(event) {
@@ -83,33 +114,72 @@ function isFixedCommitmentTransaction(transaction) {
   return fixedCategory || knownFixedMerchant || explicitBill || fixedByText;
 }
 
-function toFallbackEvent(group, existingEvents) {
-  const amount = group.isRent ? group.amounts.reduce((sum, value) => sum + Number(value || 0), 0) : getLikelyAmount(group.dates, group.amounts);
+function toFallbackEvent(group, existingEvents, rentProfile) {
+  const amount = group.isRent ? getRentAmountForCalendar(group, rentProfile) : getLikelyAmount(group.dates, group.amounts);
   if (!amount) return null;
   const event = {
     key: group.key,
     title: group.title,
     amount: -Math.abs(amount),
-    day: getLikelyDay(group.dates),
+    day: group.isRent ? rentProfile.day || getLikelyDay(group.dates) : getLikelyDay(group.dates),
     month: null,
     kind: group.kind || "bill",
     kindLabel: group.kind === "subscription" ? "Subscription" : "Bill",
     confidenceLabel: group.isRent || group.transactions.length >= 2 ? "medium" : "estimated",
-    estimateNote: group.isRent ? "Rent was added from bill-like payments in your latest statement, even if it was split into several payments." : "Added from a fixed bill-like payment in your latest statement. Confirm it in Checks if this looks wrong.",
+    estimateNote: group.isRent ? "Rent is estimated from the usual monthly total, so early or split payments do not become the rent amount." : "Added from a fixed bill-like payment in your latest statement. Confirm it in Checks if this looks wrong.",
     sourceCount: group.transactions.length,
-    sourceMonths: 1,
+    sourceMonths: group.isRent ? rentProfile.monthCount || 1 : 1,
   };
   return hasMatchingEvent(event, existingEvents) ? null : event;
 }
 
-function hasMatchingEvent(event, existingEvents) {
-  return (existingEvents || []).some((existing) => {
-    const existingTitle = normalizeText(existing.title || "");
-    const eventTitle = normalizeText(event.title || "");
-    const sameName = existingTitle === eventTitle || existingTitle.includes(eventTitle) || eventTitle.includes(existingTitle);
-    const closeAmount = Math.abs(Math.abs(Number(existing.amount || 0)) - Math.abs(Number(event.amount || 0))) <= 3;
-    return sameName && closeAmount;
+function getRentAmountForCalendar(group, rentProfile) {
+  const currentMonthTotal = group.amounts.reduce((sum, value) => sum + Number(value || 0), 0);
+  if (rentProfile.usualMonthlyTotal && rentProfile.usualMonthlyTotal > currentMonthTotal) return rentProfile.usualMonthlyTotal;
+  return currentMonthTotal || rentProfile.usualMonthlyTotal || 0;
+}
+
+function getRentProfile(transactions) {
+  const monthTotals = new Map();
+  const rentDates = [];
+  (transactions || []).forEach((transaction) => {
+    if (!isRentTransaction(transaction)) return;
+    const date = parseAppDate(transaction.transaction_date);
+    const amount = Math.abs(Number(transaction.amount || 0));
+    if (!date || !amount) return;
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    monthTotals.set(key, (monthTotals.get(key) || 0) + amount);
+    rentDates.push(date);
   });
+  const totals = [...monthTotals.values()].filter((value) => value > 0).sort((a, b) => a - b);
+  return {
+    usualMonthlyTotal: getUsualRentTotal(totals),
+    monthCount: totals.length,
+    day: getLikelyDay(rentDates),
+  };
+}
+
+function getUsualRentTotal(totals) {
+  if (!totals.length) return 0;
+  const roundedCounts = totals.reduce((map, value) => {
+    const rounded = Math.round(value / 25) * 25;
+    map.set(rounded, (map.get(rounded) || 0) + 1);
+    return map;
+  }, new Map());
+  const common = [...roundedCounts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0];
+  if (common && common[1] >= 2) return common[0];
+  return totals[Math.floor(totals.length / 2)] || totals[0];
+}
+
+function isRentTransaction(transaction) {
+  if (!transaction || isInternalTransferLike(transaction)) return false;
+  if (Number(transaction.amount || 0) >= 0) return false;
+  const text = normalizeText(`${transaction.description || ""} ${transaction.merchant || ""} ${transaction.category || ""} ${transaction._smart_category || ""}`);
+  return /rent|mortgage|landlord|letting/.test(text);
+}
+
+function hasMatchingEvent(event, existingEvents) {
+  return (existingEvents || []).some((existing) => isDuplicateBillEvent(existing, event));
 }
 
 function getLatestTransactionMonth(transactions) {
