@@ -898,10 +898,14 @@ function getUpcomingFixedCommitments(transactions = [], today, end) {
         dates: [],
       });
     }
-    groups.get(key).dates.push(date);
+    const group = groups.get(key);
+    group.dates.push(date);
+    group.fixedByCategory = group.fixedByCategory || fixedByCategory;
+    group.isKnownBill = group.isKnownBill || isBillLike(transaction);
+    group.amount = Math.max(group.amount, amount);
   });
 
-  return [...groups.values()]
+  return selectMostBelievableRecurringGroups([...groups.values()])
     .filter((group) => group.fixedByCategory || group.isKnownBill)
     .map((group) => {
       const day = Math.round(group.dates.reduce((sum, date) => sum + date.getDate(), 0) / group.dates.length);
@@ -916,6 +920,26 @@ function getUpcomingFixedCommitments(transactions = [], today, end) {
     .filter((group) => group.date <= end)
     .sort((a, b) => a.date - b.date)
     .slice(0, 8);
+}
+
+function selectMostBelievableRecurringGroups(groups) {
+  const byTitle = groups.reduce((map, group) => {
+    if (!map.has(group.title)) map.set(group.title, []);
+    map.get(group.title).push(group);
+    return map;
+  }, new Map());
+
+  return [...byTitle.values()].flatMap((matches) => {
+    if (matches.length === 1) return matches;
+
+    const strongestCount = Math.max(...matches.map((group) => group.dates.length));
+    const strongestAmounts = matches.filter((group) => group.dates.length === strongestCount);
+
+    return matches.filter((group) => {
+      if (group.dates.length >= 2) return true;
+      return strongestAmounts.some((strongGroup) => Math.abs(strongGroup.amount - group.amount) < 1);
+    });
+  });
 }
 
 function formatRelativeBillDate(date, today) {
