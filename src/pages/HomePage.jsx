@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { formatCurrency, getMeaningfulCategory, getTotals, isInternalTransferLike } from "../lib/finance";
 import { buildRecurringMajorPaymentCandidates } from "../lib/transactionCategorisation";
 import { Row, Section } from "../components/ui";
@@ -93,7 +93,7 @@ export default function HomePage({
       </Section>
 
       <CollapsiblePanel title="Why Money Hub says this" summary={pressure.shortReason} defaultOpen={false} styles={styles}>
-        <p style={styles.sectionIntro}>This is the plain breakdown behind the warning. It is cautious on purpose.</p>
+        <p style={styles.sectionIntro}>This is the simple breakdown behind the warning. It is cautious on purpose.</p>
         <Row name="Money showing now" value={visibleCash.hasBalance ? formatCurrency(visibleCash.total) : "No current balance connected"} styles={styles} />
         <Row name={billMoney.timeframeLabel} value={billMoney.count ? `${formatCurrency(billMoney.total)} across ${billMoney.count} payments` : "No bills found yet"} styles={styles} />
         <Row name="Rent included?" value={billMoney.includesRent ? "Yes, where Money Hub can see it" : "Not found yet"} styles={styles} />
@@ -101,8 +101,8 @@ export default function HomePage({
         <Row name="Latest statement" value={dataFreshness.hasData ? dataFreshness.latestMonthLabel : "No statement yet"} styles={styles} />
       </CollapsiblePanel>
 
-      <CollapsiblePanel title="Regular payments found" summary={regularPayments.summary} defaultOpen={false} styles={styles} right={<button style={styles.ghostBtn} onClick={(event) => { event.preventDefault(); onNavigate("calendar"); }}>Calendar</button>}>
-        <p style={styles.sectionIntro}>These are monthly estimates from your uploaded history, not the all-time total across every statement.</p>
+      <CollapsiblePanel title="Regular payments found" summary={regularPayments.summary} defaultOpen={false} styles={styles} right={<button style={styles.ghostBtn} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onNavigate("calendar"); }}>Calendar</button>}>
+        <p style={styles.sectionIntro}>These are monthly estimates from your uploaded history, not the total across every statement.</p>
         {regularPayments.items.length > 0 ? (
           regularPayments.items.slice(0, 5).map((item) => (
             <Row key={item.name} name={item.name} value={`${formatCurrency(item.monthlyEstimate)} / month · seen ${item.count} time${item.count === 1 ? "" : "s"}`} styles={styles} />
@@ -300,18 +300,23 @@ function getPrimaryGoal(goals) {
 }
 
 function CollapsiblePanel({ title, summary, children, defaultOpen = false, styles, right = null }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <Section title="" styles={styles}>
-      <details open={defaultOpen} style={getDetailsStyle()}>
-        <summary style={getSummaryStyle()}>
-          <span>
+      <div style={getDetailsStyle(open)}>
+        <button type="button" onClick={() => setOpen((current) => !current)} style={getSummaryStyle(open)} aria-expanded={open}>
+          <span style={getSummaryTextStyle()}>
             <strong>{title}</strong>
             <small style={getSummarySmallStyle()}>{summary}</small>
+            <small style={getTapHintStyle()}>{open ? "Tap to hide this" : "Tap to open this"}</small>
           </span>
-          {right ? <span onClick={(event) => event.stopPropagation()}>{right}</span> : <span style={getChevronStyle()}>Open</span>}
-        </summary>
-        <div style={getDetailsBodyStyle()}>{children}</div>
-      </details>
+          <span style={getSummaryRightStyle()}>
+            {right ? <span onClick={(event) => event.stopPropagation()}>{right}</span> : null}
+            <span style={getChevronStyle(open)}>{open ? "⌃" : "⌄"}</span>
+          </span>
+        </button>
+        {open ? <div style={getDetailsBodyStyle()}>{children}</div> : null}
+      </div>
     </Section>
   );
 }
@@ -380,20 +385,50 @@ function getPlanCtaStyle() {
   return { color: "#2563eb", fontWeight: 800, whiteSpace: "nowrap", marginLeft: "auto" };
 }
 
-function getDetailsStyle() {
-  return { border: "1px solid rgba(148, 163, 184, 0.22)", borderRadius: 20, overflow: "hidden", background: "rgba(255,255,255,0.72)" };
+function getDetailsStyle(open) {
+  return {
+    border: open ? "1px solid rgba(37, 99, 235, 0.3)" : "1px solid rgba(148, 163, 184, 0.24)",
+    borderRadius: 20,
+    overflow: "hidden",
+    background: open ? "rgba(239, 246, 255, 0.72)" : "rgba(255,255,255,0.82)",
+    boxShadow: open ? "0 14px 35px rgba(15, 23, 42, 0.08)" : "0 8px 20px rgba(15, 23, 42, 0.04)",
+  };
 }
 
-function getSummaryStyle() {
-  return { listStyle: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: 16 };
+function getSummaryStyle(open) {
+  return {
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: 16,
+    width: "100%",
+    border: 0,
+    background: "transparent",
+    textAlign: "left",
+    color: "#0f172a",
+  };
+}
+
+function getSummaryTextStyle() {
+  return { display: "grid", gap: 3, minWidth: 0 };
 }
 
 function getSummarySmallStyle() {
-  return { display: "block", color: "#64748b", fontSize: 14, marginTop: 4, fontWeight: 500 };
+  return { display: "block", color: "#64748b", fontSize: 14, fontWeight: 500, lineHeight: 1.25 };
 }
 
-function getChevronStyle() {
-  return { color: "#2563eb", fontWeight: 800, fontSize: 14 };
+function getTapHintStyle() {
+  return { display: "inline-flex", width: "fit-content", marginTop: 4, padding: "4px 8px", borderRadius: 999, background: "rgba(37, 99, 235, 0.09)", color: "#2563eb", fontSize: 12, fontWeight: 800 };
+}
+
+function getSummaryRightStyle() {
+  return { display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 };
+}
+
+function getChevronStyle(open) {
+  return { width: 34, height: 34, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: open ? "#2563eb" : "#e0f2fe", color: open ? "white" : "#2563eb", fontWeight: 900, fontSize: 22, lineHeight: 1 };
 }
 
 function getDetailsBodyStyle() {
