@@ -53,15 +53,25 @@ export default function CoachPage({
       String(goal.name || "").toLowerCase().includes("house")
     ) || null;
 
-  const baseMessages = freshCutoff
-    ? aiMessages.filter(
-        (msg) => !msg.created_at || msg.created_at >= freshCutoff
-      )
-    : aiMessages;
+  const baseMessages = useMemo(
+    () =>
+      freshCutoff
+        ? aiMessages.filter(
+            (msg) => !msg.created_at || msg.created_at >= freshCutoff
+          )
+        : aiMessages,
+    [aiMessages, freshCutoff]
+  );
 
-  const visibleMessages = baseMessages.slice(-COACH_DISPLAY_LIMIT);
+  const visibleMessages = useMemo(
+    () => baseMessages.slice(-COACH_DISPLAY_LIMIT),
+    [baseMessages]
+  );
   const hiddenCount = Math.max(baseMessages.length - visibleMessages.length, 0);
   const hiddenOlderByFreshView = Math.max(aiMessages.length - baseMessages.length, 0);
+  const latestVisibleMessageKey = visibleMessages.length
+    ? `${visibleMessages[visibleMessages.length - 1]?.id || ""}-${visibleMessages[visibleMessages.length - 1]?.created_at || ""}-${visibleMessages.length}`
+    : "empty";
   const quickPrompts = getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals });
 
   useEffect(() => {
@@ -85,8 +95,8 @@ export default function CoachPage({
       chatBottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
       return;
     }
-    latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [visibleMessages, thinking]);
+    latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [latestVisibleMessageKey, thinking]);
 
   async function sendMessage(nextMessage) {
     const text = String(nextMessage ?? message).trim();
