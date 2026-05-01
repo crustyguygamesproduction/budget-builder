@@ -14,7 +14,7 @@ const RULE_OPTIONS = [
     isSubscription: false,
     isInternalTransfer: false,
     matchAmount: true,
-    helper: "Use this for landlord or fixed housing payments.",
+    helper: "Use this for your landlord or housing payment.",
   },
   {
     label: "Bill",
@@ -23,7 +23,7 @@ const RULE_OPTIONS = [
     isSubscription: false,
     isInternalTransfer: false,
     matchAmount: true,
-    helper: "Use this for important repeated costs that must be protected.",
+    helper: "Use this for bills you need money ready for.",
   },
   {
     label: "Friend/family",
@@ -35,7 +35,7 @@ const RULE_OPTIONS = [
     helper: "Use this for gifts, lending, paying people back, or help from people you know.",
   },
   {
-    label: "Work/pass-through",
+    label: "Work money",
     category: "Work / pass-through",
     isBill: false,
     isSubscription: false,
@@ -44,7 +44,7 @@ const RULE_OPTIONS = [
     helper: "Use this when money comes in and goes back out for work, expenses, resale, or reimbursement.",
   },
   {
-    label: "Transfer",
+    label: "My own transfer",
     category: "Internal Transfer",
     isBill: false,
     isSubscription: false,
@@ -106,7 +106,7 @@ export default function ConfidencePage({
           is_bill: Boolean(option.isBill),
           is_subscription: Boolean(option.isSubscription),
           is_internal_transfer: Boolean(option.isInternalTransfer),
-          notes: `User confirmed on Confidence Checks page: ${option.label}. ${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
+          notes: `User confirmed on Checks page: ${option.label}. ${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,rule_type,match_text,match_amount" }
@@ -116,9 +116,9 @@ export default function ConfidencePage({
 
       dismissCandidate(candidate, false);
       await onTransactionRulesChange?.();
-      setMessage(`Saved: ${candidate.label} is ${option.label}. Future totals will use this.`);
+      setMessage(`Saved: ${candidate.label} is ${option.label}. Money Hub will remember this next time.`);
     } catch (error) {
-      setMessage(error.message || "Could not save that rule yet.");
+      setMessage(error.message || "Could not save that answer yet.");
     } finally {
       setSavingKey("");
     }
@@ -126,7 +126,7 @@ export default function ConfidencePage({
 
   async function saveOtherRule(candidate) {
     const answer = window.prompt(
-      `What should Money Hub call ${candidate.label}?\nExamples: Childcare, Loan repayment, Cash gift, Pet costs, Work expense`
+      `What is ${candidate.label}?\nExamples: Childcare, loan repayment, cash gift, pet costs, work expense`
     );
 
     if (!answer || !answer.trim()) return;
@@ -151,37 +151,37 @@ export default function ConfidencePage({
     });
 
     if (persist) {
-      setMessage(`Skipped ${candidate.label}. You can still fix it later if it appears again.`);
+      setMessage(`Skipped ${candidate.label}. If it appears again, you can answer it later.`);
     }
   }
 
   return (
     <>
-      <Section styles={styles} title="Confidence Checks">
+      <Section styles={styles} title="Checks">
         <p style={styles.sectionIntro}>
-          Help Money Hub stop guessing. Confirm unclear repeated payments once, and the app will use that rule in totals, bills, goals and AI answers.
+          Answer simple questions when Money Hub is unsure. One answer can fix your bills, transfers, totals and AI advice.
         </p>
 
         <div style={getStatsGridStyle(screenWidth)}>
-          <MiniCard styles={styles} title="Checks waiting" value={`${checks.length}`} />
-          <MiniCard styles={styles} title="Rules saved" value={`${completedCount}`} />
-          <MiniCard styles={styles} title="Why it matters" value="Cleaner maths" />
+          <MiniCard styles={styles} title="Waiting" value={`${checks.length}`} />
+          <MiniCard styles={styles} title="Answered" value={`${completedCount}`} />
+          <MiniCard styles={styles} title="Why do this?" value="Better answers" />
         </div>
 
         {message ? <div style={styles.historyNote}>{message}</div> : null}
       </Section>
 
       {checks.length === 0 ? (
-        <Section styles={styles} title="Nothing urgent">
+        <Section styles={styles} title="Nothing to answer">
           <div style={styles.emptyCoachState}>
-            <p style={styles.emptyCoachTitle}>No confidence checks right now.</p>
+            <p style={styles.emptyCoachTitle}>No checks right now.</p>
             <p style={styles.emptyText}>
-              As you upload more statements, Money Hub will ask simple questions here when a payment could affect the maths.
+              When Money Hub is unsure about a repeated payment, it will ask here. If this page is empty, do not waste time here.
             </p>
           </div>
         </Section>
       ) : (
-        <Section styles={styles} title="Needs your answer">
+        <Section styles={styles} title="Please answer these">
           {checks.map((candidate) => (
             <ConfidenceCard
               key={candidate.key}
@@ -206,7 +206,7 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
         <div>
           <strong>What is {candidate.label}?</strong>
           <p style={styles.transactionMeta}>
-            About £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times across {candidate.monthCount} month{candidate.monthCount === 1 ? "" : "s"}.
+            About £{Number(candidate.amount || 0).toFixed(2)} happened {candidate.count} times across {candidate.monthCount} month{candidate.monthCount === 1 ? "" : "s"}.
           </p>
         </div>
         <button type="button" style={styles.ghostBtn} onClick={onSkip} disabled={saving}>
@@ -249,7 +249,7 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
           onClick={onOther}
           disabled={saving}
         >
-          Other
+          Something else
         </button>
       </div>
     </div>
