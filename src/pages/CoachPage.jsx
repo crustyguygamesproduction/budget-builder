@@ -418,17 +418,25 @@ function getEmptyCoachStateStyle(viewportHeight, screenWidth, styles) {
   };
 }
 
-function getChatInputBarStyle(screenWidth, styles) {
+function getChatInputBarStyle(_screenWidth, styles) {
   return {
     ...styles.chatInputBar,
-    flexDirection: screenWidth <= 480 ? "column" : "row",
-    alignItems: screenWidth <= 480 ? "stretch" : "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 0 calc(96px + env(safe-area-inset-bottom))",
+    marginTop: "auto",
+    zIndex: 30,
   };
 }
 
-function getChatSendBtnStyle(screenWidth, styles) {
+function getChatSendBtnStyle(_screenWidth, styles) {
   return {
     ...styles.chatSendBtn,
-    width: screenWidth <= 480 ? "100%" : undefined,
+    width: "auto",
+    minWidth: "58px",
+    flexShrink: 0,
+    padding: "13px 14px",
+    borderRadius: "999px",
   };
 }
