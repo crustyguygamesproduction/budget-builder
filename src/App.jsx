@@ -67,6 +67,7 @@ import { getSubscriptionStatus } from "./lib/productPlan";
 const AccountsPage = lazy(() => import("./pages/AccountsPage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const CoachPage = lazy(() => import("./pages/CoachPage"));
+const ConfidencePage = lazy(() => import("./pages/ConfidencePage"));
 const DebtsPage = lazy(() => import("./pages/DebtsPage"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
 const InvestmentsPage = lazy(() => import("./pages/InvestmentsPage"));
@@ -80,6 +81,7 @@ const UploadPage = lazy(() => import("./pages/UploadPage"));
 const PAGE_TITLES = {
   today: "Today",
   upload: "Upload",
+  confidence: "Confidence Checks",
   debts: "Debts",
   investments: "Investments",
   accounts: "Accounts",
@@ -430,6 +432,16 @@ export default function App() {
               getStatusPillStyle,
               getTransferSummary,
             }}
+          />
+        )}
+
+        {page === "confidence" && (
+          <ConfidencePage
+            transactions={smartTransactions}
+            transactionRules={transactionRules}
+            onTransactionRulesChange={loadTransactionRules}
+            screenWidth={screenWidth}
+            styles={styles}
           />
         )}
 
