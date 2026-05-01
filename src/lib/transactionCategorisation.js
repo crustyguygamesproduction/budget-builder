@@ -1,4 +1,10 @@
 import { normalizeText, parseAppDate } from "./finance";
+import {
+  getRealWorldMerchant,
+  getSmartBillCategory,
+  looksLikeKnownBill,
+  looksLikeKnownSubscription,
+} from "./merchantIntelligence";
 
 const CATEGORY_RULES = [
   { category: "Income", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus|hmrc|universal credit|child benefit|pension credit|tax credit/.test(text) },
@@ -29,6 +35,21 @@ const CATEGORY_RULES = [
 export function inferTransactionCategory(description, amount, options = {}) {
   const text = normalizeText(description);
   const numericAmount = Number(amount || 0);
+  const merchantInfo = getRealWorldMerchant(description);
+  const merchantCategory = getSmartBillCategory(description);
+
+  if (numericAmount < 0 && merchantCategory) {
+    return {
+      category: merchantCategory,
+      is_bill: looksLikeKnownBill(description) || merchantCategory !== "Subscription",
+      is_subscription: looksLikeKnownSubscription(description) || merchantCategory === "Subscription",
+      is_internal_transfer: false,
+      is_income: false,
+      confidence: 0.96,
+      merchant_name: merchantInfo.name,
+    };
+  }
+
   const matchedRule = CATEGORY_RULES.find((rule) => rule.test({ text, amount: numericAmount, options }));
 
   if (matchedRule) {
@@ -39,6 +60,7 @@ export function inferTransactionCategory(description, amount, options = {}) {
       is_internal_transfer: matchedRule.category === "Internal Transfer",
       is_income: matchedRule.category === "Income",
       confidence: 0.9,
+      merchant_name: merchantInfo.known ? merchantInfo.name : "",
     };
   }
 
@@ -51,12 +73,17 @@ export function inferTransactionCategory(description, amount, options = {}) {
     is_internal_transfer: false,
     is_income: numericAmount > 0,
     confidence: looksLikeBill ? 0.62 : 0.45,
+    merchant_name: merchantInfo.known ? merchantInfo.name : "",
   };
 }
 
 export function getRuleMerchantKey(description) {
+  const merchant = getRealWorldMerchant(description);
+  if (merchant.known) return merchant.key;
   return normalizeText(description)
     .replace(/\b(faster payment|standing order|bank transfer|payment to|payment from|mobile payment|card payment|direct debit|debit card|credit card|fpi|ref|reference|dd|so|pos|visa)\b/g, " ")
+    .replace(/\b[a-z]{2,}\d{3,}\b/g, " ")
+    .replace(/\b\d+[a-z]+\d*\b/g, " ")
     .replace(/\b\d{2,}\b/g, " ")
     .replace(/[^\w\s&.'-]/g, " ")
     .replace(/\s+/g, " ")
@@ -91,7 +118,7 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
 
   (transactions || []).forEach((transaction) => {
     const amount = Math.abs(Number(transaction?.amount || 0));
-    if (Number(transaction?.amount || 0) >= 0 || amount < 75) return;
+    if (Number(transaction?.amount || 0) >= 0 || amount < 50) return;
     if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return;
     if (getMatchingTransactionRule(transaction, transactionRules)) return;
 
@@ -99,25 +126,27 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
     if (/transfer to|transfer from|own account|between accounts|to savings|from savings|monzo pot|savings pot/.test(text)) return;
     if (isLikelyEverydaySpend(text) && amount < 350) return;
 
+    const merchant = getRealWorldMerchant(transaction);
     const merchantKey = getRuleMerchantKey(transaction?.description);
-    if (!merchantKey || merchantKey.length < 4) return;
+    if (!merchantKey || merchantKey.length < 3) return;
 
     const date = parseAppDate(transaction?.transaction_date);
     if (!date) return;
 
-    const amountBand = Math.round(amount / 5) * 5;
+    const amountBand = merchant.known ? "known" : Math.round(amount / 5) * 5;
     const key = `${merchantKey}|${amountBand}`;
     if (!groups.has(key)) {
       groups.set(key, {
         key,
         matchText: merchantKey,
-        label: toTitleCase(merchantKey).slice(0, 48),
+        label: merchant.known ? merchant.name : toTitleCase(merchantKey).slice(0, 48),
         amount,
         amountBand,
         transactions: [],
         months: new Set(),
-        billSignalCount: 0,
+        billSignalCount: merchant.bill || merchant.subscription ? 1 : 0,
         mechanismSignalCount: 0,
+        knownMerchant: merchant.known,
       });
     }
 
@@ -125,14 +154,14 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
     group.transactions.push(transaction);
     group.months.add(`${date.getFullYear()}-${date.getMonth() + 1}`);
     group.amount = Math.max(group.amount, amount);
-    if (hasGenericBillSignal(text)) group.billSignalCount += 1;
+    if (hasGenericBillSignal(text) || looksLikeKnownBill(transaction)) group.billSignalCount += 1;
     if (/direct debit|standing order|dd|so|monthly|subscription|contract|instalment|installment/.test(text)) group.mechanismSignalCount += 1;
   });
 
   return [...groups.values()]
     .filter((group) => {
       const repeated = group.months.size >= 2 && group.transactions.length >= 2;
-      const signalled = group.billSignalCount > 0 || group.mechanismSignalCount > 0;
+      const signalled = group.knownMerchant || group.billSignalCount > 0 || group.mechanismSignalCount > 0;
       return repeated && (signalled || group.amount >= 250);
     })
     .map((group) => {
@@ -142,14 +171,14 @@ export function buildRecurringMajorPaymentCandidates(transactions, transactionRu
         ? "Mortgage"
         : /rent|landlord|letting/.test(text) || group.amount >= 500
         ? "Rent"
-        : inferred.is_bill
+        : inferred.is_bill || inferred.is_subscription
         ? inferred.category
         : "Major bill";
-      const confidence = group.billSignalCount > 0 || group.months.size >= 3 ? "medium" : "low";
+      const confidence = group.knownMerchant || group.billSignalCount > 0 || group.months.size >= 3 ? "medium" : "low";
       return {
         key: group.key,
         matchText: group.matchText,
-        label: group.label || "Recurring payment",
+        label: group.label || "Regular payment",
         amount: Number(group.amount.toFixed(2)),
         count: group.transactions.length,
         monthCount: group.months.size,
@@ -168,12 +197,13 @@ export function inferRecurringPersonalBills(transactions) {
   transactions.forEach((transaction) => {
     const amount = Math.abs(Number(transaction.amount || 0));
     if (Number(transaction.amount) >= 0 || amount < 300) return;
-    const text = normalizeText(transaction.description)
+    const merchant = getRealWorldMerchant(transaction);
+    const text = merchant.known ? merchant.key : normalizeText(transaction.description)
       .replace(/\b(faster payment|standing order|bank transfer|payment to|fpi|ref|reference|mobile payment)\b/g, " ")
       .replace(/\s+/g, " ")
       .trim();
     if (!text) return;
-    const key = `${text}|${Math.round(amount / 10) * 10}`;
+    const key = `${text}|${merchant.known ? "known" : Math.round(amount / 10) * 10}`;
     if (!groups.has(key)) groups.set(key, { text, amount, transactions: [] });
     groups.get(key).transactions.push(transaction);
   });
