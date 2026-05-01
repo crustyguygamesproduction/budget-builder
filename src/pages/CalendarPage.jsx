@@ -58,7 +58,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
 
   const [viewDate, setViewDate] = useState(() => new Date());
   const [selectedDayKey, setSelectedDayKey] = useState("");
-  const [calendarMode, setCalendarMode] = useState("history");
+  const [calendarMode, setCalendarMode] = useState("recurring");
   const [timeframe, setTimeframe] = useState("all");
   const [calendarAiBusy, setCalendarAiBusy] = useState(false);
   const [calendarAiText, setCalendarAiText] = useState("");
@@ -266,6 +266,9 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
           earned: summary.earned,
           net: summary.net,
           active_days: summary.activeDays,
+          recurring_month_total: recurringMonthTotal,
+          recurring_month_count: recurringMonthEvents.length,
+          next_recurring_event: nextRecurringEvent,
         },
         data_freshness: getDataFreshness(transactions),
         monthly_breakdown: monthlyBreakdown.slice(0, 4),
@@ -275,6 +278,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
           category: getMeaningfulCategory(transaction),
           amount: transaction.amount,
         })),
+        recurring_events: recurringMonthEvents.slice(0, 20),
         visible_transaction_count: visibleHistoryTransactions.length,
         selected_day: selectedDay
           ? {
@@ -291,7 +295,9 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
         body: {
           mode: "coach",
           message:
-            "Analyse the currently open calendar timeframe. Keep it concise, specific to the visible range, and do not claim there are multiple months unless the provided data clearly includes them.",
+            calendarMode === "recurring"
+              ? "Analyse the future payments calendar. Explain the next likely bills/subscriptions and point out any low-confidence estimates. Keep it short and practical."
+              : "Analyse the currently open calendar timeframe. Keep it concise, specific to the visible range, and do not claim there are multiple months unless the provided data clearly includes them.",
           context,
         },
       });
@@ -328,7 +334,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
             <h4 style={styles.calendarTitle}>{shortRangeTitle}</h4>
             <p style={styles.smallMuted}>
               {calendarMode === "recurring"
-                ? "Forecasting only repeated rent, bills, subscriptions, and confirmed fixed commitments."
+                ? "Forecasting future rent, bills, subscriptions, phone, energy, broadband, insurance and similar commitments."
                 : usingShortHistoryView
                 ? "Showing a rolling short window. Use Prev and Next to move through time."
                 : timeframe === "all"
@@ -356,8 +362,8 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
         <div style={styles.calendarToolbar}>
           <div style={styles.modeChipRow}>
             {[
+              ["recurring", "Future payments"],
               ["history", "History"],
-              ["recurring", "Recurring"],
             ].map(([key, label]) => (
               <button
                 key={key}
@@ -399,11 +405,11 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
                     event.currentTarget.blur();
                     handleTimeframeChange(key);
                   }}
-                  disabled={unavailable}
+                  disabled={calendarMode === "recurring" ? true : unavailable}
                   style={{
                     ...styles.calendarTimeframeChip,
                     ...(timeframe === key ? styles.calendarTimeframeChipActive : null),
-                    ...(unavailable ? styles.timeframeChipDisabled : null),
+                    ...((calendarMode === "recurring" || unavailable) ? styles.timeframeChipDisabled : null),
                   }}
                 >
                   {label}
@@ -413,7 +419,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
           </div>
         </div>
 
-        {availableMonthCount <= 1 && !shortTimeframe ? (
+        {availableMonthCount <= 1 && !shortTimeframe && calendarMode === "history" ? (
           <p style={styles.calendarRangeHint}>
             You have one month of history so far, so bigger month ranges stay muted until more statements are imported.
           </p>
@@ -421,8 +427,8 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
 
         {calendarMode === "recurring" ? (
           <div style={getCalendarSummaryGridStyle(screenWidth)}>
-            <MiniCard styles={styles} title="Fixed Outgoings" value={formatCurrency(recurringMonthTotal)} />
-            <MiniCard styles={styles} title="Due This Month" value={`${recurringMonthEvents.length}`} />
+            <MiniCard styles={styles} title="Future Bills" value={formatCurrency(recurringMonthTotal)} />
+            <MiniCard styles={styles} title="Expected This Month" value={`${recurringMonthEvents.length}`} />
             <MiniCard styles={styles} title="Next Due" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
             <MiniCard styles={styles} title="Next Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />
           </div>
@@ -575,6 +581,9 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
                       <p style={styles.transactionMeta}>
                         Expected around day {event.day} - {event.kindLabel} - {event.confidenceLabel} confidence
                       </p>
+                      {event.estimateNote ? (
+                        <p style={styles.transactionMeta}>{event.estimateNote}</p>
+                      ) : null}
                     </div>
                     <strong>
                       {event.amount > 0 ? "+" : "-"}{formatCurrency(Math.abs(event.amount))}
@@ -610,8 +619,12 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
         <InsightCard
           styles={styles}
           label={calendarAiText ? "AI analysis" : "AI read"}
-          headline={calendarAiText ? `Live read for ${timeframeLabel}` : patternSummary.headline}
-          body={calendarAiText || patternSummary.body}
+          headline={calendarAiText ? `Live read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming money pressure" : patternSummary.headline}
+          body={calendarAiText || (calendarMode === "recurring"
+            ? recurringMonthEvents.length
+              ? `Money Hub expects ${recurringMonthEvents.length} future payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you upload more months and answer Confidence Checks.`
+              : "No future payments detected yet. Upload more history or confirm repeated bills in Confidence Checks."
+            : patternSummary.body)}
         />
         {calendarAiError ? <p style={styles.errorNote}>{calendarAiError}</p> : null}
       </Section>
