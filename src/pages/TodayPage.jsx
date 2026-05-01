@@ -68,6 +68,10 @@ export default function TodayPage({
     () => buildCashPlan({ accounts, transactions, cashSummary, formatCurrency }),
     [accounts, transactions, cashSummary]
   );
+  const netWorth = useMemo(
+    () => buildNetWorth({ cashPlan, debts, investments }),
+    [cashPlan, debts, investments]
+  );
   const intelligenceSummary = useMemo(
     () =>
       getMoneyIntelligenceSummary({
@@ -281,6 +285,7 @@ export default function TodayPage({
           label: cashPlan.hasCashBalance ? "Spendable after bills" : "Net movement",
           value: cashPlan.hasCashBalance ? formatCurrency(cashPlan.spendableAfterBills) : `${monthSnapshot.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(monthSnapshot.net))}`,
         },
+        { label: "Net worth", value: `${netWorth.total >= 0 ? "" : "-"}${formatCurrency(Math.abs(netWorth.total))}` },
         { label: cashPlan.hasCashBalance ? "Due out soon" : "Real income", value: cashPlan.hasCashBalance ? `${formatCurrency(cashPlan.upcomingBillsTotal)} out` : formatCurrency(monthSnapshot.income) },
         { label: cashPlan.hasCashBalance ? "Next outgoing" : "Real spending", value: cashPlan.nextBill ? `${formatCurrency(cashPlan.nextBill.amount)} ${cashPlan.nextBill.relativeLabel}` : formatCurrency(monthSnapshot.spending) },
       ];
@@ -535,6 +540,7 @@ export default function TodayPage({
         {cashPlan.nextBill ? (
           <Row name="Next outgoing" value={`${cashPlan.nextBill.title} - ${formatCurrency(cashPlan.nextBill.amount)} ${cashPlan.nextBill.relativeLabel}`} styles={styles} />
         ) : null}
+        <Row name="Net worth position" value={`${netWorth.total >= 0 ? "" : "-"}${formatCurrency(Math.abs(netWorth.total))}`} styles={styles} />
       </Section>
 
       <Section title={subscriptionStatus?.isPremium ? "Premium Setup" : "Premium Unlocks"} styles={styles}>
@@ -808,6 +814,25 @@ function getPrimaryGoal(goals = []) {
     .filter((goal) => goal.target_date)
     .sort((a, b) => new Date(a.target_date) - new Date(b.target_date));
   return datedGoals[0] || goals[0] || null;
+}
+
+function buildNetWorth({ cashPlan, debts = [], investments = [] }) {
+  const cash = cashPlan?.hasCashBalance ? Number(cashPlan.availableCash || 0) : 0;
+  const investmentValue = investments.reduce((sum, investment) => {
+    const marketValue = Number(investment.current_value || 0);
+    const livePrice = Number(investment.live_price || 0);
+    const units = Number(investment.units_owned || 0);
+    const fallbackValue = livePrice > 0 && units > 0 ? livePrice * units : Number(investment.total_contributed || 0);
+    return sum + (marketValue > 0 ? marketValue : fallbackValue);
+  }, 0);
+  const debtValue = debts.reduce((sum, debt) => sum + Math.abs(Number(debt.current_balance || 0)), 0);
+
+  return {
+    cash,
+    investmentValue,
+    debtValue,
+    total: cash + investmentValue - debtValue,
+  };
 }
 
 function buildCashPlan({ accounts = [], transactions = [], cashSummary }) {
