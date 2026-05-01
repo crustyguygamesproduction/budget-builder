@@ -1,6 +1,7 @@
 const NAV_ITEMS = [
   ["today", "Home"],
   ["upload", "Upload"],
+  ["confidence", "Checks"],
   ["debts", "Debts"],
   ["investments", "Invest"],
   ["accounts", "Accounts"],
