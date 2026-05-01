@@ -96,9 +96,22 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
     () => getCalendarMonthBounds(transactions, timeframe),
     [transactions, timeframe]
   );
+  const recurringBounds = useMemo(() => {
+    const start = new Date();
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    return {
+      start,
+      end: new Date(start.getFullYear(), start.getMonth() + 11, 1),
+    };
+  }, []);
   const activeViewDate = useMemo(
     () => clampMonthToRange(viewDate, calendarBounds),
     [viewDate, calendarBounds]
+  );
+  const activeRecurringViewDate = useMemo(
+    () => clampMonthToRange(viewDate, recurringBounds),
+    [viewDate, recurringBounds]
   );
 
   const historicalCalendar = useMemo(
@@ -106,8 +119,8 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
     [activeViewDate, transactions, recurringEvents]
   );
   const recurringCalendar = useMemo(
-    () => buildCalendarMonth(activeViewDate, recurringEvents),
-    [activeViewDate, recurringEvents]
+    () => buildCalendarMonth(activeRecurringViewDate, recurringEvents),
+    [activeRecurringViewDate, recurringEvents]
   );
   const rollingHistoryWindow = useMemo(
     () => buildRollingHistoryWindow(transactions, activeShortEndDate, shortWindowSize),
@@ -135,6 +148,20 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
   const summary = usingShortHistoryView
     ? getRollingWindowSummary(rollingHistoryWindow.days)
     : getMonthlyHistorySummary(activeViewDate, transactions);
+  const recurringMonthEvents = recurringCalendar.days
+    .filter((day) => day.inMonth !== false)
+    .flatMap((day) => day.events || []);
+  const recurringMonthTotal = recurringMonthEvents.reduce(
+    (sum, event) => sum + Math.abs(Number(event.amount || 0)),
+    0
+  );
+  const currentMonth = new Date();
+  const isViewingCurrentRecurringMonth =
+    activeRecurringViewDate.getMonth() === currentMonth.getMonth() &&
+    activeRecurringViewDate.getFullYear() === currentMonth.getFullYear();
+  const nextRecurringEvent = recurringMonthEvents
+    .filter((event) => !isViewingCurrentRecurringMonth || event.day >= currentMonth.getDate())
+    .sort((a, b) => a.day - b.day)[0] || recurringMonthEvents[0] || null;
   const patternSummary = getCalendarPatternSummary(transactions, timeframe);
   const monthlyBreakdown = getMonthlyBreakdown(transactions, shortTimeframe ? "1m" : timeframe).slice(0, 6);
   const visibleHistoryTransactions = calendarDays.flatMap((day) => day.transactions || []);
@@ -143,12 +170,18 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
     : null;
   const canGoPrev = usingShortHistoryView
     ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, -1)
+    : calendarMode === "recurring"
+    ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, -1)
     : canShiftCalendarMonth(activeViewDate, calendarBounds, -1);
   const canGoNext = usingShortHistoryView
     ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, 1)
+    : calendarMode === "recurring"
+    ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, 1)
     : canShiftCalendarMonth(activeViewDate, calendarBounds, 1);
   const shortRangeTitle = usingShortHistoryView
     ? formatShortWindowTitle(rollingHistoryWindow.startDate, rollingHistoryWindow.endDate, timeframe)
+    : calendarMode === "recurring"
+    ? `${MONTH_NAMES[activeRecurringViewDate.getMonth()]} ${activeRecurringViewDate.getFullYear()}`
     : `${MONTH_NAMES[activeViewDate.getMonth()]} ${activeViewDate.getFullYear()}`;
   const allowHorizontalScroll = usingShortHistoryView
     ? shortWindowSize > 7 || screenWidth <= 760
@@ -175,6 +208,16 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
     }
 
     if ((direction < 0 && !canGoPrev) || (direction > 0 && !canGoNext)) return;
+    if (calendarMode === "recurring") {
+      setViewDate((current) =>
+        clampMonthToRange(
+          new Date(current.getFullYear(), current.getMonth() + direction, 1),
+          recurringBounds
+        )
+      );
+      return;
+    }
+
     setViewDate((current) =>
       clampMonthToRange(
         new Date(current.getFullYear(), current.getMonth() + direction, 1),
@@ -284,7 +327,9 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
           <div style={styles.calendarTitleWrap}>
             <h4 style={styles.calendarTitle}>{shortRangeTitle}</h4>
             <p style={styles.smallMuted}>
-              {usingShortHistoryView
+              {calendarMode === "recurring"
+                ? "Forecasting only repeated rent, bills, subscriptions, and confirmed fixed commitments."
+                : usingShortHistoryView
                 ? "Showing a rolling short window. Use Prev and Next to move through time."
                 : timeframe === "all"
                 ? "Showing your full history. Use Prev and Next to move month by month."
@@ -326,9 +371,10 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
                   if (key === "recurring" && isShortTimeframe(timeframe)) {
                     const fallbackRange = "all";
                     setTimeframe(fallbackRange);
-                    const nextBounds = getCalendarMonthBounds(transactions, fallbackRange);
-                    setViewDate(nextBounds.end);
+                    setViewDate(recurringBounds.start);
+                    return;
                   }
+                  if (key === "recurring") setViewDate(recurringBounds.start);
                 }}
                 style={{
                   ...styles.calendarModeChip,
@@ -373,12 +419,21 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
           </p>
         ) : null}
 
-        <div style={getCalendarSummaryGridStyle(screenWidth)}>
-          <MiniCard styles={styles} title={usingShortHistoryView ? "Money Out" : "Spent"} value={formatCurrency(summary.spent)} />
-          <MiniCard styles={styles} title={usingShortHistoryView ? "Money In" : "Earned"} value={formatCurrency(summary.earned)} />
-          <MiniCard styles={styles} title="Net" value={`${summary.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(summary.net))}`} />
-          <MiniCard styles={styles} title={usingShortHistoryView ? "Days Used" : "Active Days"} value={`${summary.activeDays}`} />
-        </div>
+        {calendarMode === "recurring" ? (
+          <div style={getCalendarSummaryGridStyle(screenWidth)}>
+            <MiniCard styles={styles} title="Fixed Outgoings" value={formatCurrency(recurringMonthTotal)} />
+            <MiniCard styles={styles} title="Due This Month" value={`${recurringMonthEvents.length}`} />
+            <MiniCard styles={styles} title="Next Due" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
+            <MiniCard styles={styles} title="Next Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />
+          </div>
+        ) : (
+          <div style={getCalendarSummaryGridStyle(screenWidth)}>
+            <MiniCard styles={styles} title={usingShortHistoryView ? "Money Out" : "Spent"} value={formatCurrency(summary.spent)} />
+            <MiniCard styles={styles} title={usingShortHistoryView ? "Money In" : "Earned"} value={formatCurrency(summary.earned)} />
+            <MiniCard styles={styles} title="Net" value={`${summary.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(summary.net))}`} />
+            <MiniCard styles={styles} title={usingShortHistoryView ? "Days Used" : "Active Days"} value={`${summary.activeDays}`} />
+          </div>
+        )}
 
         <div
           style={{
@@ -484,7 +539,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
         {selectedDay ? (
           <div style={styles.calendarInlinePanel}>
             <div style={styles.calendarInlinePanelTop}>
-              <strong>{calendarMode === "history" ? formatDateLong(selectedDay.date) : `Day ${selectedDay.date.getDate()} detail`}</strong>
+              <strong>{calendarMode === "history" ? formatDateLong(selectedDay.date) : `${formatDateLong(selectedDay.date)} forecast`}</strong>
               <button style={styles.ghostBtn} type="button" onClick={() => setSelectedDayKey("")}>Close</button>
             </div>
 
@@ -518,7 +573,7 @@ export default function CalendarPage({ transactions, screenWidth, styles, helper
                     <div>
                       <strong>{event.title}</strong>
                       <p style={styles.transactionMeta}>
-                        Around day {event.day} - {event.kindLabel} - {event.confidenceLabel} confidence
+                        Expected around day {event.day} - {event.kindLabel} - {event.confidenceLabel} confidence
                       </p>
                     </div>
                     <strong>

@@ -413,29 +413,38 @@ export function getRecurringCalendarEvents(transactions) {
   transactions.forEach((transaction) => {
     if (!transaction.transaction_date) return;
     if (isInternalTransferLike(transaction)) return;
+    if (!isFutureCalendarCommitment(transaction)) return;
 
     const text = normalizeText(transaction.description);
     if (!text) return;
 
-    const key = `${text}|${transaction.amount > 0 ? "in" : "out"}`;
+    const amount = Math.abs(Number(transaction.amount || 0));
+    const amountBand = Math.round(amount / 5) * 5;
+    const key = `${text}|${amountBand}`;
     const date = parseAppDate(transaction.transaction_date);
     if (!date) return;
 
     if (!grouped[key]) {
       grouped[key] = {
+        key,
+        titleKey: text,
         description: transaction.description,
-        amount: Number(transaction.amount || 0),
+        amount,
         dates: [],
         count: 0,
+        hasFixedSignal: false,
       };
     }
 
-    grouped[key].dates.push(date);
-    grouped[key].count += 1;
+    const group = grouped[key];
+    group.dates.push(date);
+    group.count += 1;
+    group.amount = Math.max(group.amount, amount);
+    group.hasFixedSignal = group.hasFixedSignal || isConfirmedFixedCommitment(transaction);
   });
 
-  return Object.entries(grouped)
-    .map(([key, value]) => {
+  return selectBelievableCalendarCommitments(Object.values(grouped))
+    .map((value) => {
       const months = new Set(
         value.dates.map((date) => `${date.getFullYear()}-${date.getMonth() + 1}`)
       );
@@ -446,25 +455,20 @@ export function getRecurringCalendarEvents(transactions) {
         value.dates.reduce((sum, date) => sum + date.getDate(), 0) / value.dates.length
       );
 
-      const kind =
-        value.amount > 0
-          ? "income"
-          : inferOutgoingKind(value.description);
+      const kind = inferOutgoingKind(value.description, value.hasFixedSignal);
 
       const confidence =
         months.size >= 4 ? "high" : months.size >= 3 ? "medium" : "low";
 
       return {
-        key,
+        key: value.key,
         title: cleanEventTitle(value.description),
-        amount: value.amount,
+        amount: -Math.abs(value.amount),
         day,
         month: null,
         kind,
         kindLabel:
-          kind === "income"
-            ? "Income"
-            : kind === "bill"
+          kind === "bill"
             ? "Bill"
             : "Subscription",
         confidenceLabel: confidence,
@@ -474,7 +478,48 @@ export function getRecurringCalendarEvents(transactions) {
     .sort((a, b) => a.day - b.day);
 }
 
-export function inferOutgoingKind(description) {
+function isFutureCalendarCommitment(transaction) {
+  const amount = Math.abs(Number(transaction?.amount || 0));
+  if (Number(transaction?.amount || 0) >= 0 || amount < 5) return false;
+  if (isConfirmedFixedCommitment(transaction)) return true;
+
+  const text = normalizeText(transaction?.description);
+  if (/rent|mortgage|landlord|letting|council tax|water|energy|electric|gas|broadband|internet|insurance/.test(text)) return true;
+  return false;
+}
+
+function isConfirmedFixedCommitment(transaction) {
+  const category = normalizeText(transaction?._smart_category || transaction?.category);
+  return Boolean(
+    transaction?._smart_is_bill ||
+      transaction?.is_bill ||
+      transaction?._smart_is_subscription ||
+      transaction?.is_subscription ||
+      /rent|mortgage|major bill|council tax|energy|water|broadband|phone|insurance|subscription/.test(category)
+  );
+}
+
+function selectBelievableCalendarCommitments(groups) {
+  const byTitle = groups.reduce((map, group) => {
+    if (!map.has(group.titleKey)) map.set(group.titleKey, []);
+    map.get(group.titleKey).push(group);
+    return map;
+  }, new Map());
+
+  return [...byTitle.values()].flatMap((matches) => {
+    if (matches.length === 1) return matches;
+
+    const strongestCount = Math.max(...matches.map((group) => group.count));
+    const strongestMatches = matches.filter((group) => group.count === strongestCount);
+
+    return matches.filter((group) => {
+      if (group.count >= 2) return true;
+      return strongestMatches.some((strongGroup) => Math.abs(strongGroup.amount - group.amount) < 1);
+    });
+  });
+}
+
+export function inferOutgoingKind(description, hasFixedSignal = false) {
   const text = normalizeText(description);
 
   if (
@@ -483,12 +528,17 @@ export function inferOutgoingKind(description) {
     text.includes("prime") ||
     text.includes("apple") ||
     text.includes("google") ||
-    text.includes("disney")
+    text.includes("disney") ||
+    text.includes("odeon") ||
+    text.includes("cinema") ||
+    text.includes("icloud") ||
+    text.includes("openai") ||
+    text.includes("chatgpt")
   ) {
     return "subscription";
   }
 
-  return "bill";
+  return hasFixedSignal ? "bill" : "subscription";
 }
 
 export function cleanEventTitle(description) {
