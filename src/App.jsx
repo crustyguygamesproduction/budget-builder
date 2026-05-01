@@ -416,7 +416,9 @@ export default function App() {
             accounts={accounts}
             statementImports={statementImports}
             existingTransactions={smartTransactions}
+            transactionRules={transactionRules}
             onImportDone={loadAllData}
+            onTransactionRulesChange={loadTransactionRules}
             onGoToCoach={openCoachWithPrompt}
             screenWidth={screenWidth}
             styles={styles}

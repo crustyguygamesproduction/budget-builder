@@ -12,13 +12,18 @@ import {
 import { buildUploadGuidance } from "../lib/uploadGuidance";
 import { getTotals, normalizeText } from "../lib/finance";
 import { validateStatementCsvFile } from "../lib/security";
-import { inferTransactionCategory } from "../lib/transactionCategorisation";
+import {
+  buildRecurringMajorPaymentCandidates,
+  inferTransactionCategory,
+} from "../lib/transactionCategorisation";
 
 export default function UploadPage({
   accounts,
   statementImports,
   existingTransactions,
+  transactionRules = [],
   onImportDone,
+  onTransactionRulesChange,
   onGoToCoach,
   screenWidth,
   styles,
@@ -35,6 +40,7 @@ export default function UploadPage({
 
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [savingRuleKey, setSavingRuleKey] = useState("");
   const [showUploadHint, setShowUploadHint] = useState(false);
   const uploadGuidance = useMemo(
     () => buildUploadGuidance({ statementImports, existingTransactions }),
@@ -452,8 +458,6 @@ export default function UploadPage({
     });
 
     event.target.value = "";
-
-    event.target.value = "";
   }
 
   function updateFile(id, patch) {
@@ -550,7 +554,24 @@ export default function UploadPage({
           throw importError;
         }
 
-        const transactionsToSave = fileItem.rows.map((row) => ({
+        const enhancedRows = enhanceTransactions(
+          fileItem.rows.map((row, index) => ({
+            id: `${fileItem.id}-${index}`,
+            amount: row.amount,
+            category: row.category,
+            transaction_date: row.date,
+            description: row.description,
+            is_bill: row.is_bill,
+            is_subscription: row.is_subscription,
+            is_internal_transfer: row.is_internal_transfer,
+            is_income: row.is_income,
+          })),
+          transactionRules
+        );
+
+        const transactionsToSave = fileItem.rows.map((row, index) => {
+          const smartRow = enhancedRows[index] || row;
+          return {
           user_id: user.id,
           account_id: accountId,
           import_id: importRow.id,
@@ -559,14 +580,15 @@ export default function UploadPage({
           merchant: row.description,
           amount: row.amount,
           direction: row.direction,
-          category: row.category,
-          is_internal_transfer: row.is_internal_transfer,
+          category: smartRow._smart_category || row.category,
+          is_internal_transfer: Boolean(smartRow._smart_internal_transfer || row.is_internal_transfer),
           is_income: row.is_income,
-          is_bill: row.is_bill,
-          is_subscription: row.is_subscription,
+          is_bill: Boolean(smartRow._smart_is_bill || row.is_bill),
+          is_subscription: Boolean(smartRow._smart_is_subscription || row.is_subscription),
           ai_confidence: getTransactionConfidence(row),
           duplicate_key: makeDuplicateKey(row, accountId),
-        }));
+          };
+        });
 
         const { error } = await supabase
           .from("transactions")
@@ -598,6 +620,39 @@ export default function UploadPage({
     }
   }
 
+  async function confirmMajorPayment(candidate, category) {
+    setSavingRuleKey(candidate.key);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const isBill = category !== "Personal payment";
+      const { error } = await supabase.from("transaction_rules").upsert(
+        {
+          user_id: user.id,
+          rule_type: "recurring_major_payment",
+          match_text: candidate.matchText,
+          match_amount: candidate.amount,
+          category,
+          is_bill: isBill,
+          is_subscription: false,
+          is_internal_transfer: false,
+          notes: `${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,rule_type,match_text,match_amount" }
+      );
+
+      if (error) throw error;
+      await onTransactionRulesChange?.();
+    } catch {
+      alert("Could not save that rule yet. Check the latest Supabase migration has been run.");
+    } finally {
+      setSavingRuleKey("");
+    }
+  }
+
   const allPreviewRows = files.flatMap((item) => item.rows);
   const previewTransactions = enhanceTransactions(
     allPreviewRows.map((row, index) => ({
@@ -611,8 +666,9 @@ export default function UploadPage({
       is_internal_transfer: row.is_internal_transfer,
       is_income: row.is_income,
     })),
-    []
+    transactionRules
   );
+  const majorPaymentCandidates = buildRecurringMajorPaymentCandidates(previewTransactions, transactionRules);
   const previewTotals = getTotals(previewTransactions);
   const previewHistory = getHistorySummary(previewTransactions);
   const previewRecurring = getRecurringSummary(previewTransactions);
@@ -735,6 +791,32 @@ export default function UploadPage({
               />
             </div>
           </Section>
+
+          {majorPaymentCandidates.length > 0 ? (
+            <Section styles={styles} title="Payment Checks">
+              <p style={styles.sectionIntro}>
+                These repeated payments look important. Confirm them before import and Money Hub will protect them in Goals, Calendar, spending reads, and AI advice.
+              </p>
+              {majorPaymentCandidates.map((candidate) => (
+                <div key={candidate.key} style={styles.signalCard}>
+                  <div style={styles.signalHeader}>
+                    <div>
+                      <strong>{candidate.label}</strong>
+                      <p style={styles.transactionMeta}>
+                        About £{candidate.amount.toFixed(2)} repeated {candidate.count} times across {candidate.monthCount} months.
+                      </p>
+                    </div>
+                  </div>
+                  <div style={styles.inlineBtnRow}>
+                    <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Rent")} disabled={savingRuleKey === candidate.key}>Rent</button>
+                    <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Mortgage")} disabled={savingRuleKey === candidate.key}>Mortgage</button>
+                    <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Major bill")} disabled={savingRuleKey === candidate.key}>Major bill</button>
+                    <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmMajorPayment(candidate, "Personal payment")} disabled={savingRuleKey === candidate.key}>Not a bill</button>
+                  </div>
+                </div>
+              ))}
+            </Section>
+          ) : null}
 
           <Section styles={styles} title="Files To Import">
             {files.map((item) => (
