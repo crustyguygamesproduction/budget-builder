@@ -48,6 +48,7 @@ export function getSmartRecurringCalendarEvents(transactions) {
   });
 
   return [...groups.values()]
+    .flatMap(splitGroupByAmountStreams)
     .map(buildSmartEvent)
     .filter(Boolean)
     .reduce(dedupeEvents, [])
@@ -69,6 +70,48 @@ function getRealWorldBillKey(transaction) {
   if (!likelyBill && amountLooksEveryday(transaction)) return null;
 
   return { key: `text:${cleaned}`, title: merchant.name, providerMatched: false, text: rawText };
+}
+
+function splitGroupByAmountStreams(group) {
+  if (!group.providerMatched || group.transactions.length <= 1) return [group];
+
+  const clusters = [];
+  group.transactions.forEach((transaction, index) => {
+    const amount = Math.abs(Number(group.amounts[index] || transaction.amount || 0));
+    const date = group.dates[index];
+    const existing = clusters.find((cluster) => Math.abs(cluster.average - amount) <= getStreamTolerance(cluster.average, amount));
+
+    if (existing) {
+      existing.transactions.push(transaction);
+      existing.dates.push(date);
+      existing.amounts.push(amount);
+      existing.average = average(existing.amounts);
+      return;
+    }
+
+    clusters.push({
+      transactions: [transaction],
+      dates: [date],
+      amounts: [amount],
+      average: amount,
+    });
+  });
+
+  if (clusters.length <= 1) return [group];
+
+  return clusters.map((cluster) => ({
+    ...group,
+    key: `${group.key}:stream:${Math.round(cluster.average * 100)}`,
+    title: `${group.title} bill around ${formatCurrency(cluster.average)}`,
+    transactions: cluster.transactions,
+    dates: cluster.dates,
+    amounts: cluster.amounts,
+  }));
+}
+
+function getStreamTolerance(baseAmount, nextAmount) {
+  const amount = Math.max(Math.abs(Number(baseAmount || 0)), Math.abs(Number(nextAmount || 0)));
+  return Math.max(3, amount * 0.2);
 }
 
 function buildSmartEvent(group) {
