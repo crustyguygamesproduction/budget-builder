@@ -406,7 +406,6 @@ export async function fileToDataUrl(file) {
   });
 }
 
-
 export function getRecurringCalendarEvents(transactions) {
   const grouped = {};
 
@@ -415,32 +414,33 @@ export function getRecurringCalendarEvents(transactions) {
     if (isInternalTransferLike(transaction)) return;
     if (!isFutureCalendarCommitment(transaction)) return;
 
-    const text = normalizeText(transaction.description);
-    if (!text) return;
+    const normalizedTitle = getRecurringTitleKey(transaction.description || "");
+    if (!normalizedTitle) return;
 
     const amount = Math.abs(Number(transaction.amount || 0));
-    const amountBand = Math.round(amount / 5) * 5;
-    const key = `${text}|${amountBand}`;
     const date = parseAppDate(transaction.transaction_date);
     if (!date) return;
 
+    const key = normalizedTitle;
     if (!grouped[key]) {
       grouped[key] = {
         key,
-        titleKey: text,
+        titleKey: normalizedTitle,
         description: transaction.description,
-        amount,
+        amounts: [],
         dates: [],
         count: 0,
         hasFixedSignal: false,
+        strongKeyword: false,
       };
     }
 
     const group = grouped[key];
     group.dates.push(date);
+    group.amounts.push(amount);
     group.count += 1;
-    group.amount = Math.max(group.amount, amount);
     group.hasFixedSignal = group.hasFixedSignal || isConfirmedFixedCommitment(transaction);
+    group.strongKeyword = group.strongKeyword || hasBillOrSubscriptionKeyword(transaction.description || "");
   });
 
   return selectBelievableCalendarCommitments(Object.values(grouped))
@@ -448,22 +448,17 @@ export function getRecurringCalendarEvents(transactions) {
       const months = new Set(
         value.dates.map((date) => `${date.getFullYear()}-${date.getMonth() + 1}`)
       );
-
-      if (months.size < 2) return null;
-
-      const day = Math.round(
-        value.dates.reduce((sum, date) => sum + date.getDate(), 0) / value.dates.length
-      );
-
       const kind = inferOutgoingKind(value.description, value.hasFixedSignal);
-
-      const confidence =
-        months.size >= 4 ? "high" : months.size >= 3 ? "medium" : "low";
+      const averageAmount = average(value.amounts);
+      const latestAmount = getLatestAmount(value.dates, value.amounts);
+      const expectedAmount = value.amounts.length >= 3 ? averageAmount : latestAmount;
+      const day = estimateRecurringDay(value.dates);
+      const confidence = getRecurringConfidence(months.size, value.dates, value.strongKeyword, value.hasFixedSignal);
 
       return {
         key: value.key,
         title: cleanEventTitle(value.description),
-        amount: -Math.abs(value.amount),
+        amount: -Math.abs(expectedAmount),
         day,
         month: null,
         kind,
@@ -472,19 +467,20 @@ export function getRecurringCalendarEvents(transactions) {
             ? "Bill"
             : "Subscription",
         confidenceLabel: confidence,
+        estimateNote: buildEstimateNote(value.dates, value.amounts, confidence),
       };
     })
     .filter(Boolean)
-    .sort((a, b) => a.day - b.day);
+    .sort((a, b) => a.day - b.day || Math.abs(b.amount) - Math.abs(a.amount));
 }
 
 function isFutureCalendarCommitment(transaction) {
   const amount = Math.abs(Number(transaction?.amount || 0));
-  if (Number(transaction?.amount || 0) >= 0 || amount < 5) return false;
+  if (Number(transaction?.amount || 0) >= 0 || amount < 3) return false;
   if (isConfirmedFixedCommitment(transaction)) return true;
 
   const text = normalizeText(transaction?.description);
-  if (/rent|mortgage|landlord|letting|council tax|water|energy|electric|gas|broadband|internet|insurance/.test(text)) return true;
+  if (hasBillOrSubscriptionKeyword(text)) return true;
   return false;
 }
 
@@ -495,27 +491,16 @@ function isConfirmedFixedCommitment(transaction) {
       transaction?.is_bill ||
       transaction?._smart_is_subscription ||
       transaction?.is_subscription ||
-      /rent|mortgage|major bill|council tax|energy|water|broadband|phone|insurance|subscription/.test(category)
+      /rent|mortgage|major bill|council tax|energy|water|broadband|phone|mobile|insurance|subscription|utilities/.test(category)
   );
 }
 
 function selectBelievableCalendarCommitments(groups) {
-  const byTitle = groups.reduce((map, group) => {
-    if (!map.has(group.titleKey)) map.set(group.titleKey, []);
-    map.get(group.titleKey).push(group);
-    return map;
-  }, new Map());
-
-  return [...byTitle.values()].flatMap((matches) => {
-    if (matches.length === 1) return matches;
-
-    const strongestCount = Math.max(...matches.map((group) => group.count));
-    const strongestMatches = matches.filter((group) => group.count === strongestCount);
-
-    return matches.filter((group) => {
-      if (group.count >= 2) return true;
-      return strongestMatches.some((strongGroup) => Math.abs(strongGroup.amount - group.amount) < 1);
-    });
+  return groups.filter((group) => {
+    const monthCount = new Set(group.dates.map((date) => `${date.getFullYear()}-${date.getMonth()}`)).size;
+    if (monthCount >= 2) return true;
+    if (group.hasFixedSignal && group.strongKeyword) return true;
+    return false;
   });
 }
 
@@ -526,6 +511,7 @@ export function inferOutgoingKind(description, hasFixedSignal = false) {
     text.includes("netflix") ||
     text.includes("spotify") ||
     text.includes("prime") ||
+    text.includes("amazon prime") ||
     text.includes("apple") ||
     text.includes("google") ||
     text.includes("disney") ||
@@ -533,12 +519,104 @@ export function inferOutgoingKind(description, hasFixedSignal = false) {
     text.includes("cinema") ||
     text.includes("icloud") ||
     text.includes("openai") ||
-    text.includes("chatgpt")
+    text.includes("chatgpt") ||
+    text.includes("xbox") ||
+    text.includes("playstation") ||
+    text.includes("audible") ||
+    text.includes("patreon")
   ) {
     return "subscription";
   }
 
-  return hasFixedSignal ? "bill" : "subscription";
+  return hasFixedSignal || hasBillKeyword(text) ? "bill" : "subscription";
+}
+
+function hasBillOrSubscriptionKeyword(value) {
+  const text = normalizeText(value);
+  return /\b(rent|mortgage|landlord|letting|council tax|water|thames water|southern water|energy|electric|electricity|gas|eon|e on|eon next|octopus|british gas|edf|ovo|bulb|shell energy|utility|utilities|broadband|internet|wifi|ee|bt|vodafone|o2|three|3 mobile|giffgaff|sky|virgin media|talktalk|plusnet|insurance|tv licence|licence|subscription|netflix|spotify|apple|google|amazon prime|prime video|disney|openai|chatgpt|icloud|adobe|microsoft|xbox|playstation|audible|patreon)\b/.test(text);
+}
+
+function hasBillKeyword(value) {
+  const text = normalizeText(value);
+  return /\b(rent|mortgage|landlord|letting|council tax|water|energy|electric|electricity|gas|eon|e on|eon next|octopus|british gas|edf|ovo|utility|utilities|broadband|internet|wifi|ee|bt|vodafone|o2|three|sky|virgin media|talktalk|plusnet|insurance|tv licence|licence)\b/.test(text);
+}
+
+function getRecurringTitleKey(description) {
+  const text = normalizeText(description)
+    .replace(/\b(card purchase|debit card|direct debit|dd|standing order|faster payment|contactless|online payment|payment to|payment from|ref|reference)\b/g, " ")
+    .replace(/\b\d{2,}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const known = [
+    ["eon next", /\be\s?on\s?next\b|\beon\b/],
+    ["octopus energy", /\boctopus\b/],
+    ["ee", /\bee\b|\bee limited\b/],
+    ["bt", /\bbt\b|\bbritish telecom\b/],
+    ["virgin media", /\bvirgin media\b/],
+    ["vodafone", /\bvodafone\b/],
+    ["o2", /\bo2\b/],
+    ["three", /\bthree\b|\b3 mobile\b/],
+    ["netflix", /\bnetflix\b/],
+    ["spotify", /\bspotify\b/],
+    ["apple", /\bapple\b|\bicloud\b/],
+    ["google", /\bgoogle\b/],
+    ["openai", /\bopenai\b|\bchatgpt\b/],
+    ["amazon prime", /\bamazon prime\b|\bprime video\b/],
+    ["council tax", /\bcouncil tax\b/],
+    ["tv licence", /\btv licen[cs]e\b/],
+  ];
+
+  const match = known.find(([, regex]) => regex.test(text));
+  if (match) return match[0];
+
+  return text.split(" ").slice(0, 5).join(" ");
+}
+
+function estimateRecurringDay(dates) {
+  if (!dates.length) return 1;
+
+  const days = dates.map((date) => date.getDate()).sort((a, b) => a - b);
+  const counts = days.reduce((map, day) => {
+    map.set(day, (map.get(day) || 0) + 1);
+    return map;
+  }, new Map());
+  const mostCommon = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+
+  if (mostCommon && mostCommon[1] >= 2) return mostCommon[0];
+
+  return Math.round(average(days));
+}
+
+function getRecurringConfidence(monthCount, dates, strongKeyword, hasFixedSignal) {
+  const days = dates.map((date) => date.getDate());
+  const daySpread = days.length ? Math.max(...days) - Math.min(...days) : 0;
+
+  if (monthCount >= 4 && daySpread <= 5) return "high";
+  if (monthCount >= 3) return "medium";
+  if (monthCount >= 2 && (strongKeyword || hasFixedSignal)) return "medium";
+  return "estimated";
+}
+
+function buildEstimateNote(dates, amounts, confidence) {
+  if (confidence === "high") return "Based on a stable repeated payment pattern.";
+  if (confidence === "medium") return "Estimated from previous statement dates.";
+  return `Rough estimate from ${dates.length} previous payment${dates.length === 1 ? "" : "s"}. Upload more statements to improve this.`;
+}
+
+function average(values) {
+  const safe = values.map(Number).filter((value) => Number.isFinite(value));
+  if (!safe.length) return 0;
+  return safe.reduce((sum, value) => sum + value, 0) / safe.length;
+}
+
+function getLatestAmount(dates, amounts) {
+  const latestIndex = dates.reduce((bestIndex, date, index) => {
+    if (bestIndex < 0) return index;
+    return date > dates[bestIndex] ? index : bestIndex;
+  }, -1);
+
+  return latestIndex >= 0 ? amounts[latestIndex] : average(amounts);
 }
 
 export function cleanEventTitle(description) {
