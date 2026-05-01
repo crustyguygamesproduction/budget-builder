@@ -8,7 +8,7 @@ export function getTotals(transactions) {
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
 
   const bills = transactions
-    .filter((transaction) => transaction.is_bill || transaction.is_subscription)
+    .filter((transaction) => transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription)
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
 
   return { income, spending, bills, net: income - spending, safeToSpend: 0 };

@@ -14,6 +14,7 @@ import {
   startOfMonth,
   toIsoDate,
 } from "./finance";
+import { inferRecurringPersonalBills, inferTransactionCategory } from "./transactionCategorisation";
 
 export function isGenericCategory(category) {
   return ["", "Income", "Spending", "Uncategorised"].includes(String(category || "").trim());
@@ -344,6 +345,7 @@ export function enhanceTransactions(transactions) {
   const incomingByAmount = new Map();
   const outgoingByAmount = new Map();
   const merchantCategoryVotes = new Map();
+  const recurringPersonalBills = inferRecurringPersonalBills(prepared);
 
   prepared.forEach((transaction) => {
     if (transaction.amount !== 0) {
@@ -398,12 +400,24 @@ export function enhanceTransactions(transactions) {
     }
 
     let smartCategory = String(transaction.category || "").trim();
+    const inferred = inferTransactionCategory(transaction.description, transaction.amount);
 
     if (smartInternalTransfer) {
       smartCategory = "Internal Transfer";
-    } else if (isGenericCategory(smartCategory)) {
+    } else if (isGenericCategory(smartCategory) || inferred.confidence > 0.5) {
       const learnedCategory = getLearnedCategory(transaction.description);
-      if (learnedCategory) {
+      const recurringRent = recurringPersonalBills.some((group) =>
+        group.transactions.some((item) => item.id === transaction.id || (
+          item.transaction_date === transaction.transaction_date &&
+          item.description === transaction.description &&
+          Number(item.amount) === Number(transaction.amount)
+        ))
+      );
+      if (recurringRent) {
+        smartCategory = "Rent";
+      } else if (inferred.confidence > 0.5) {
+        smartCategory = inferred.category;
+      } else if (learnedCategory) {
         smartCategory = learnedCategory;
       }
     }
@@ -414,8 +428,12 @@ export function enhanceTransactions(transactions) {
 
     return {
       ...transaction,
+      is_bill: Boolean(transaction.is_bill || inferred.is_bill || smartCategory === "Rent"),
+      is_subscription: Boolean(transaction.is_subscription || inferred.is_subscription),
       _smart_internal_transfer: smartInternalTransfer,
       _smart_category: smartCategory,
+      _smart_is_bill: inferred.is_bill || smartCategory === "Rent",
+      _smart_is_subscription: inferred.is_subscription,
     };
   });
 }

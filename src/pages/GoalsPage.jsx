@@ -39,7 +39,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     return !Number.isNaN(date.getTime()) && date >= timeframeStart && date <= latestDate && !isInternalTransferLike(transaction);
   });
   const categoryTotals = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !transaction.is_bill && !transaction.is_subscription)
+    .filter((transaction) => Number(transaction.amount) < 0 && !isBillLike(transaction))
     .reduce((groups, transaction) => {
       const category = getMeaningfulCategory(transaction) || "Spending";
       groups[category] = (groups[category] || 0) + Math.abs(Number(transaction.amount || 0));
@@ -56,7 +56,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     .sort((a, b) => b.threeMonthTotal - a.threeMonthTotal)
     .slice(0, 4);
   const reviewTransactions = timeframeTransactions
-    .filter((transaction) => Number(transaction.amount) < 0 && !transaction.is_bill && !transaction.is_subscription)
+    .filter((transaction) => Number(transaction.amount) < 0 && !isBillLike(transaction))
     .slice(0, 6);
   const accountStats = accounts.map((account) => {
     const tx = transactions.filter((transaction) => transaction.account_id === account.id);
@@ -78,7 +78,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
     .filter(
       (transaction) =>
         isTransactionInMonth(transaction, latestMonth.monthDate || new Date()) &&
-        (transaction.is_bill || transaction.is_subscription)
+        isBillLike(transaction)
     )
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
 
@@ -440,7 +440,7 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
 
       <BaseSection styles={styles} title="Transaction Review">
         <p style={styles.sectionIntro}>
-          There is not a full tagging screen yet, so this gives you a place to check the transactions currently feeding goal suggestions.
+          There is not a full tagging screen yet, so this shows the flexible transactions currently feeding goal suggestions. Bills, subscriptions, rent, and transfers are left out.
         </p>
         {reviewTransactions.length === 0 ? (
           <p style={styles.emptyText}>No reviewable spending found in {timeframeLabel}.</p>
@@ -509,4 +509,8 @@ export default function GoalsPage({ goals, accounts = [], transactions, onGoToCo
       </BaseSection>
     </>
   );
+}
+
+function isBillLike(transaction) {
+  return Boolean(transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription);
 }

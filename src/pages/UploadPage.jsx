@@ -12,6 +12,7 @@ import {
 import { buildUploadGuidance } from "../lib/uploadGuidance";
 import { getTotals, normalizeText } from "../lib/finance";
 import { validateStatementCsvFile } from "../lib/security";
+import { inferTransactionCategory } from "../lib/transactionCategorisation";
 
 export default function UploadPage({
   accounts,
@@ -293,24 +294,8 @@ export default function UploadPage({
     return parts.join(" | ");
   }
 
-  const categoryRules = [
-    { category: "Income", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus|hmrc/.test(text) },
-    { category: "Internal Transfer", test: ({ text }) => /transfer to|transfer from|to savings|from savings|standing order to|between accounts|own account/.test(text) },
-    { category: "Bill", test: ({ text }) => /rent|council|electric|gas|water|mortgage|broadband|internet|virgin media|sky|bt/.test(text) },
-    { category: "Subscription", test: ({ text }) => /netflix|spotify|prime|apple|google|disney|adobe|icloud|youtube premium/.test(text) },
-    { category: "Groceries", test: ({ text }) => /tesco|aldi|lidl|asda|sainsbury|waitrose|morrisons|co-op/.test(text) },
-    { category: "Fuel", test: ({ text }) => /shell|bp|esso|texaco/.test(text) },
-    { category: "Treats", test: ({ text }) => /costa|mcdonald|kfc|greggs|starbucks/.test(text) },
-    { category: "Takeaway", test: ({ text }) => /deliveroo|uber eats|just eat|domino/.test(text) },
-    { category: "Shopping", test: ({ text }) => /amazon|etsy|ebay|argos/.test(text) },
-    { category: "Transport", test: ({ text }) => /uber|trainline|tfl|national rail|bus|petrol station/.test(text) },
-  ];
-
   function detectCategory(description, amount) {
-    const text = normalizeDescription(description).toLowerCase();
-    const matchedRule = categoryRules.find((rule) => rule.test({ text, amount }));
-    if (matchedRule) return matchedRule.category;
-    return amount > 0 ? "Income" : "Spending";
+    return inferTransactionCategory(description, amount);
   }
 
   function summarizeMappingQuality(headers, mapping) {
@@ -376,18 +361,18 @@ export default function UploadPage({
       return null;
     }
 
-    const category = detectCategory(description, amount);
+    const categoryInfo = detectCategory(description, amount);
 
     return {
       date,
       description: normalizeDescription(description),
       amount,
       direction: amount >= 0 ? "in" : "out",
-      category,
-      is_bill: category === "Bill",
-      is_subscription: category === "Subscription",
-      is_internal_transfer: category === "Internal Transfer",
-      is_income: category === "Income",
+      category: categoryInfo.category,
+      is_bill: categoryInfo.is_bill,
+      is_subscription: categoryInfo.is_subscription,
+      is_internal_transfer: categoryInfo.is_internal_transfer,
+      is_income: categoryInfo.is_income,
     };
   }
 
