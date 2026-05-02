@@ -4,7 +4,7 @@ import { buildStrongBillFallbackEvents, mergeRecurringEvents } from "./billFallb
 import { getRealWorldMerchant, getFriendlyTransactionName } from "./merchantIntelligence";
 import { buildRecurringMajorPaymentCandidates, getRuleMerchantKey } from "./transactionCategorisation";
 import { formatCurrency, normalizeText, parseAppDate } from "./finance";
-import { cleanBillName, mergeBillStreams } from "./moneyUnderstandingGuards";
+import { cleanBillName, getBillBaseName, mergeBillStreams } from "./moneyUnderstandingGuards";
 
 const COMMITMENT_CATEGORIES = new Set(["Rent", "Mortgage", "Major bill", "Energy", "Water", "Broadband", "Phone", "Insurance", "Debt / Credit", "Council Tax", "TV Licence", "Childcare", "Subscription"]);
 const EVERYDAY_TEXT = /\b(chickie|chicken|takeaway|restaurant|mcdonald|kfc|burger king|subway|greggs|deliveroo|uber eats|just eat|cafe|coffee|bar|pub|tesco|aldi|lidl|asda|sainsbury|morrisons|one stop|premier|shop|store|vinted|ebay|amazon marketplace|fuel|petrol|parking|cash withdrawal|atm|gaming|lvl up|xsolla|odeon|cinema)\b/;
@@ -126,11 +126,11 @@ function eventsToBillStreams(events = []) {
 }
 
 function buildConfirmedRuleStreams(transactions = [], transactionRules = []) {
-  const confirmedRules = (transactionRules || []).filter((rule) => {
+  const confirmedRules = dedupeConfirmedRules((transactionRules || []).filter((rule) => {
     const type = normalizeText(rule?.rule_type || "");
     const category = normalizeText(rule?.category || "");
     return Boolean(rule?.match_text) && (type === "calendar_confirmed_bill" || rule?.is_bill || rule?.is_subscription) && category !== "ignore for calendar";
-  });
+  }));
 
   return confirmedRules.map((rule) => {
     const matches = (transactions || []).filter((transaction) => transactionMatchesRule(transaction, rule));
@@ -138,13 +138,15 @@ function buildConfirmedRuleStreams(transactions = [], transactionRules = []) {
     const dates = matches.map((transaction) => parseAppDate(transaction.transaction_date)).filter(Boolean);
     const amount = amounts.length ? usualAmount(amounts) : Math.abs(Number(rule.match_amount || 0));
     if (!amount) return null;
+
     const category = String(rule.category || (rule.is_subscription ? "Subscription" : "Major bill"));
     const kind = getKindFromCategory(category, rule);
-    const day = dates.length ? likelyDay(dates) : 1;
-    const name = cleanBillName(`${titleFromMatchText(rule.match_text)}${kind === "subscription" ? "" : " bill"}`);
+    const day = dates.length ? likelyDay(dates) : likelyDayFromRule(rule) || 1;
+    const providerName = titleFromMatchText(rule.match_text);
+    const name = buildConfirmedBillName(providerName, kind);
 
     return {
-      key: `confirmed:${kind}:${normalizeText(rule.match_text)}:${Math.round(amount * 100)}`,
+      key: `confirmed:${kind}:${getBillBaseName(providerName)}:${getAmountBand(amount)}`,
       name,
       amount: Math.round(amount * 100) / 100,
       day,
@@ -157,20 +159,57 @@ function buildConfirmedRuleStreams(transactions = [], transactionRules = []) {
   }).filter(Boolean);
 }
 
+function dedupeConfirmedRules(rules = []) {
+  return (rules || []).reduce((list, rule) => {
+    const amount = Math.abs(Number(rule?.match_amount || 0));
+    const kind = getKindFromCategory(rule?.category || "", rule);
+    const base = getBillBaseName(rule?.match_text || "");
+    const matchIndex = list.findIndex((existing) => {
+      const existingAmount = Math.abs(Number(existing?.match_amount || 0));
+      const existingKind = getKindFromCategory(existing?.category || "", existing);
+      const existingBase = getBillBaseName(existing?.match_text || "");
+      const sameProvider = base && existingBase && base === existingBase;
+      const sameKind = kind === existingKind;
+      const closeAmount = Math.abs(existingAmount - amount) <= Math.max(2, amount * 0.12);
+      return sameProvider && sameKind && closeAmount;
+    });
+    if (matchIndex < 0) return [...list, rule];
+    const current = list[matchIndex];
+    const better = new Date(rule.updated_at || rule.created_at || 0) > new Date(current.updated_at || current.created_at || 0) ? rule : current;
+    return list.map((item, index) => (index === matchIndex ? better : item));
+  }, []);
+}
+
 function transactionMatchesRule(transaction, rule) {
   const amount = Math.abs(Number(transaction?.amount || 0));
   if (Number(transaction?.amount || 0) >= 0 || amount <= 0) return false;
   if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return false;
 
+  const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+  if (ruleAmount && Math.abs(amount - ruleAmount) > Math.max(2, ruleAmount * 0.22)) return false;
+
   const matchText = normalizeText(rule?.match_text || "");
   const description = normalizeText(transaction?.description || "");
   const merchantKey = normalizeText(getRuleMerchantKey(transaction?.description || ""));
-  const textMatches = matchText && (description.includes(matchText) || merchantKey.includes(matchText) || matchText.includes(merchantKey));
-  if (!textMatches) return false;
+  const ruleProvider = getBillBaseName(matchText);
+  const descriptionProvider = getBillBaseName(description);
+  const merchantProvider = getBillBaseName(merchantKey);
 
-  const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
-  if (!ruleAmount) return true;
-  return Math.abs(amount - ruleAmount) <= Math.max(1.5, ruleAmount * 0.18);
+  if (!matchText) return false;
+  if (description.includes(matchText) || merchantKey.includes(matchText)) return true;
+  if (ruleProvider && descriptionProvider && (descriptionProvider.includes(ruleProvider) || ruleProvider.includes(descriptionProvider))) return true;
+  if (ruleProvider && merchantProvider && (merchantProvider.includes(ruleProvider) || ruleProvider.includes(merchantProvider))) return true;
+
+  const ruleTokens = meaningfulTokens(ruleProvider || matchText);
+  const descriptionTokens = new Set(meaningfulTokens(`${description} ${merchantKey}`));
+  return ruleTokens.length > 0 && ruleTokens.every((token) => descriptionTokens.has(token));
+}
+
+function meaningfulTokens(value) {
+  return normalizeText(value)
+    .split(" ")
+    .filter((token) => token.length > 1)
+    .filter((token) => !/^\d+$/.test(token));
 }
 
 function hasUserConfirmedRule(transaction, transactionRules = []) {
@@ -195,6 +234,33 @@ function getKindFromCategory(category, rule = {}) {
   if (/childcare/.test(c)) return "childcare";
   if (/subscription/.test(c) || rule?.is_subscription) return "subscription";
   return "other_bill";
+}
+
+function buildConfirmedBillName(providerName, kind) {
+  const provider = titleFromMatchText(providerName);
+  if (kind === "subscription") return cleanBillName(provider);
+  const kindLabel = getKindLabel(kind).toLowerCase();
+  if (kindLabel === "bill") return cleanBillName(`${provider} bill`);
+  return cleanBillName(`${provider} ${kindLabel} bill`);
+}
+
+function getKindLabel(kind) {
+  const labels = {
+    rent: "Rent",
+    mortgage: "Mortgage",
+    council_tax: "Council Tax",
+    energy: "Energy",
+    water: "Water",
+    broadband: "Broadband",
+    phone: "Phone",
+    insurance: "Insurance",
+    debt: "Debt",
+    childcare: "Childcare",
+    subscription: "Subscription",
+    other_bill: "Bill",
+    bill: "Bill",
+  };
+  return labels[kind] || "Bill";
 }
 
 function titleFromMatchText(value) {
@@ -325,6 +391,13 @@ function likelyDay(dates = []) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
 }
 
+function likelyDayFromRule(rule = {}) {
+  const text = `${rule.notes || ""} ${rule.evidence || ""}`;
+  const match = String(text).match(/day\s+(\d{1,2})/i);
+  const day = Number(match?.[1]);
+  return day >= 1 && day <= 31 ? day : null;
+}
+
 function median(values = []) {
   const safe = values.map(Number).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
   if (!safe.length) return 0;
@@ -351,13 +424,23 @@ function isSuppressedByTransactionRules(stream, transactionRules = []) {
   const streamText = normalizeText(`${stream?.name || ""} ${stream?.key || ""}`);
   const streamAmount = Math.abs(Number(stream?.amount || 0));
 
+  const hasConfirmedRule = (transactionRules || []).some((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    const sameAmount = !ruleAmount || !streamAmount || Math.abs(ruleAmount - streamAmount) <= Math.max(2, streamAmount * 0.18);
+    const sameProvider = getBillBaseName(rule?.match_text || "") && getBillBaseName(stream?.name || "") && getBillBaseName(rule?.match_text || "") === getBillBaseName(stream?.name || "");
+    return sameAmount && sameProvider;
+  });
+  if (hasConfirmedRule) return false;
+
   return (transactionRules || []).some((rule) => {
     const matchText = normalizeText(rule?.match_text || "");
     if (!matchText) return false;
     const category = normalizeText(rule?.category || "");
     const saysNotBill = !rule?.is_bill && !rule?.is_subscription && ["spending", "not a bill", "personal payment", "ignore for calendar"].includes(category);
     if (!saysNotBill) return false;
-    const textMatches = streamText.includes(matchText) || matchText.includes(streamText.split(" ")[0] || "");
+    const textMatches = streamText.includes(matchText) || matchText.includes(streamText.split(" ")[0] || "") || getBillBaseName(streamText) === getBillBaseName(matchText);
     if (!textMatches) return false;
     const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
     return !ruleAmount || !streamAmount || Math.abs(ruleAmount - streamAmount) <= Math.max(3, streamAmount * 0.12);
@@ -371,8 +454,8 @@ function billStreamsToRecurringEvents(billStreams = []) {
     amount: -Math.abs(Number(stream.amount || 0)),
     day: stream.day || 1,
     month: null,
-    kind: stream.kind === "subscription" ? "subscription" : "bill",
-    kindLabel: stream.kind === "subscription" ? "Subscription" : "Bill",
+    kind: stream.kind || "bill",
+    kindLabel: getKindLabel(stream.kind || "bill"),
     confidenceLabel: stream.confidence || "medium",
     estimateNote: stream.note || "Organised from your uploaded statements.",
     sourceCount: stream.sourceCount || 0,
@@ -420,14 +503,14 @@ function buildChecks({ candidates, billStreams }) {
 }
 
 function hasMatchingBillStream(candidate, billStreams) {
-  const candidateText = normalizeText(`${candidate?.label || ""} ${candidate?.matchText || ""}`);
+  const candidateBase = getBillBaseName(`${candidate?.label || ""} ${candidate?.matchText || ""}`);
   const candidateAmount = Number(candidate?.amount || 0);
 
   return (billStreams || []).some((stream) => {
-    const streamText = normalizeText(stream?.name || "");
+    const streamBase = getBillBaseName(stream?.name || "");
     const streamAmount = Number(stream?.amount || 0);
-    const sameName = candidateText.includes(streamText) || streamText.includes(candidateText.split(" ")[0] || "");
-    const sameAmount = Math.abs(streamAmount - candidateAmount) <= 3;
+    const sameName = candidateBase && streamBase && (candidateBase === streamBase || candidateBase.includes(streamBase) || streamBase.includes(candidateBase));
+    const sameAmount = Math.abs(streamAmount - candidateAmount) <= Math.max(3, Math.abs(candidateAmount) * 0.18);
     return sameName && sameAmount;
   });
 }
