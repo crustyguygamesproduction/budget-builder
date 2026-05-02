@@ -388,8 +388,6 @@ export default function CoachPage({
               <div style={styles.historyNote}>Showing the latest messages.</div>
             )}
 
-            {chatError && <div style={styles.errorNote}>{chatError}</div>}
-
             {visibleMessages.length === 0 && !pendingUserMessage ? (
               <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
                 <p style={styles.emptyCoachTitle}>What do you want to check?</p>
@@ -426,6 +424,12 @@ export default function CoachPage({
 
             <div ref={chatBottomRef} />
           </div>
+
+          {chatError ? (
+            <div style={getStickyChatErrorStyle(styles)}>
+              {chatError}
+            </div>
+          ) : null}
 
           <div style={getChatInputBarStyle(styles)}>
             <input
@@ -719,6 +723,17 @@ function getCoachBrainDotStyle(isBusy, isReady, isError) {
     background: isError ? "rgba(239, 68, 68, 0.12)" : isReady ? "rgba(34, 197, 94, 0.14)" : "rgba(14, 165, 233, 0.14)",
     color: isError ? "#b91c1c" : isReady ? "#15803d" : "#0369a1",
     transform: isBusy ? "scale(1.04)" : "none",
+  };
+}
+
+function getStickyChatErrorStyle(styles) {
+  return {
+    ...(styles.errorNote || {}),
+    flexShrink: 0,
+    margin: "2px 0 0",
+    position: "relative",
+    zIndex: 40,
+    boxShadow: "0 10px 28px rgba(185, 28, 28, 0.08)",
   };
 }
 
