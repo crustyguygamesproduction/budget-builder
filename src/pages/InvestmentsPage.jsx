@@ -1,12 +1,29 @@
-﻿import { useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, normalizeText, numberOrNull } from "../lib/finance";
 import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
+import { fileToDataUrl } from "../lib/calendarIntelligence";
+import {
+  getInvestmentPerformanceSummary,
+  getInvestmentPortfolioSnapshot,
+  hasMeaningfulExtraction,
+} from "../lib/dashboardIntelligence";
+import {
+  buildInvestmentDedupeKey,
+  buildKeywords,
+  formatInvestmentSignalMeta,
+  formatInvestmentSignalNet,
+  getInvestmentMatchSummary,
+  getInvestmentMonthlyStatus,
+  getInvestmentSignalNote,
+  getInvestmentSignals,
+  hasMatchingInvestment,
+} from "../lib/statementSignals";
+import { getStatusPillStyle } from "../lib/styleHelpers";
 
 export default function InvestmentsPage({
   investments,
-  investmentSignals,
   transactions,
   appMoneyModel,
   documents,
@@ -14,24 +31,8 @@ export default function InvestmentsPage({
   onDocumentsChange,
   viewerMode,
   styles,
-  helpers,
 }) {
-  const {
-    buildInvestmentDedupeKey,
-    buildKeywords,
-    fileToDataUrl,
-    formatInvestmentSignalMeta,
-    formatInvestmentSignalNet,
-    getInvestmentMatchSummary,
-    getInvestmentMonthlyStatus,
-    getInvestmentPerformanceSummary,
-    getInvestmentPortfolioSnapshot,
-    getInvestmentSignalNote,
-    getStatusPillStyle,
-    hasMatchingInvestment,
-    hasMeaningfulExtraction,
-  } = helpers;
-
+  const investmentSignals = useMemo(() => getInvestmentSignals(transactions), [transactions]);
   const [saving, setSaving] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNote, setAiNote] = useState("");

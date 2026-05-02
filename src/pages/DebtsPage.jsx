@@ -1,36 +1,38 @@
-﻿import { useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, intOrNull, normalizeText, numberOrNull } from "../lib/finance";
 import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
+import { fileToDataUrl } from "../lib/calendarIntelligence";
+import {
+  getDebtPortfolioSnapshot,
+  getDebtProgressSummary,
+  getTrendSummary,
+  hasMeaningfulExtraction,
+} from "../lib/dashboardIntelligence";
+import {
+  buildDebtDedupeKey,
+  buildKeywords,
+  getDebtMatchSummary,
+  getDebtMonthlyStatus,
+  getDebtSignals,
+  hasMatchingDebt,
+} from "../lib/statementSignals";
+import { getStatusPillStyle } from "../lib/styleHelpers";
 
 export default function DebtsPage({
   debts,
-  debtSignals,
   transactions,
   moneyUnderstanding,
   appMoneyModel,
   documents,
   onChange,
   onDocumentsChange,
-  trendSummary,
   viewerMode,
   styles,
-  helpers,
 }) {
-  const {
-    buildDebtDedupeKey,
-    buildKeywords,
-    fileToDataUrl,
-    getDebtMatchSummary,
-    getDebtMonthlyStatus,
-    getDebtPortfolioSnapshot,
-    getDebtProgressSummary,
-    getStatusPillStyle,
-    hasMatchingDebt,
-    hasMeaningfulExtraction,
-  } = helpers;
-
+  const debtSignals = useMemo(() => getDebtSignals(transactions), [transactions]);
+  const trendSummary = useMemo(() => getTrendSummary(transactions), [transactions]);
   const [saving, setSaving] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNote, setAiNote] = useState("");

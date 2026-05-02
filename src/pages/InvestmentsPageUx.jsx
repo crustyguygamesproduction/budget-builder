@@ -1,15 +1,17 @@
 import SetupEmptyState from "../components/SetupEmptyState";
 import InvestmentsPage from "./InvestmentsPage";
+import { getInvestmentSignals } from "../lib/statementSignals";
 
 export default function InvestmentsPageUx(props) {
   const {
     investments = [],
-    investmentSignals = [],
+    investmentSignals: providedInvestmentSignals,
     transactions = [],
     documents = [],
     styles,
     viewerMode,
   } = props;
+  const investmentSignals = providedInvestmentSignals || getInvestmentSignals(transactions);
 
   const hasSavedInvestments = investments.length > 0;
   const hasSignals = investmentSignals.length > 0;

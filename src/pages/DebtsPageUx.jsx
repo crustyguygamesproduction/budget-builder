@@ -1,15 +1,17 @@
 import SetupEmptyState from "../components/SetupEmptyState";
 import DebtsPage from "./DebtsPage";
+import { getDebtSignals } from "../lib/statementSignals";
 
 export default function DebtsPageUx(props) {
   const {
     debts = [],
-    debtSignals = [],
+    debtSignals: providedDebtSignals,
     transactions = [],
     documents = [],
     styles,
     viewerMode,
   } = props;
+  const debtSignals = providedDebtSignals || getDebtSignals(transactions);
 
   const hasSavedDebts = debts.length > 0;
   const hasSignals = debtSignals.length > 0;

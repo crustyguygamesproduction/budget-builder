@@ -2,6 +2,7 @@ import { useState } from "react";
 import { supabase } from "../supabase";
 import { InsightCard, Row, Section } from "../components/ui";
 import { buildGoalPlanFromMoneyModel } from "../lib/appMoneyModel";
+import { formatCurrency, numberOrNull } from "../lib/finance";
 
 export default function GoalsPage({
   goals,
@@ -10,9 +11,7 @@ export default function GoalsPage({
   onNavigate,
   onChange,
   styles,
-  helpers,
 }) {
-  const { formatCurrency, numberOrNull } = helpers;
   const [saving, setSaving] = useState(false);
   const [activeGoalId, setActiveGoalId] = useState("");
   const [showGoalForm, setShowGoalForm] = useState(false);

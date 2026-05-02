@@ -1,4 +1,13 @@
 import { getStatementIntelligenceContext } from "./statementIntelligence";
+import {
+  getCalendarPatternSummary,
+  getMonthlyBreakdown,
+} from "./calendarIntelligence";
+import { getTransferSummary } from "./dashboardIntelligence";
+import {
+  getDebtMonthlyStatus,
+  getInvestmentMonthlyStatus,
+} from "./statementSignals";
 
 export function buildCoachContext({
   transactions,
@@ -11,21 +20,12 @@ export function buildCoachContext({
   subscriptionSummary,
   dataFreshness,
   baseMessages,
-  helpers,
   userMessage,
   subscriptionStatus,
   bankFeedReadiness,
   moneyUnderstanding,
   appMoneyModel,
 }) {
-  const {
-    getDebtMonthlyStatus,
-    getInvestmentMonthlyStatus,
-    getMonthlyBreakdown,
-    getCalendarPatternSummary,
-    getTransferSummary,
-  } = helpers;
-
   const debtStatuses = debts.slice(0, 6).map((debt) => ({
     name: debt.name,
     lender: debt.lender,

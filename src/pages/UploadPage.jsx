@@ -13,6 +13,13 @@ import { buildUploadGuidance } from "../lib/uploadGuidance";
 import { getTotals, normalizeText } from "../lib/finance";
 import { validateStatementCsvFile } from "../lib/security";
 import {
+  enhanceTransactions,
+  getHistorySummary,
+  getRecurringSummary,
+  getTransferSummary,
+} from "../lib/dashboardIntelligence";
+import { getGridStyle, getStatusPillStyle } from "../lib/styleHelpers";
+import {
   buildRecurringMajorPaymentCandidates,
   inferTransactionCategory,
 } from "../lib/transactionCategorisation";
@@ -27,17 +34,7 @@ export default function UploadPage({
   onGoToCoach,
   screenWidth,
   styles,
-  helpers,
 }) {
-  const {
-    enhanceTransactions,
-    getGridStyle,
-    getHistorySummary,
-    getRecurringSummary,
-    getStatusPillStyle,
-    getTransferSummary,
-  } = helpers;
-
 const [files, setFiles] = useState([]);
 const [saving, setSaving] = useState(false);
 const [savingRuleKey, setSavingRuleKey] = useState("");

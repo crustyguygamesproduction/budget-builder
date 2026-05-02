@@ -37,13 +37,12 @@ import {
 } from "../lib/calendarIntelligence";
 import { getCalendarEventStyle } from "../lib/styleHelpers";
 import { cleanBillName, getBillBaseName } from "../lib/moneyUnderstandingGuards";
+import { getDataFreshness } from "../lib/dashboardIntelligence";
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export default function CalendarPage({ transactions, transactionRules = [], moneyUnderstanding, appMoneyModel, onTransactionRulesChange, onRefreshMoneyUnderstanding, screenWidth, styles, helpers }) {
-  const { getDataFreshness } = helpers;
-
+export default function CalendarPage({ transactions, transactionRules = [], moneyUnderstanding, appMoneyModel, onTransactionRulesChange, onRefreshMoneyUnderstanding, screenWidth, styles }) {
   const [viewDate, setViewDate] = useState(() => new Date());
   const [selectedDayKey, setSelectedDayKey] = useState("");
   const [calendarMode, setCalendarMode] = useState("recurring");

@@ -1,6 +1,17 @@
 import { useMemo } from "react";
 import { formatCurrency, getMeaningfulCategory } from "../lib/finance";
 import { Row, Section } from "../components/ui";
+import {
+  getDataFreshness,
+  getStatementCoverageSummary,
+} from "../lib/dashboardIntelligence";
+import {
+  getDebtSignals,
+  getInvestmentSignals,
+  hasMatchingDebt,
+  hasMatchingInvestment,
+} from "../lib/statementSignals";
+import { getHomeStatusPillStyle } from "../lib/styleHelpers";
 
 export default function HomePage({
   transactions,
@@ -9,8 +20,6 @@ export default function HomePage({
   goals,
   debts,
   investments,
-  debtSignals,
-  investmentSignals,
   statementImports,
   subscriptionStatus,
   bankFeedReadiness,
@@ -18,23 +27,16 @@ export default function HomePage({
   onNavigate,
   screenWidth,
   styles,
-  helpers,
 }) {
-  const {
-    getDataFreshness,
-    getHomeStatusPillStyle,
-    getStatementCoverageSummary,
-    hasMatchingDebt,
-    hasMatchingInvestment,
-  } = helpers;
-
-  const fallbackDataFreshness = useMemo(() => getDataFreshness(transactions), [getDataFreshness, transactions]);
+  const fallbackDataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
   const dataFreshness = appMoneyModel?.dataFreshness || fallbackDataFreshness;
-  const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
+  const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [transactions, statementImports]);
   const visibleCash = useMemo(() => getVisibleCash(appMoneyModel, accounts), [appMoneyModel, accounts]);
   const calendarBills = useMemo(() => getCalendarBillRead(appMoneyModel), [appMoneyModel]);
   const billShare = useMemo(() => getBillShareRead(appMoneyModel, calendarBills), [appMoneyModel, calendarBills]);
   const expectedIncome = useMemo(() => getExpectedIncomeRead(appMoneyModel), [appMoneyModel]);
+  const debtSignals = useMemo(() => getDebtSignals(transactions), [transactions]);
+  const investmentSignals = useMemo(() => getInvestmentSignals(transactions), [transactions]);
   const nextBill = calendarBills.nextBill;
   const moneyLeft = visibleCash.hasBalance ? visibleCash.total - billShare.personalTotal : null;
   const homeRead = getHomeRead({ visibleCash, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome });

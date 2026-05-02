@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { buildCoachContext } from "../lib/coachContext";
 import { Section } from "../components/ui";
+import {
+  getDataFreshness,
+  getSubscriptionSummary,
+  getTopCategories,
+} from "../lib/dashboardIntelligence";
+import {
+  getDebtSignals,
+  getInvestmentSignals,
+} from "../lib/statementSignals";
 
 const COACH_DISPLAY_LIMIT = 18;
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
@@ -15,8 +24,6 @@ export default function CoachPage({
   goals,
   debts,
   investments,
-  debtSignals,
-  investmentSignals,
   aiMessages,
   subscriptionStatus,
   bankFeedReadiness,
@@ -25,7 +32,6 @@ export default function CoachPage({
   screenWidth,
   viewportHeight,
   styles,
-  helpers,
 }) {
   const [message, setMessage] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -63,12 +69,14 @@ export default function CoachPage({
     safeToSpend: appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0,
     basis: "shared_money_model_monthly_estimate",
   }), [appMoneyModel]);
-  const topCategories = useMemo(() => helpers.getTopCategories(transactions), [helpers, transactions]);
+  const debtSignals = useMemo(() => getDebtSignals(transactions), [transactions]);
+  const investmentSignals = useMemo(() => getInvestmentSignals(transactions), [transactions]);
+  const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
   const subscriptionSummary = useMemo(
-    () => helpers.getSubscriptionSummary(transactions),
-    [helpers, transactions]
+    () => getSubscriptionSummary(transactions),
+    [transactions]
   );
-  const dataFreshness = useMemo(() => helpers.getDataFreshness(transactions), [helpers, transactions]);
+  const dataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
   const correctionCandidates = useMemo(
     () => (moneyUnderstanding?.checks || [])
       .filter((candidate) => !dismissedRuleKeys.includes(candidate.key))
@@ -168,7 +176,6 @@ export default function CoachPage({
         subscriptionSummary,
         dataFreshness,
         baseMessages,
-        helpers,
         userMessage: text,
         subscriptionStatus,
         bankFeedReadiness,
