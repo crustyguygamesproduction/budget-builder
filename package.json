@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "patch:shared-contributions": "node scripts/patch-shared-contribution-grouping.mjs",
     "dev": "vite",
     "build": "vite build",
     "check": "npm run lint && npm run test:money && npm run build",
