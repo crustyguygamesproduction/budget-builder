@@ -48,23 +48,25 @@ function isCompactLookup(message: string) {
 }
 
 function isHardTruthRequest(message: string) {
-  return /\b(be honest|be brutal|be harsh|be savage|roast me|hard truth|tell me straight|am i bad|doing bad|bad with money|why am i broke|i am broke|i'm broke|wake up|no excuses|sort me out)\b/i.test(String(message || ""));
+  return /\b(be honest|be brutal|be harsh|be savage|roast me|hard truth|tell me straight|am i bad|doing bad|bad with money|why am i broke|i am broke|i'm broke|wake up|no excuses|sort me out|brutally honest)\b/i.test(String(message || ""));
 }
 
 function getCoachMaxOutputTokens(message: string) {
-  if (isHardTruthRequest(message)) return 700;
-  return isCompactLookup(message) ? 140 : 520;
+  if (isHardTruthRequest(message)) return 260;
+  return isCompactLookup(message) ? 140 : 420;
 }
 
 function getCoachLengthInstruction(message: string) {
   if (isHardTruthRequest(message)) {
     return [
       "HARD TRUTH MODE IS ON.",
-      "Do not open with a soft phrase like 'Short answer', 'Quick read', or 'You're not doing that bad'.",
-      "Open with a blunt wake-up sentence such as: 'Yeah, the data says you are leaking money badly.'",
-      "Use firm labels like 'Hard truth', 'The damage', 'The behaviour to stop', and 'Your first rule'.",
-      "Be more direct than usual, but do not personally abuse the user.",
-      "Give 3 to 5 concrete behaviour changes, not generic budgeting advice.",
+      "Maximum 6 short lines total.",
+      "Do not write a long review, balanced appraisal, numbered essay, or motivational speech.",
+      "Do not include a 'What you're doing well' section unless the user directly asks for positives.",
+      "Open with one blunt sentence.",
+      "Then give the 2 or 3 main leaks only.",
+      "End with one hard rule for the next 7 days.",
+      "No cosy follow-up offer.",
     ].join("\n");
   }
 
@@ -83,6 +85,7 @@ function getCoachLengthInstruction(message: string) {
 
 function enforceCompactReply(reply: string, message: string) {
   const cleaned = cleanReply(reply);
+  if (isHardTruthRequest(message)) return enforceHardTruthReply(cleaned);
   if (!isCompactLookup(message) || cleaned.length <= 360) return cleaned;
 
   const paragraphs = cleaned.split(/\n+/).map((item) => item.trim()).filter(Boolean);
@@ -90,6 +93,19 @@ function enforceCompactReply(reply: string, message: string) {
   const compact = firstUseful.length > 240 ? `${firstUseful.slice(0, 237).trim()}...` : firstUseful;
   const hasFollowUp = /want me|shall i|do you want/i.test(compact);
   return hasFollowUp ? compact : `${compact}\nWant me to break that down?`;
+}
+
+function enforceHardTruthReply(reply: string) {
+  const lines = String(reply || "")
+    .split(/\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => !/^what you.?re doing well/i.test(item))
+    .filter((item) => !/^quick read/i.test(item))
+    .slice(0, 6);
+
+  const compact = lines.join("\n").trim();
+  return compact.length > 900 ? `${compact.slice(0, 897).trim()}...` : compact;
 }
 
 async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
@@ -210,17 +226,18 @@ Hard truth mode:
 ${hardTruthMode ? "ON" : "OFF"}
 - If hard truth mode is ON, do not reassure first.
 - If hard truth mode is ON, open with the uncomfortable truth, not a summary.
-- If hard truth mode is ON, use phrases like "Hard truth:", "The damage:", "The behaviour to stop:", and "Your first rule:".
-- If hard truth mode is ON, say exactly which habits are making the user skint and what to ban/cap first.
-- If hard truth mode is ON, be more savage about the spending pattern, but still give a practical path out.
-- If hard truth mode is ON, do not end with a cosy offer unless the answer would feel incomplete without it.
+- If hard truth mode is ON, answer in 6 short lines or fewer.
+- If hard truth mode is ON, do not include positives unless the user directly asks.
+- If hard truth mode is ON, do not explain every category. Pick the biggest 2 or 3 leaks.
+- If hard truth mode is ON, end with one strict rule for the next 7 days.
+- If hard truth mode is ON, no cosy follow-up offer.
 
 Output rules:
 - Plain text only.
 - Do not use markdown, bold, asterisks, bullet symbols, or code formatting.
 - Keep replies mobile-friendly.
 - Answer the exact question first.
-- For hard truth mode, the default answer can be longer: usually 4 to 8 short paragraphs.
+- For hard truth mode, default length is 4 to 6 short lines total.
 - For normal mode, default length is very short: usually 1 to 4 sentences.
 - Use labelled sections only when the user asks for advice, a plan, a review, a breakdown, a decision, or hard truth.
 - End with at most one useful follow-up offer when it helps.
@@ -243,9 +260,9 @@ Lifestyle audit rules:
 - Look for food delivery, takeaways, McDonald's, Uber Eats, Deliveroo, Just Eat, restaurants, coffee shops, taxis, Uber/Bolt, petrol, parking, shopping, subscriptions, gambling, alcohol, convenience stores, gaming, and repeated small card payments.
 - Do not over-soften lifestyle leaks. If the data shows repeated avoidable spending, call it avoidable and tell them to stop or cap it.
 - When the user is emotionally admitting they are bad with money, do not comfort them with vague positivity. Give them a blunt but useful reset.
-- Good hard-truth style: "Yeah, the data says you are leaking money badly. Not because of one disaster, but because you keep treating small wants like emergencies."
+- Good hard-truth style: "Yeah. You are not broke because of one disaster; you are bleeding money through convenience, gaming and top-ups."
 - Good hard-truth style: "The Spending pot is not a budget right now. It is a hole with a friendly name."
-- Good hard-truth style: "Gaming, takeaway and Uber need to go in the penalty box for 30 days. Not reduced. Stopped or hard-capped."
+- Good hard-truth style: "For 7 days: no delivery, no gaming spend, no Uber unless safety is involved."
 - Bad style: personal abuse, name-calling, humiliation, or saying the user is stupid.
 - Bad style: soft HR language like "consider reducing discretionary spend" when the data clearly shows the leak.
 
