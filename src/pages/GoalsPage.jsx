@@ -1,31 +1,21 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { supabase } from "../supabase";
-import {
-  ActionCard as BaseActionCard,
-  InsightCard as BaseInsightCard,
-  Row as BaseRow,
-  Section as BaseSection,
-} from "../components/ui";
+import { InsightCard, Row, Section } from "../components/ui";
 import { buildGoalPlanFromMoneyModel } from "../lib/appMoneyModel";
-import { isInternalTransferLike } from "../lib/finance";
 
 export default function GoalsPage({
   goals,
-  accounts = [],
   appMoneyModel,
   onGoToCoach,
   onNavigate,
   onChange,
-  onAccountsChange,
   styles,
   helpers,
 }) {
   const { formatCurrency, numberOrNull } = helpers;
   const [saving, setSaving] = useState(false);
-  const [savingAccountRole, setSavingAccountRole] = useState("");
   const [activeGoalId, setActiveGoalId] = useState("");
-  const [showGoalForm, setShowGoalForm] = useState(goals.length === 0);
-  const [showAssumptions, setShowAssumptions] = useState(false);
+  const [showGoalForm, setShowGoalForm] = useState(false);
   const [form, setForm] = useState({
     name: "",
     target_amount: "",
@@ -33,65 +23,21 @@ export default function GoalsPage({
     target_date: "",
   });
 
+  const recommendedGoals = getRecommendedGoals(appMoneyModel);
   const activeGoal =
     goals.find((goal) => goal.id === activeGoalId) ||
-    goals.find((goal) => String(goal.name || "").toLowerCase().includes("emergency")) ||
     goals[0] ||
     null;
-  const hasSavedGoal = Boolean(activeGoal);
-  const draftGoal = activeGoal || {
-    name: form.name || "Emergency buffer",
-    target_amount: form.target_amount,
-    current_amount: form.current_amount,
-    target_date: form.target_date,
-  };
-  const plan = buildGoalPlanFromMoneyModel(draftGoal, appMoneyModel);
-  const primarySuggestion = getPrimaryGoalSuggestion(appMoneyModel);
-  const suggestedSavingsAccounts = useMemo(
-    () => getSuggestedSavingsAccounts(accounts, appMoneyModel?.transactions || []),
-    [accounts, appMoneyModel]
-  );
+  const activePlan = activeGoal ? buildGoalPlanFromMoneyModel(activeGoal, appMoneyModel) : null;
 
-  const planPrompt = [
-    "Build my goal plan using Money Hub's shared money model.",
-    `Goal: ${draftGoal.name || "Goal"}.`,
-    `Target: ${formatCurrency(plan.target)}, saved: ${formatCurrency(plan.current)}, left: ${formatCurrency(plan.amountLeft)}.`,
-    `Calendar bills: ${formatCurrency(appMoneyModel?.monthlyBillTotal || 0)} a month.`,
-    `Clear income: ${appMoneyModel?.income?.label || "not clear"}.`,
-    `Usual spending: ${appMoneyModel?.flexibleSpending?.label || "needs checking"}.`,
-    `Safe saving amount: ${formatCurrency(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0)}.`,
-    "Keep it plain, honest, and do not treat historical net as current cash.",
-  ].join(" ");
-
-  function fillGoalForm(suggestion) {
+  function applyRecommendation(goal) {
     setForm({
-      name: suggestion.name,
-      target_amount: String(suggestion.target),
+      name: goal.name,
+      target_amount: String(goal.target),
       current_amount: "",
       target_date: "",
     });
     setShowGoalForm(true);
-  }
-
-  async function confirmSavingsAccount(accountId, value) {
-    setSavingAccountRole(accountId);
-    try {
-      const { error } = await supabase
-        .from("accounts")
-        .update({
-          counts_as_savings: value,
-          account_role: value ? "savings" : "not_savings",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", accountId);
-
-      if (error) throw error;
-      await onAccountsChange?.();
-    } catch {
-      alert("Could not save that account choice yet.");
-    } finally {
-      setSavingAccountRole("");
-    }
   }
 
   async function saveGoal(extra = {}) {
@@ -140,65 +86,61 @@ export default function GoalsPage({
     }
   }
 
+  const planPrompt = buildGoalCoachPrompt({
+    goal: activeGoal || recommendedGoals[0],
+    appMoneyModel,
+    formatCurrency,
+  });
+
   return (
     <>
-      <BaseSection
-        styles={styles}
-        title={hasSavedGoal ? activeGoal.name || "Goal" : "Goal Planner"}
-        right={
-          <button style={styles.ghostBtn} type="button" onClick={() => setShowGoalForm((value) => !value)}>
-            {showGoalForm ? "Hide form" : "Add goal"}
-          </button>
-        }
-      >
-        {hasSavedGoal ? (
-          <>
-            {goals.length > 1 ? (
-              <div style={styles.inlineBtnRow}>
-                {goals.map((goal) => (
-                  <button
-                    key={goal.id || goal.name}
-                    style={(activeGoal?.id || "") === goal.id ? styles.primaryInlineBtn : styles.secondaryInlineBtn}
-                    type="button"
-                    onClick={() => setActiveGoalId(goal.id)}
-                  >
-                    {goal.name || "Goal"}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div style={styles.inlineInfoBlock}>
-              <BaseRow styles={styles} name="Target" value={formatCurrency(plan.target)} />
-              <BaseRow styles={styles} name="Saved" value={formatCurrency(plan.current)} />
-              <BaseRow styles={styles} name="Left to go" value={formatCurrency(plan.amountLeft)} />
-              <BaseRow styles={styles} name="Target date" value={activeGoal.target_date ? formatTargetDate(activeGoal.target_date) : "Not set"} />
-            </div>
-
+      {activeGoal ? (
+        <Section
+          styles={styles}
+          title="Your Goal"
+          right={<button type="button" style={styles.ghostBtn} onClick={() => setShowGoalForm(true)}>Add goal</button>}
+        >
+          <div style={getGoalHeroStyle()}>
+            <p style={styles.insightLabel}>{activePlan.status.label}</p>
+            <h3 style={getGoalTitleStyle()}>{activeGoal.name || "Goal"}</h3>
+            <p style={styles.goalStat}>{formatCurrency(activePlan.current)} / {formatCurrency(activePlan.target)}</p>
             <div style={styles.progressOuter}>
-              <div style={{ ...styles.progressInner, width: `${plan.progressPercent}%` }} />
+              <div style={{ ...styles.progressInner, width: `${activePlan.progressPercent}%` }} />
             </div>
-            <div style={getStatusStyle(plan.status.tone)}>
-              <strong>{plan.status.label}</strong>
-              <span>{plan.status.body}</span>
-            </div>
-          </>
-        ) : (
-          <BaseInsightCard
-            styles={styles}
-            label="Best first goal"
-            headline={`${primarySuggestion.name} - ${formatCurrency(primarySuggestion.target)}`}
-            body={primarySuggestion.body}
-            ctaLabel="Use this"
-            onClick={() => fillGoalForm(primarySuggestion)}
-          />
-        )}
+            <p style={styles.sectionIntro}>{activePlan.status.body}</p>
+          </div>
+        </Section>
+      ) : (
+        <Section
+          styles={styles}
+          title="Recommended Goals"
+          right={<button type="button" style={styles.ghostBtn} onClick={() => setShowGoalForm(true)}>Add your own</button>}
+        >
+          <p style={styles.sectionIntro}>
+            Money Hub starts with safety, then growth. These are suggestions, not saved goals yet.
+          </p>
+          <div style={getRecommendationGridStyle()}>
+            {recommendedGoals.map((goal) => (
+              <InsightCard
+                key={goal.key}
+                styles={styles}
+                label={goal.label}
+                headline={`${goal.name} - ${formatCurrency(goal.target)}`}
+                body={goal.body}
+                ctaLabel="Use this goal"
+                onClick={() => applyRecommendation(goal)}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
 
-        {showGoalForm || !hasSavedGoal ? (
-          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+      {showGoalForm ? (
+        <Section styles={styles} title="Save Goal">
+          <div style={getFormGridStyle()}>
             <input
               style={styles.input}
-              placeholder="Goal name, e.g. Emergency buffer"
+              placeholder="Goal name"
               value={form.name}
               onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
             />
@@ -211,7 +153,7 @@ export default function GoalsPage({
             />
             <input
               style={styles.input}
-              placeholder="Current amount, optional"
+              placeholder="Saved already, optional"
               inputMode="decimal"
               value={form.current_amount}
               onChange={(event) => setForm((prev) => ({ ...prev, current_amount: event.target.value }))}
@@ -226,209 +168,138 @@ export default function GoalsPage({
               {saving ? "Saving..." : "Save goal"}
             </button>
           </div>
-        ) : null}
-      </BaseSection>
-
-      <BaseSection styles={styles} title="Smart Recommendation">
-        <p style={styles.sectionIntro}>
-          {appMoneyModel?.savingsCapacity?.body || "Money Hub needs a statement before it can recommend a safe amount."}
-        </p>
-        <div style={styles.inlineInfoBlock}>
-          <BaseRow styles={styles} name="Safe amount" value={formatCurrency(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0)} />
-          <BaseRow styles={styles} name="Stretch amount" value={formatCurrency(appMoneyModel?.savingsCapacity?.stretchMonthlyAmount || 0)} />
-          <BaseRow styles={styles} name="Pace needed" value={plan.targetMonths ? formatCurrency(plan.requiredMonthly) : "Set a target date"} />
-          <BaseRow styles={styles} name="Goal ETA" value={plan.fastestMonths ? `${plan.fastestMonths} month${plan.fastestMonths === 1 ? "" : "s"}` : "Needs more room"} />
-        </div>
-      </BaseSection>
-
-      <BaseSection styles={styles} title="Monthly Plan">
-        <div style={styles.inlineInfoBlock}>
-          <BaseRow styles={styles} name="Clear monthly income" value={appMoneyModel?.income?.label || "Income is not clear yet"} />
-          <BaseRow styles={styles} name="Calendar bills" value={formatCurrency(appMoneyModel?.monthlyBillTotal || 0)} />
-          <BaseRow styles={styles} name="Usual spending" value={appMoneyModel?.flexibleSpending?.label || "Needs checking"} />
-          <BaseRow styles={styles} name="Data quality" value={getDataQualityLabel(appMoneyModel)} />
-        </div>
-      </BaseSection>
-
-      <BaseSection styles={styles} title="What To Do Next">
-        <div style={styles.inlineBtnRow}>
-          {!activeGoal?.target_date && hasSavedGoal ? (
-            <button style={styles.secondaryInlineBtn} type="button" onClick={() => setShowGoalForm(true)}>
-              Set target date
-            </button>
-          ) : null}
-          <button style={styles.primaryInlineBtn} type="button" onClick={() => onGoToCoach(planPrompt, { autoSend: true })}>
-            Ask AI for a plan
-          </button>
-          {(appMoneyModel?.nextBestActions || []).map((action) => (
-            <button
-              key={action.key}
-              style={styles.secondaryInlineBtn}
-              type="button"
-              onClick={() => onNavigate(action.target)}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      </BaseSection>
-
-      <BaseSection
-        styles={styles}
-        title="What Money Hub Is Using"
-        right={
-          <button style={styles.ghostBtn} type="button" onClick={() => setShowAssumptions((value) => !value)}>
-            {showAssumptions ? "Hide" : "Show"}
-          </button>
-        }
-      >
-        {showAssumptions ? (
-          <div style={styles.inlineInfoBlock}>
-            <BaseRow styles={styles} name="Bank history" value={appMoneyModel?.period?.label || "No history yet"} />
-            <BaseRow styles={styles} name="Bills from Calendar" value={`${appMoneyModel?.billStreams?.length || 0}`} />
-            <BaseRow styles={styles} name="Income read" value={plainConfidence(appMoneyModel?.income?.confidence)} />
-            <BaseRow styles={styles} name="Spending read" value={plainConfidence(appMoneyModel?.flexibleSpending?.confidence)} />
-            <BaseRow styles={styles} name="Checks waiting" value={`${appMoneyModel?.checksWaiting?.length || 0}`} />
-            {(appMoneyModel?.confidenceWarnings || []).slice(0, 3).map((warning) => (
-              <BaseRow key={warning} styles={styles} name="Needs checking" value={warning} />
-            ))}
-          </div>
-        ) : (
-          <p style={styles.sectionIntro}>Calendar bills, interpreted transactions, Checks answers, and recent statement history.</p>
-        )}
-      </BaseSection>
-
-      {suggestedSavingsAccounts.length > 0 ? (
-        <BaseSection styles={styles} title="Savings Account Check">
-          <p style={styles.sectionIntro}>Confirm once and transfers into that account can be treated as savings progress.</p>
-          {suggestedSavingsAccounts.map(({ account }) => (
-            <div key={account.id} style={styles.signalCard}>
-              <strong>{account.name}</strong>
-              <p style={styles.transactionMeta}>Should money moved into this account count as savings?</p>
-              <div style={styles.inlineBtnRow}>
-                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, true)} disabled={savingAccountRole === account.id}>Yes</button>
-                <button style={styles.secondaryInlineBtn} type="button" onClick={() => confirmSavingsAccount(account.id, false)} disabled={savingAccountRole === account.id}>No</button>
-              </div>
-            </div>
-          ))}
-        </BaseSection>
+        </Section>
       ) : null}
 
-      <BaseSection styles={styles} title="Smart Moves">
-        {(appMoneyModel?.flexibleSpending?.topCategories || []).length > 0 ? (
-          <div style={styles.aiInsightGrid}>
-            {appMoneyModel.flexibleSpending.topCategories.slice(0, 3).map((item) => (
-              <BaseActionCard
-                key={item.category}
-                styles={styles}
-                label="Spending"
-                headline={`Trim ${item.category}`}
-                body={`Recent ${item.category.toLowerCase()} spending is ${formatCurrency(item.total)} in the planning window. Cutting a small part of it can support the goal without guessing.`}
-                actionLabel="Build habit plan"
-                onClick={() => onGoToCoach(`Create a practical habit plan from my ${item.category} spending. Use my shared Money Hub goal model and keep bills protected.`, { autoSend: true })}
-              />
-            ))}
-          </div>
-        ) : (
-          <BaseActionCard
-            styles={styles}
-            label="Data quality"
-            headline="No clear spending pattern yet"
-            body="Add more statement history or answer Checks so this can point to one useful habit."
-            actionLabel="Upload latest"
-            onClick={() => onNavigate("upload")}
-          />
-        )}
-      </BaseSection>
+      <Section styles={styles} title="Safe Monthly Amount">
+        <div style={getSafetyReadStyle(appMoneyModel?.savingsCapacity?.status)}>
+          <strong>{appMoneyModel?.savingsCapacity?.label || "Needs better data"}</strong>
+          <span>{appMoneyModel?.savingsCapacity?.body || "Upload statements so Money Hub can make this useful."}</span>
+        </div>
+        <div style={styles.inlineInfoBlock}>
+          <Row styles={styles} name="Clear income" value={appMoneyModel?.income?.label || "Not clear yet"} />
+          <Row styles={styles} name="Calendar bills" value={formatCurrency(appMoneyModel?.monthlyBillTotal || 0)} />
+          <Row styles={styles} name="Usual spending" value={appMoneyModel?.flexibleSpending?.label || "Needs checking"} />
+          <Row styles={styles} name="Checks waiting" value={`${appMoneyModel?.checksWaiting?.length || 0}`} />
+        </div>
+      </Section>
+
+      <Section styles={styles} title="Next Step">
+        <div style={styles.inlineBtnRow}>
+          <button type="button" style={styles.primaryInlineBtn} onClick={() => onGoToCoach(planPrompt, { autoSend: true })}>
+            Ask AI for a simple plan
+          </button>
+          {(appMoneyModel?.checksWaiting?.length || 0) > 0 ? (
+            <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("confidence")}>Answer Checks</button>
+          ) : null}
+          <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("calendar")}>Check bills</button>
+        </div>
+      </Section>
 
       {goals.length > 0 ? (
-        <BaseSection styles={styles} title="Saved Goals">
+        <Section styles={styles} title="Saved Goals">
           {goals.map((goal) => {
-            const savedPlan = buildGoalPlanFromMoneyModel(goal, appMoneyModel);
+            const plan = buildGoalPlanFromMoneyModel(goal, appMoneyModel);
             return (
               <button
                 type="button"
                 key={goal.id || goal.name}
                 style={styles.actionCard}
-                onClick={() => {
-                  setActiveGoalId(goal.id);
-                  setShowGoalForm(false);
-                }}
+                onClick={() => setActiveGoalId(goal.id)}
               >
-                <p style={styles.insightLabel}>{goal.target_date ? formatTargetDate(goal.target_date) : savedPlan.status.label}</p>
+                <p style={styles.insightLabel}>{plan.status.label}</p>
                 <h4 style={styles.insightHeadline}>{goal.name || "Goal"}</h4>
-                <p style={styles.insightBody}>{savedPlan.progressPercent.toFixed(0)}% of {formatCurrency(savedPlan.target)}</p>
-                <span style={styles.insightCta}>Plan this goal</span>
+                <p style={styles.insightBody}>{plan.progressPercent.toFixed(0)}% saved - {formatCurrency(plan.amountLeft)} left</p>
+                <span style={styles.insightCta}>Open</span>
               </button>
             );
           })}
-        </BaseSection>
+        </Section>
       ) : null}
     </>
   );
 }
 
-function getPrimaryGoalSuggestion(appMoneyModel) {
+function getRecommendedGoals(appMoneyModel) {
   const monthlyBills = Number(appMoneyModel?.monthlyBillTotal || 0);
-  const monthlySpending = Number(appMoneyModel?.flexibleSpending?.monthlyEstimate || 0);
-  const target = Math.max(500, Math.ceil((monthlyBills + monthlySpending) / 50) * 50);
-  return {
-    name: "Emergency buffer",
-    target,
-    body: "A small buffer comes first because it stops bills, overdrafts and surprises from knocking the whole plan over.",
-  };
+  const usualSpending = Number(appMoneyModel?.flexibleSpending?.monthlyEstimate || 0);
+  const safetyTarget = Math.max(500, roundToNearest(monthlyBills + usualSpending, 50));
+  const growthTarget = Math.max(1000, roundToNearest(safetyTarget * 3, 100));
+
+  return [
+    {
+      key: "safety",
+      label: "Start here",
+      name: "Safety buffer",
+      target: safetyTarget,
+      body: "One month of bills and normal spending. This is the goal that stops small problems becoming disasters.",
+    },
+    {
+      key: "growth",
+      label: "After safety",
+      name: "Growth fund",
+      target: growthTarget,
+      body: "Once the safety buffer exists, this becomes the money for bigger progress: debt freedom, investing, a move, or a house.",
+    },
+  ];
 }
 
-function getSuggestedSavingsAccounts(accounts, transactions) {
-  return accounts
-    .map((account) => {
-      const accountTransactions = transactions.filter((transaction) => transaction.account_id === account.id);
-      const incomingTransfers = accountTransactions.filter((transaction) => Number(transaction.amount) > 0 && isInternalTransferLike(transaction));
-      const outgoingTransfers = accountTransactions.filter((transaction) => Number(transaction.amount) < 0 && isInternalTransferLike(transaction));
-      const externalOut = accountTransactions.filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction));
-      const nameLooksSavings = /save|saver|saving|isa|pot|vault|reserve|emergency/i.test(`${account.name || ""} ${account.nickname || ""}`);
-      const likelySavings = nameLooksSavings && incomingTransfers.length >= outgoingTransfers.length && externalOut.length <= 2;
-      return { account, nameLooksSavings, likelySavings };
-    })
-    .filter((item) => item.nameLooksSavings && item.account.counts_as_savings == null);
+function buildGoalCoachPrompt({ goal, appMoneyModel, formatCurrency }) {
+  return [
+    "Build a very simple Money Hub goal plan.",
+    `Goal: ${goal?.name || "Safety buffer"}.`,
+    `Target: ${formatCurrency(goal?.target || goal?.target_amount || 0)}.`,
+    `Safe monthly amount: ${formatCurrency(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0)}.`,
+    `Calendar bills: ${formatCurrency(appMoneyModel?.monthlyBillTotal || 0)}.`,
+    `Income: ${appMoneyModel?.income?.label || "not clear"}.`,
+    `Usual spending: ${appMoneyModel?.flexibleSpending?.label || "needs checking"}.`,
+    "Explain it for someone bad with money. Give one next action.",
+  ].join(" ");
 }
 
-function getDataQualityLabel(appMoneyModel) {
-  if (!appMoneyModel?.dataFreshness?.hasData) return "Needs statements";
-  if (appMoneyModel?.checksWaiting?.length > 0) return "Needs Checks";
-  if (appMoneyModel?.income?.confidence === "low") return "Income unclear";
-  if (appMoneyModel?.flexibleSpending?.confidence === "low") return "Spending unclear";
-  return "Good enough to plan";
+function roundToNearest(value, step) {
+  return Math.ceil(Number(value || 0) / step) * step;
 }
 
-function plainConfidence(value) {
-  if (value === "high") return "Clear";
-  if (value === "medium") return "Usable";
-  return "Needs checking";
-}
-
-function getStatusStyle(tone) {
-  const colors = {
-    good: { background: "#ecfdf5", border: "#bbf7d0", color: "#166534" },
-    warn: { background: "#fffbeb", border: "#fde68a", color: "#92400e" },
-    bad: { background: "#fef2f2", border: "#fecaca", color: "#991b1b" },
-  };
-  const picked = colors[tone] || colors.warn;
+function getGoalHeroStyle() {
   return {
     display: "grid",
-    gap: 4,
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 12,
-    border: `1px solid ${picked.border}`,
-    background: picked.background,
-    color: picked.color,
-    fontSize: 14,
+    gap: 10,
   };
 }
 
-function formatTargetDate(dateString) {
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return "Not set";
-  return date.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+function getGoalTitleStyle() {
+  return {
+    margin: 0,
+    fontSize: 24,
+    letterSpacing: "-0.02em",
+  };
+}
+
+function getRecommendationGridStyle() {
+  return {
+    display: "grid",
+    gap: 10,
+  };
+}
+
+function getFormGridStyle() {
+  return {
+    display: "grid",
+    gap: 10,
+  };
+}
+
+function getSafetyReadStyle(status) {
+  const tight = status === "not_safe" || status === "tight" || status === "needs_data";
+  return {
+    display: "grid",
+    gap: 5,
+    padding: 13,
+    borderRadius: 16,
+    border: tight ? "1px solid #fde68a" : "1px solid #bbf7d0",
+    background: tight ? "#fffbeb" : "#ecfdf5",
+    color: tight ? "#92400e" : "#166534",
+    marginBottom: 12,
+  };
 }

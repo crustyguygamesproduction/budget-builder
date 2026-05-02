@@ -23,6 +23,7 @@ export function buildAppMoneyModel({
 } = {}) {
   const transactions = moneyUnderstanding?.transactions || [];
   const billStreams = moneyUnderstanding?.billStreams || [];
+  const calendarBills = getCalendarBillItems(moneyUnderstanding?.recurringEvents || [], billStreams);
   const upcomingBills = moneyUnderstanding?.summary?.upcomingBills || getUpcomingBills(billStreams);
   const monthWindow = getRecentMonthWindow(transactions, 3);
   const monthCount = Math.max(monthWindow.monthKeys.length, 1);
@@ -35,7 +36,7 @@ export function buildAppMoneyModel({
   const monthlyIncome = incomeTransactions.length ? incomeTotal / monthCount : 0;
   const incomeConfidence = getIncomeConfidence(incomeTransactions, monthWindow.monthKeys);
 
-  const monthlyBillTotal = billStreams.reduce(
+  const monthlyBillTotal = calendarBills.reduce(
     (sum, stream) => sum + Math.abs(Number(stream.amount || 0)),
     0
   );
@@ -80,6 +81,7 @@ export function buildAppMoneyModel({
     source: moneyUnderstanding?.source || "money-understanding",
     transactions,
     bills: billStreams,
+    calendarBills,
     billStreams,
     recurringEvents: moneyUnderstanding?.recurringEvents || [],
     upcomingBills,
@@ -414,6 +416,38 @@ function getUpcomingBills(billStreams) {
       };
     })
     .sort((a, b) => a.daysAway - b.daysAway || b.amount - a.amount);
+}
+
+function getCalendarBillItems(recurringEvents = [], billStreams = []) {
+  const source = recurringEvents.length
+    ? recurringEvents.map((event) => ({
+        key: event.key,
+        name: event.title || event.name,
+        amount: Math.abs(Number(event.amount || 0)),
+        day: event.day,
+        kind: event.kind,
+      }))
+    : billStreams;
+
+  return (source || []).reduce((list, item) => {
+    const normal = {
+      ...item,
+      name: item.name || "Bill",
+      amount: Math.abs(Number(item.amount || 0)),
+      day: Number(item.day || 1),
+    };
+    if (!normal.amount) return list;
+    const provider = getBillBaseName(normal.name);
+    const matchIndex = list.findIndex((existing) => {
+      const existingProvider = getBillBaseName(existing.name);
+      const sameKey = existing.key && normal.key && existing.key === normal.key;
+      const sameProvider = provider && existingProvider && provider === existingProvider;
+      const closeAmount = Math.abs(existing.amount - normal.amount) <= Math.max(3, normal.amount * 0.12);
+      return sameKey || (sameProvider && closeAmount);
+    });
+    if (matchIndex >= 0) return list;
+    return [...list, normal];
+  }, []);
 }
 
 function getNextBestActions({ goals, debts, investments, checksWaiting, dataFreshness, incomeConfidence, billStreams, safeMonthlySaving }) {
