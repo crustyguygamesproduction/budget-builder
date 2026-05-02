@@ -31,11 +31,13 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
     ...getSmartRecurringCalendarEvents(smartTransactions),
     ...buildStrongBillFallbackEvents(smartTransactions, []),
   ]);
-  const localBillStreams = mergeBillStreams(eventsToBillStreams(localEvents), buildCommitmentStreams(smartTransactions));
+  const localBillStreams = mergeBillStreams(eventsToBillStreams(localEvents), buildCommitmentStreams(smartTransactions))
+    .filter((stream) => !isSuppressedByTransactionRules(stream, transactionRules));
 
   if (snapshot?.id) {
     const snapshotStreams = normaliseSnapshotBillStreams(snapshot.bill_streams);
-    const billStreams = mergeBillStreams(snapshotStreams, localBillStreams);
+    const billStreams = mergeBillStreams(snapshotStreams, localBillStreams)
+      .filter((stream) => !isSuppressedByTransactionRules(stream, transactionRules));
     const recurringEvents = billStreamsToRecurringEvents(billStreams);
     const checks = normaliseSnapshotChecks(snapshot.checks);
     const upcomingBills = getUpcomingBills(billStreams);
@@ -64,7 +66,7 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
     };
   }
 
-  const billStreams = localBillStreams;
+  const billStreams = localBillStreams.filter((stream) => !isSuppressedByTransactionRules(stream, transactionRules));
   const recurringEvents = billStreamsToRecurringEvents(billStreams);
   const checks = buildChecks({
     candidates: buildRecurringMajorPaymentCandidates(smartTransactions, transactionRules),
@@ -258,6 +260,23 @@ function usualAmount(values = []) {
     }
   });
   return clusters.sort((a, b) => b.values.length - a.values.length || b.average - a.average)[0]?.average || median(safe);
+}
+
+function isSuppressedByTransactionRules(stream, transactionRules = []) {
+  const streamText = normalizeText(`${stream?.name || ""} ${stream?.key || ""}`);
+  const streamAmount = Math.abs(Number(stream?.amount || 0));
+
+  return (transactionRules || []).some((rule) => {
+    const matchText = normalizeText(rule?.match_text || "");
+    if (!matchText) return false;
+    const category = normalizeText(rule?.category || "");
+    const saysNotBill = !rule?.is_bill && !rule?.is_subscription && ["spending", "not a bill", "personal payment", "ignore for calendar"].includes(category);
+    if (!saysNotBill) return false;
+    const textMatches = streamText.includes(matchText) || matchText.includes(streamText.split(" ")[0] || "");
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || !streamAmount || Math.abs(ruleAmount - streamAmount) <= Math.max(3, streamAmount * 0.12);
+  });
 }
 
 function billStreamsToRecurringEvents(billStreams = []) {
