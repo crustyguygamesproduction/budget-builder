@@ -11,6 +11,16 @@ import { getBankFeedReadiness } from "./lib/bankFeeds";
 import { getSubscriptionStatus } from "./lib/productPlan";
 import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
 import { buildAppMoneyModel } from "./lib/appMoneyModel";
+import { buildCoachContext } from "./lib/coachContext";
+import {
+  getDataFreshness,
+  getSubscriptionSummary,
+  getTopCategories,
+} from "./lib/dashboardIntelligence";
+import {
+  getDebtSignals,
+  getInvestmentSignals,
+} from "./lib/statementSignals";
 
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const CoachPage = lazy(() => import("./pages/CoachPage"));
@@ -41,6 +51,8 @@ const PAGE_TITLES = {
 
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
 const COACH_AUTOSEND_KEY = "moneyhub-coach-autosend";
+const COACH_CONTEXT_SAVE_DELAY_MS = 900;
+
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
@@ -271,6 +283,103 @@ export default function App() {
     () => financialDocuments.filter((doc) => doc.record_type === "investment"),
     [financialDocuments]
   );
+  const debtSignals = useMemo(() => getDebtSignals(smartTransactions), [smartTransactions]);
+  const investmentSignals = useMemo(() => getInvestmentSignals(smartTransactions), [smartTransactions]);
+  const topCategories = useMemo(() => getTopCategories(smartTransactions), [smartTransactions]);
+  const subscriptionSummary = useMemo(() => getSubscriptionSummary(smartTransactions), [smartTransactions]);
+  const dataFreshness = useMemo(() => getDataFreshness(smartTransactions), [smartTransactions]);
+  const coachBrainContext = useMemo(
+    () => buildCoachContext({
+      transactions: smartTransactions,
+      debts,
+      investments,
+      debtSignals,
+      investmentSignals,
+      totals: {
+        income: appMoneyModel?.income?.monthlyEstimate || 0,
+        spending: appMoneyModel?.flexibleSpending?.monthlyEstimate || 0,
+        bills: appMoneyModel?.monthlyBillTotal || 0,
+        net:
+          (appMoneyModel?.income?.monthlyEstimate || 0) -
+          (appMoneyModel?.monthlyBillTotal || 0) -
+          (appMoneyModel?.flexibleSpending?.monthlyEstimate || 0),
+        safeToSpend: appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0,
+        basis: "shared_money_model_monthly_estimate",
+      },
+      topCategories,
+      subscriptionSummary,
+      dataFreshness,
+      baseMessages: aiMessages,
+      userMessage: "",
+      subscriptionStatus,
+      bankFeedReadiness,
+      moneyUnderstanding,
+      appMoneyModel,
+    }),
+    [
+      aiMessages,
+      appMoneyModel,
+      bankFeedReadiness,
+      dataFreshness,
+      debtSignals,
+      debts,
+      investmentSignals,
+      investments,
+      moneyUnderstanding,
+      smartTransactions,
+      subscriptionStatus,
+      subscriptionSummary,
+      topCategories,
+    ]
+  );
+  const coachBrainHash = useMemo(() => {
+    const latestDate = smartTransactions
+      .map((transaction) => transaction.transaction_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || "none";
+    return [
+      smartTransactions.length,
+      latestDate,
+      moneySnapshot?.id || "no-snapshot",
+      goals.length,
+      debts.length,
+      investments.length,
+      transactionRules.length,
+      aiMessages.length,
+    ].join(":");
+  }, [aiMessages.length, debts.length, goals.length, investments.length, moneySnapshot?.id, smartTransactions, transactionRules.length]);
+
+  useEffect(() => {
+    if (!session?.user?.id || smartTransactions.length === 0) return undefined;
+
+    const latestTransactionDate = smartTransactions
+      .map((transaction) => transaction.transaction_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
+
+    const timer = window.setTimeout(async () => {
+      const { error } = await supabase.from("coach_context_snapshots").upsert(
+        {
+          user_id: session.user.id,
+          source: "client_interpreted_money_layer",
+          context: coachBrainContext,
+          context_hash: coachBrainHash,
+          transaction_count: smartTransactions.length,
+          latest_transaction_date: latestTransactionDate,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+
+      if (error) {
+        console.warn("Coach brain snapshot could not be saved", error);
+      }
+    }, COACH_CONTEXT_SAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [coachBrainContext, coachBrainHash, session?.user?.id, smartTransactions]);
 
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
   if (!session) {

@@ -1,3 +1,22 @@
+import { createClient } from "@supabase/supabase-js";
+import { buildCoachQueryFocus } from "../_shared/coachQueryFocus.js";
+
+class PublicFunctionError extends Error {
+  status: number;
+  code: string;
+  publicMessage: string;
+  details: Record<string, unknown>;
+
+  constructor(code: string, publicMessage: string, status = 500, logMessage = publicMessage, details: Record<string, unknown> = {}) {
+    super(logMessage);
+    this.name = "PublicFunctionError";
+    this.code = code;
+    this.publicMessage = publicMessage;
+    this.status = status;
+    this.details = details;
+  }
+}
+
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
@@ -7,11 +26,10 @@ function buildCorsHeaders(req: Request) {
   const allowOrigin = allowedOrigins.length === 0 || allowedOrigins.includes(origin) ? origin || "*" : allowedOrigins[0];
 
   return {
-  "Access-Control-Allow-Origin": allowOrigin,
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
 }
 
 function cleanReply(text: string) {
@@ -30,9 +48,7 @@ function parseJsonReply(text: string) {
   } catch {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    if (start !== -1 && end !== -1 && end > start) {
-      return JSON.parse(text.slice(start, end + 1));
-    }
+    if (start !== -1 && end !== -1 && end > start) return JSON.parse(text.slice(start, end + 1));
     throw new Error("Could not parse AI JSON response.");
   }
 }
@@ -48,11 +64,29 @@ function isCompactLookup(message: string) {
   return factualLookup && !asksForDetail;
 }
 
+function isHardTruthRequest(message: string) {
+  return /\b(be honest|be brutal|be harsh|be savage|roast me|hard truth|tell me straight|am i bad|doing bad|bad with money|why am i broke|i am broke|i'm broke|wake up|no excuses|sort me out|brutally honest)\b/i.test(String(message || ""));
+}
+
 function getCoachMaxOutputTokens(message: string) {
-  return isCompactLookup(message) ? 140 : 520;
+  if (isHardTruthRequest(message)) return 260;
+  return isCompactLookup(message) ? 140 : 420;
 }
 
 function getCoachLengthInstruction(message: string) {
+  if (isHardTruthRequest(message)) {
+    return [
+      "HARD TRUTH MODE IS ON.",
+      "Maximum 6 short lines total.",
+      "Do not write a long review, balanced appraisal, numbered essay, or motivational speech.",
+      "Do not include a 'What you're doing well' section unless the user directly asks for positives.",
+      "Open with one blunt sentence.",
+      "Then give the 2 or 3 main leaks only.",
+      "End with one hard rule for the next 7 days.",
+      "No cosy follow-up offer.",
+    ].join("\n");
+  }
+
   if (!isCompactLookup(message)) {
     return "This is not a compact lookup unless the user's wording is purely factual. Answer naturally, but stay concise.";
   }
@@ -68,78 +102,102 @@ function getCoachLengthInstruction(message: string) {
 
 function enforceCompactReply(reply: string, message: string) {
   const cleaned = cleanReply(reply);
+  if (isHardTruthRequest(message)) return enforceHardTruthReply(cleaned);
+  if (!isCompactLookup(message) || cleaned.length <= 360) return cleaned;
 
-  if (!isCompactLookup(message) || cleaned.length <= 360) {
-    return cleaned;
-  }
-
-  const paragraphs = cleaned
-    .split(/\n+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-
+  const paragraphs = cleaned.split(/\n+/).map((item) => item.trim()).filter(Boolean);
   const firstUseful = paragraphs.find((item) => /£|total|sent|received|paid|spent/i.test(item)) || paragraphs[0] || cleaned;
   const compact = firstUseful.length > 240 ? `${firstUseful.slice(0, 237).trim()}...` : firstUseful;
   const hasFollowUp = /want me|shall i|do you want/i.test(compact);
-
   return hasFollowUp ? compact : `${compact}\nWant me to break that down?`;
+}
+
+function enforceHardTruthReply(reply: string) {
+  const lines = String(reply || "")
+    .split(/\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => !/^what you.?re doing well/i.test(item))
+    .filter((item) => !/^quick read/i.test(item))
+    .slice(0, 6);
+
+  const compact = lines.join("\n").trim();
+  return compact.length > 900 ? `${compact.slice(0, 897).trim()}...` : compact;
 }
 
 async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   const data = await response.json();
-
   if (!response.ok) {
-    throw new Error(JSON.stringify(data));
+    const openAIErrorKind = data?.error?.code || data?.error?.type || "unknown";
+    console.error("ai-coach: OpenAI request failed", {
+      status: response.status,
+      error_type: data?.error?.type || null,
+      error_code: data?.error?.code || null,
+      model: body?.model || null,
+      error_message: data?.error?.message || JSON.stringify(data).slice(0, 500),
+    });
+    throw new PublicFunctionError(
+      "openai_request_failed",
+      "Coach had trouble reading the saved money brain. Try again in a moment.",
+      500,
+      data?.error?.message || "OpenAI request failed",
+      { openai_error_kind: openAIErrorKind, openai_status: response.status, model: body?.model || null }
+    );
   }
-
   return data;
 }
 
-async function getYahooPrice(symbol: string) {
-  const response = await fetch(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`
-  );
-
-  if (!response.ok) {
-    throw new Error(`Could not fetch market price for ${symbol}`);
+async function callResponsesApiWithModels(apiKey: string, body: Record<string, unknown>, models: string[]) {
+  let lastError: unknown = null;
+  for (const model of models) {
+    try {
+      return { data: await callResponsesApi(apiKey, { ...body, model }), model };
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof PublicFunctionError) || error.code !== "openai_request_failed") throw error;
+      console.warn("ai-coach: OpenAI model failed, trying next candidate if available", {
+        model,
+        openai_error_kind: error.details?.openai_error_kind || null,
+      });
+    }
   }
+  throw lastError;
+}
+
+function uniqueStrings(items: string[]) {
+  return Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function getOpenAIModelCandidates(primaryEnvName: string, fallbackEnvName: string, defaultPrimary = "gpt-5.1") {
+  const primary = Deno.env.get(primaryEnvName) || defaultPrimary;
+  const fallbacks = (Deno.env.get(fallbackEnvName) || "gpt-4.1-mini,gpt-4o-mini")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return uniqueStrings([primary, ...fallbacks]);
+}
+
+async function getYahooPrice(symbol: string) {
+  const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`);
+  if (!response.ok) throw new Error(`Could not fetch market price for ${symbol}`);
 
   const data = await response.json();
   const result = data?.chart?.result?.[0];
   const meta = result?.meta || {};
-  const price =
-    meta.regularMarketPrice ??
-    meta.previousClose ??
-    result?.indicators?.quote?.[0]?.close?.find((value: number | null) => value != null);
+  const price = meta.regularMarketPrice ?? meta.previousClose ?? result?.indicators?.quote?.[0]?.close?.find((value: number | null) => value != null);
+  if (price == null) throw new Error(`No price returned for ${symbol}`);
 
-  if (price == null) {
-    throw new Error(`No price returned for ${symbol}`);
-  }
-
-  return {
-    price: Number(price),
-    currency: meta.currency || "USD",
-    symbol: meta.symbol || symbol,
-    source: "Yahoo Finance",
-  };
+  return { price: Number(price), currency: meta.currency || "USD", symbol: meta.symbol || symbol, source: "Yahoo Finance" };
 }
 
 function buildDocumentExtractionInput(systemPrompt: string, message: string, context: any) {
-  const textParts = [
-    { type: "input_text", text: `${systemPrompt}
-
-User note:
-${message || "No extra note."}` },
-  ] as Array<Record<string, string>>;
+  const textParts = [{ type: "input_text", text: `${systemPrompt}\n\nUser note:\n${message || "No extra note."}` }] as Array<Record<string, string>>;
 
   if (context?.document_data_url && String(context.document_data_url).startsWith("data:image/")) {
     textParts.push({ type: "input_image", image_url: context.document_data_url });
@@ -155,74 +213,419 @@ ${message || "No extra note."}` },
   return [{ role: "user", content: textParts }];
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: buildCorsHeaders(req) });
+async function getAuthenticatedUser(req: Request) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || (!anonKey && !serviceRoleKey)) {
+    throw new PublicFunctionError("missing_supabase_env", "AI data service is not configured.", 500);
   }
-  const corsHeaders = buildCorsHeaders(req);
 
-  try {
-    const { mode = "coach", message, context } = await req.json();
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
+  const authHeader = req.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) {
+    throw new PublicFunctionError("not_signed_in", "Please sign in again before using Coach.", 401);
+  }
+  const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-    if (!apiKey) {
-          return new Response(JSON.stringify({ error: "AI service is not configured." }), {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
+  const authClient = createClient(supabaseUrl, serviceRoleKey || anonKey || "", {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await authClient.auth.getUser(jwt);
+  if (error || !data?.user?.id) {
+    throw new PublicFunctionError("not_signed_in", "Please sign in again before using Coach.", 401, error?.message || "JWT validation failed");
+  }
+
+  return { userId: data.user.id, supabaseUrl, anonKey, serviceRoleKey, authHeader };
+}
+
+async function getSavedCoachContext(req: Request) {
+  const { userId, supabaseUrl, anonKey, serviceRoleKey, authHeader } = await getAuthenticatedUser(req);
+  const selectSnapshot = (client: ReturnType<typeof createClient>) =>
+    client
+      .from("coach_context_snapshots")
+      .select("context, context_hash, transaction_count, latest_transaction_date, updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+  let data: any = null;
+  let rlsError: any = null;
+
+  if (anonKey) {
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const result = await selectSnapshot(userClient);
+    data = result.data;
+    rlsError = result.error;
+  }
+
+  if (rlsError && !serviceRoleKey) throw rlsError;
+
+  if ((rlsError || !data) && serviceRoleKey) {
+    if (rlsError) {
+      console.warn("ai-coach: RLS context read failed, falling back to service role after JWT validation", {
+        code: rlsError.code || null,
+        message: rlsError.message || "unknown",
       });
     }
+    const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const result = await selectSnapshot(serviceClient);
+    if (result.error) throw result.error;
+    data = result.data;
+  }
 
-    const recentMessages = Array.isArray(context?.recent_messages)
-      ? context.recent_messages.slice(-8)
-      : [];
+  if (!data?.context) {
+    throw new PublicFunctionError(
+      "coach_brain_missing",
+      "Coach brain is still saving. Wait a moment, then try again.",
+      200,
+      "No coach_context_snapshots row/context found for authenticated user."
+    );
+  }
 
-    if (mode === "market_price") {
-      const assetType = String(context?.asset_type || "").toLowerCase();
-      const rawSymbol = String(context?.ticker_symbol || message || "").trim();
-      if (!rawSymbol) {
-        throw new Error("Missing ticker symbol.");
-      }
+  return {
+    ...(data.context || {}),
+    server_context_meta: {
+      source: "coach_context_snapshots",
+      context_hash: data.context_hash || null,
+      transaction_count: data.transaction_count || 0,
+      latest_transaction_date: data.latest_transaction_date || null,
+      updated_at: data.updated_at || null,
+    },
+  };
+}
 
-      const symbol = assetType === "crypto" && !rawSymbol.includes("-")
-        ? `${rawSymbol.toUpperCase()}-USD`
-        : rawSymbol;
-      const quote = await getYahooPrice(symbol);
+function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
+  const recentMessages = Array.isArray(savedContext?.recent_messages) ? savedContext.recent_messages.slice(-8) : [];
+  const relevantTransactions = getRelevantTransactions(savedContext, message);
+  const queryFocus = buildServerQueryFocus(savedContext, message) || savedContext?.query_focus || null;
+  return {
+    server_context_meta: savedContext?.server_context_meta || null,
+    totals: savedContext?.totals || null,
+    transaction_count: savedContext?.transaction_count || 0,
+    query_focus: queryFocus,
+    statement_intelligence: compactStatementIntelligence(savedContext?.statement_intelligence),
+    app_money_model: savedContext?.app_money_model || null,
+    monthly_income_estimate: savedContext?.monthly_income_estimate || null,
+    monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
+    monthly_bills_from_calendar_gross: savedContext?.monthly_bills_from_calendar_gross ?? null,
+    monthly_flexible_spending: savedContext?.monthly_flexible_spending || null,
+    savings_capacity: savedContext?.savings_capacity || null,
+    cash_position: savedContext?.cash_position || null,
+    confidence_warnings: savedContext?.confidence_warnings || [],
+    next_best_actions: savedContext?.next_best_actions || [],
+    top_categories: (savedContext?.top_categories || []).slice(0, 12),
+    monthly_breakdown: (savedContext?.monthly_breakdown_all || savedContext?.monthly_breakdown || []).slice(0, 12),
+    calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
+    money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
+    bills_found: compactBills(savedContext?.bills_found || []).slice(0, 20),
+    checks_waiting: compactChecks(savedContext?.checks_waiting || []).slice(0, 12),
+    transfer_summary: savedContext?.transfer_summary || null,
+    debts: (savedContext?.debts || []).slice(0, 8),
+    investments: (savedContext?.investments || []).slice(0, 8),
+    debt_signals: (savedContext?.debt_signals || []).slice(0, 8),
+    investment_signals: (savedContext?.investment_signals || []).slice(0, 8),
+    recent_transactions: compactTransactions(savedContext?.recent_transactions || []).slice(0, 20),
+    relevant_searchable_transactions: relevantTransactions,
+    recent_messages: recentMessages,
+    launch_safety_rules: savedContext?.launch_safety_rules || null,
+  };
+}
 
-      return new Response(
-        JSON.stringify({
-          ...quote,
-          mode,
-        }),
-        {
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
+function buildMinimalCoachBrainForPrompt(savedContext: any, message = "") {
+  const statement = compactStatementIntelligence(savedContext?.statement_intelligence);
+  const queryFocus = buildServerQueryFocus(savedContext, message) || savedContext?.query_focus || null;
+  return {
+    server_context_meta: savedContext?.server_context_meta || null,
+    totals: savedContext?.totals || null,
+    transaction_count: savedContext?.transaction_count || 0,
+    query_focus: queryFocus,
+    statement_intelligence: statement
+      ? {
+          date_range: statement.date_range,
+          totals: statement.totals,
+          total_transactions: statement.total_transactions,
+          settled_transaction_count: statement.settled_transaction_count,
+          pass_through_analysis: statement.pass_through_analysis,
+          category_totals: (statement.category_totals || []).slice(0, 8),
+          merchant_totals: (statement.merchant_totals || []).slice(0, 8),
+          income_streams: (statement.income_streams || []).slice(0, 5),
         }
-      );
-    }
+      : null,
+    app_money_model: savedContext?.app_money_model || null,
+    monthly_income_estimate: savedContext?.monthly_income_estimate || null,
+    monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
+    monthly_bills_from_calendar_gross: savedContext?.monthly_bills_from_calendar_gross ?? null,
+    monthly_flexible_spending: savedContext?.monthly_flexible_spending || null,
+    savings_capacity: savedContext?.savings_capacity || null,
+    cash_position: savedContext?.cash_position || null,
+    confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 6),
+    next_best_actions: (savedContext?.next_best_actions || []).slice(0, 5),
+    top_categories: (savedContext?.top_categories || []).slice(0, 8),
+    calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
+    money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
+    bills_found: compactBills(savedContext?.bills_found || []).slice(0, 8),
+    checks_waiting: compactChecks(savedContext?.checks_waiting || []).slice(0, 6),
+    transfer_summary: savedContext?.transfer_summary || null,
+    debts: (savedContext?.debts || []).slice(0, 5),
+    investments: (savedContext?.investments || []).slice(0, 5),
+    debt_signals: (savedContext?.debt_signals || []).slice(0, 5),
+    investment_signals: (savedContext?.investment_signals || []).slice(0, 5),
+    recent_transactions: compactTransactions(savedContext?.recent_transactions || []).slice(0, 8),
+    launch_safety_rules: savedContext?.launch_safety_rules || null,
+  };
+}
 
-    let systemPrompt = "";
-    let userPrompt = "";
-    let responseBody: Record<string, unknown> | null = null;
+function buildCoachRequestBody(message: string, promptContext: Record<string, unknown>) {
+  return {
+    max_output_tokens: getCoachMaxOutputTokens(message),
+    input: [
+      { role: "system", content: buildCoachSystemPrompt(message) },
+      {
+        role: "user",
+        content: `User message:\n${message}\n\nResponse mode:\n${isCompactLookup(message) ? "compact_lookup" : "normal_coach"}\n\nHard truth mode:\n${isHardTruthRequest(message) ? "on" : "off"}\n\nFinancial context from saved server-side coach brain. Ignore any browser-sent financial context for normal coach chat:\n${JSON.stringify(promptContext, null, 2)}`,
+      },
+    ],
+  };
+}
 
-    if (mode === "extract_debt" || mode === "extract_debt_document") {
-      systemPrompt = `
+function buildDeterministicLookupReply(message: string, promptContext: Record<string, unknown>) {
+  if (!isCompactLookup(message)) return null;
+  const queryFocus = promptContext?.query_focus as any;
+  if (!queryFocus || !Array.isArray(queryFocus.search_terms) || !queryFocus.search_terms.length) return null;
+  if (!queryFocus.direct_match_count && !queryFocus.relevant_match_count) return null;
+
+  const amount = Number(
+    queryFocus.direction_intent === "incoming"
+      ? queryFocus.direct_money_in
+      : queryFocus.direction_intent === "net"
+        ? queryFocus.direct_net
+        : queryFocus.relevant_money_total ?? queryFocus.direct_money_out
+  );
+  if (!Number.isFinite(amount)) return null;
+
+  const target = queryFocus.search_terms
+    .map((term: string) => term.charAt(0).toUpperCase() + term.slice(1))
+    .join(" ");
+  const verb =
+    queryFocus.direction_intent === "incoming"
+      ? "received from"
+      : queryFocus.direction_intent === "net"
+        ? "net for"
+        : "spent on";
+  const windowText = queryFocus.time_window?.matched
+    ? ` in ${queryFocus.time_window.label}`
+    : "";
+
+  return `Total: ${formatGbp(Math.abs(amount))} ${verb} ${target}${windowText}.`;
+}
+
+function formatGbp(value: number) {
+  return `£${Number(value || 0).toFixed(2)}`;
+}
+
+function getRelevantTransactions(savedContext: any, message: string) {
+  const transactions = Array.isArray(savedContext?.searchable_transactions)
+    ? savedContext.searchable_transactions
+    : [];
+  if (!transactions.length) return [];
+
+  const tokens = String(message || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9£.\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3)
+    .filter((token) => !["what", "where", "when", "with", "from", "money", "like", "have", "been", "this", "that"].includes(token));
+
+  const scored = transactions
+    .map((transaction: any, index: number) => {
+      const haystack = JSON.stringify(transaction).toLowerCase();
+      const score = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0);
+      return { transaction, score, index };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.transaction);
+
+  return compactTransactions((scored.length ? scored : transactions).slice(0, isCompactLookup(message) ? 80 : 30));
+}
+
+function buildServerQueryFocus(savedContext: any, message: string) {
+  const transactions = Array.isArray(savedContext?.searchable_transactions)
+    ? savedContext.searchable_transactions
+    : [];
+  return buildCoachQueryFocus(transactions, message, {
+    latestTransactionDate: savedContext?.server_context_meta?.latest_transaction_date,
+    getDate: (transaction: any) => transaction.date || transaction.transaction_date || "",
+    getSearchText: (transaction: any) => [
+      transaction.description,
+      transaction.name,
+      transaction.merchant,
+      transaction.category,
+      transaction.account,
+    ].join(" "),
+    getGroupLabel: (transaction: any) => transaction.name || transaction.description || transaction.merchant || "Transaction",
+    mapTransaction: (transaction: any) => compactTransactions([transaction])[0],
+    exampleLimit: 80,
+    groupLimit: 12,
+    noteSuffix: "Use query_focus totals before merchant_totals for this answer.",
+  });
+}
+
+function compactTransactions(transactions: any[]) {
+  return (transactions || []).map((transaction) => ({
+    date: transaction.date || transaction.transaction_date || null,
+    name: transaction.name || transaction.description || transaction.merchant || null,
+    category: transaction.category || null,
+    amount: transaction.amount ?? null,
+  }));
+}
+
+function compactBills(bills: any[]) {
+  return (bills || []).map((bill) => ({
+    name: bill.name || bill.title || null,
+    amount: bill.amount ?? null,
+    expected_day: bill.expected_day || bill.day || null,
+    kind: bill.kind || null,
+  }));
+}
+
+function compactChecks(checks: any[]) {
+  return (checks || []).map((check) => ({
+    label: check.label || check.question || null,
+    amount: check.amount ?? null,
+    reason: check.reason || check.helper || null,
+  }));
+}
+
+function compactStatementIntelligence(summary: any) {
+  if (!summary) return null;
+  return {
+    date_range: summary.date_range || null,
+    totals: summary.totals || null,
+    total_transactions: summary.total_transactions || null,
+    settled_transaction_count: summary.settled_transaction_count || null,
+    transfer_transaction_count: summary.transfer_transaction_count || null,
+    pass_through_analysis: summary.pass_through_analysis
+      ? {
+          standard_view: summary.pass_through_analysis.standard_view || null,
+          known_pass_through_view: summary.pass_through_analysis.known_pass_through_view || null,
+          possible_pass_through_count: summary.pass_through_analysis.possible_pass_through_count || 0,
+        }
+      : null,
+    category_totals: (summary.category_totals || []).slice(0, 10),
+    merchant_totals: (summary.merchant_totals || []).slice(0, 12),
+    income_streams: (summary.income_streams || []).slice(0, 8),
+    recurring_outgoings: (summary.recurring_outgoings || []).slice(0, 10),
+    large_outgoings: compactTransactions(summary.large_outgoings || []).slice(0, 10),
+    unusual_transactions: compactTransactions(summary.unusual_transactions || []).slice(0, 10),
+  };
+}
+
+function compactMoneyUnderstanding(context: any) {
+  if (!context) return null;
+  return {
+    summary: context.summary || null,
+    bills_found: compactBills(context.bills_found || []),
+    recent_transactions: compactTransactions(context.recent_transactions || []).slice(0, 12),
+  };
+}
+
+function buildCoachSystemPrompt(message: string) {
+  const hardTruthMode = isHardTruthRequest(message);
+  return `
+You are Money Hub AI.
+
+Core job:
+Help people who want to be better with money, but are inconsistent, overwhelmed, or not very organised.
+The app reduces effort and gives clear money decisions.
+
+Voice:
+- blunt
+- sharp
+- calm
+- concise
+- practical
+- honest
+- intelligent
+- no-excuses
+- firm when the data is bad
+- like a strict older brother who actually wants the user to win
+- direct, but not abusive
+- never preachy
+- never fluffy
+- never patronising
+- never hypey
+
+Tough-love rules:
+- Be much firmer than a normal budgeting app.
+- If the data shows reckless or avoidable spending, say so plainly.
+- You may call choices, patterns, habits, or spending behaviour reckless, lazy, chaotic, wasteful, avoidant, self-sabotaging, unserious, or out of control.
+- You may say things like "this is not a maths problem, it is a behaviour problem", "you are kidding yourself if you call this affordable", "the Spending pot is where your money goes to disappear", "this is financial self-sabotage", or "you are acting like future-you can clean up every mess" when the data supports it.
+- Challenge excuses. If the user is overspending on obvious lifestyle leaks, do not cushion the truth.
+- Do not insult the user's identity or intelligence. Do not call the user stupid, an idiot, dumb, useless, pathetic, or similar.
+- Criticise the financial behaviour, not the person.
+
+Hard truth mode:
+${hardTruthMode ? "ON" : "OFF"}
+- If hard truth mode is ON, do not reassure first.
+- If hard truth mode is ON, open with the uncomfortable truth, not a summary.
+- If hard truth mode is ON, answer in 6 short lines or fewer.
+- If hard truth mode is ON, do not include positives unless the user directly asks.
+- If hard truth mode is ON, do not explain every category. Pick the biggest 2 or 3 leaks.
+- If hard truth mode is ON, end with one strict rule for the next 7 days.
+- If hard truth mode is ON, no cosy follow-up offer.
+
+Output rules:
+- Plain text only.
+- Do not use markdown, bold, asterisks, bullet symbols, or code formatting.
+- Keep replies mobile-friendly.
+- Answer the exact question first.
+- For hard truth mode, default length is 4 to 6 short lines total.
+- For normal mode, default length is very short: usually 1 to 4 sentences.
+- Use labelled sections only when the user asks for advice, a plan, a review, a breakdown, a decision, or hard truth.
+- End with at most one useful follow-up offer when it helps.
+
+Maths and trust rules:
+- The maths is the product. Treat it as safety-critical.
+- Use only the supplied server-saved financial context from coach_context_snapshots.
+- Never invent totals, surplus, rent, bills, pass-throughs, reimbursements, debt balances, investment values, or safe-to-spend numbers.
+- Prefer app_money_model, statement_intelligence, money_understanding, query_focus, monthly_breakdown_all and saved checks over raw examples.
+- For "how much did I spend/receive on X in latest/last/this month" questions, use query_focus.relevant_money_total, query_focus.direct_money_out, query_focus.direct_money_in and query_focus.time_window before merchant_totals or category_totals.
+- If query_focus.time_window.matched is true, say the answer is for that uploaded-data window only. Do not use all-history merchant totals for that answer.
+- If pass_through_analysis is present, use its standard_view and known_pass_through_view exactly. Do not recalculate those numbers in prose.
+- Do not say the user is ahead, up, in surplus, or fine unless that exact claim is supported by an app-calculated field.
+- Always distinguish historical statement net from current cash available today.
+- If current balances are not supplied, say you cannot verify current cash exactly from statements alone.
+- Possible pass-through candidates are not confirmed exclusions. Tell the user they need confirming before being removed from personal spending.
+- Rent, bills and subscriptions stay included in real spending unless the app context explicitly says otherwise.
+
+Lifestyle audit rules:
+- If the user asks why they are broke, where their money is going, why they cannot save, or what lifestyle changes would help, act like a strict but useful money auditor.
+- Find the highest controllable leaks in the supplied data before giving generic advice.
+- Look for food delivery, takeaways, McDonald's, Uber Eats, Deliveroo, Just Eat, restaurants, coffee shops, taxis, Uber/Bolt, petrol, parking, shopping, subscriptions, gambling, alcohol, convenience stores, gaming, and repeated small card payments.
+- Do not over-soften lifestyle leaks. If the data shows repeated avoidable spending, call it avoidable and tell them to stop or cap it.
+- When the user is emotionally admitting they are bad with money, do not comfort them with vague positivity. Give them a blunt but useful reset.
+- Good hard-truth style: "Yeah. You are not broke because of one disaster; you are bleeding money through convenience, gaming and top-ups."
+- Good hard-truth style: "The Spending pot is not a budget right now. It is a hole with a friendly name."
+- Good hard-truth style: "For 7 days: no delivery, no gaming spend, no Uber unless safety is involved."
+- Bad style: personal abuse, name-calling, humiliation, or saying the user is stupid.
+- Bad style: soft HR language like "consider reducing discretionary spend" when the data clearly shows the leak.
+
+Hard length override:
+${getCoachLengthInstruction(message)}
+`;
+}
+
+function buildExtractionPrompt(kind: "debt" | "investment") {
+  if (kind === "debt") {
+    return `
 You extract debt setup information for a money app.
-
-Rules:
-- Return JSON only.
-- No markdown.
-- No explanation outside JSON.
-- If a field is unknown, use null.
-- If there is not enough to infer a clean debt name, still try a sensible short label.
-- Use GBP assumptions.
-- Do not invent precise numbers if none were given.
-- Keep notes short.
-
+Return JSON only. No markdown. If a field is unknown, use null. Use GBP assumptions. Do not invent precise numbers.
 Return exactly this shape:
 {
   "name": string | null,
@@ -235,39 +638,12 @@ Return exactly this shape:
   "notes": string | null
 }
 `;
+  }
 
-      if (mode === "extract_debt_document") {
-        responseBody = {
-          model: "gpt-5.1",
-          input: buildDocumentExtractionInput(systemPrompt, message, context),
-        };
-      } else {
-        userPrompt = `
-User debt description:
-${message}
-
-Possible statement-based debt signals:
-${JSON.stringify(context?.debt_signals || [], null, 2)}
-`;
-      }
-    } else if (mode === "extract_investment" || mode === "extract_investment_document") {
-      systemPrompt = `
+  return `
 You extract investment setup information for a money app.
-
-Rules:
-- Return JSON only.
-- No markdown.
-- No explanation outside JSON.
-- If a field is unknown, use null.
-- Use GBP assumptions where money values are not labelled.
-- Do not invent precise numbers if none were given.
-- Keep notes short.
-- Infer a sensible risk_level when possible from the wording, platform, or asset type.
-- risk_level should be one of:
-  "low", "medium", "high", or null
-- asset_type should be one of:
-  "general", "isa", "pension", "crypto", "shares", "funds"
-
+Return JSON only. No markdown. If a field is unknown, use null. Use GBP assumptions where money values are not labelled. Do not invent precise numbers.
+risk_level must be "low", "medium", "high", or null. asset_type must be "general", "isa", "pension", "crypto", "shares", or "funds".
 Return exactly this shape:
 {
   "name": string | null,
@@ -283,249 +659,107 @@ Return exactly this shape:
   "notes": string | null
 }
 `;
+}
 
-      if (mode === "extract_investment_document") {
-        responseBody = {
-          model: "gpt-5.1",
-          input: buildDocumentExtractionInput(systemPrompt, message, context),
-        };
-      } else {
-        userPrompt = `
-User investment description:
-${message}
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: buildCorsHeaders(req) });
+  const corsHeaders = buildCorsHeaders(req);
+  let modeForLogs = "unknown";
+  const requestId = crypto.randomUUID();
 
-Possible statement-based investment signals:
-${JSON.stringify(context?.investment_signals || [], null, 2)}
-`;
-      }
-    } else {
-      systemPrompt = `
-You are Money Hub AI.
+  try {
+    const { mode = "coach", message, context = {} } = await req.json();
+    modeForLogs = String(mode || "coach");
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
 
-Core job:
-Help people who want to be better with money, but are inconsistent, overwhelmed, or not very organised.
-This app is supposed to reduce effort, not create more admin.
-
-Voice:
-- sharp
-- calm
-- concise
-- practical
-- honest
-- intelligent
-- direct, but not rude
-- lightly like a good money auditor
-- never preachy
-- never fluffy
-- never patronising
-- never hypey
-
-Output rules:
-- Plain text only.
-- Do not use markdown.
-- Do not use bold, asterisks, bullet symbols like * or -, or code formatting.
-- Keep replies mobile-friendly.
-- Answer the exact question first.
-- Default length is very short: usually 1 to 4 sentences.
-- Do not use the Verdict / The read / The risk / Next move format for simple questions.
-- Only use labelled sections when the user asks for advice, a plan, a review, a breakdown, or a decision.
-- Do not explain how you calculated something unless the user asks, or unless the answer would otherwise be unclear.
-- End with at most one useful follow-up offer when it helps. Keep it short, for example: "Want me to break that down by person?"
-- Do not add a follow-up offer if the answer is already complete and obvious.
-
-Maths and trust rules:
-- The maths is the product. It must be treated as safety-critical.
-- Never improvise totals, surplus, rent, bills, pass-throughs, reimbursements, debt balances, investment values, or safe-to-spend numbers.
-- Use deterministic app-calculated fields as the source of truth. Prefer statement_intelligence.totals and statement_intelligence.pass_through_analysis over your own arithmetic from examples or snippets.
-- If pass_through_analysis is present, use its standard_view and known_pass_through_view exactly. Do not recalculate those numbers in prose.
-- Do not say the user is "ahead", "up", "in surplus", or "fine" unless that exact claim is supported by an app-calculated net/surplus field.
-- Always distinguish historical net over a statement period from current cash available today. A historical surplus does not mean the user currently has that money.
-- If the user says their accounts are at £0, do not argue with them using historical net. Explain that the historical flow and current balance are different, and that the surplus may already have been spent, moved, or be in accounts not included.
-- If current balances are not supplied in context, say you cannot verify current cash exactly from statements alone.
-- If a previous answer gave a contradictory number, acknowledge it and switch back to the deterministic app-calculated figures. Do not defend the old number.
-- For pass-throughs like Proovia, exclude both sides only through the app's pass_through_analysis. Do not manually guess matching income/outgoings.
-- Possible pass-through candidates are not confirmed exclusions. Tell the user they need confirming before being removed from personal spending.
-- Rent, bills and subscriptions must stay included in real spending unless the app context explicitly says otherwise.
-
-Lifestyle audit rules:
-- If the user asks why they are broke, where their money is going, why they cannot save, or what lifestyle changes would help, act like a smart but fair money auditor.
-- Find the highest controllable leaks in the supplied data before giving generic advice.
-- Look for patterns such as food delivery, takeaways, McDonald's, Uber Eats, Deliveroo, Just Eat, restaurants, coffee shops, taxis, Uber/Bolt, petrol, parking, shopping, subscriptions, gambling, alcohol, convenience stores, and repeated small card payments.
-- Be willing to say the obvious: if the data shows lots of takeaway/fast food/taxis, tell them that is probably why money feels tight.
-- Keep it human: do not shame them, but do not soften the truth so much that it becomes useless.
-- Suggest realistic swaps, for example batch cook, supermarket meal deals, packed lunch, walk, cycle, public transport, combine journeys, or consider a cheap moped/scooter only if transport spend is clearly a major leak and it fits the context.
-- Do not tell them to stop everything. Give one or two high-impact lifestyle changes first.
-- Use their goals and bills as the reason for the change where possible.
-- Good style: "The boring answer is: food delivery and taxis are eating your spare money. Cut those first, not tiny £2 things."
-- Bad style: vague advice like "make a budget" when the data clearly shows the leak.
-
-Hard length override:
-${getCoachLengthInstruction(message)}
-
-Answer sizing rules:
-- If the user asks "how much", "total", "who sent", "what did I spend", or another factual lookup, give the number first and keep it compact.
-- For total questions, use this shape when possible: "Total: £X." Then add one short sentence of context if useful.
-- For grouped totals, show only the top few groups unless the user asks for all of them.
-- If the user asks for a breakdown, comparison, plan, or decision, give more structure, but still keep it concise.
-- If the user asks something broad like "how am I doing?", use short sections: Quick read, Why, Next move.
-- If the user asks a yes/no spending question, answer yes/no/close first, then the reason.
-- If the user asks "why am I broke?" or similar, use this short shape: "Main reason:", "What to change:", "First move:".
-
-Examples:
-User: "How much total have I been sent by friends and family?"
-Good answer: "Total: £1,240 from transactions that look like friends or family payments. Want me to break that down by person?"
-Bad answer: four paragraphs explaining every sender unless asked.
-
-User: "Who sent me the most?"
-Good answer: "Sarah sent the most: £420. Next were Ben at £180 and Mum at £150. Want the full list?"
-
-User: "Can I afford a £60 meal tonight?"
-Good answer: "Probably, but only if no extra bills land before payday. Your safer move is to cap tonight at about £35 and keep the rest protected."
-
-User: "Why am I so broke?"
-Good answer: "Main reason: your flexible money is leaking into takeaway/fast food and short trips, not one big disaster. What to change: stop delivery food first, switch to supermarket food/packed lunches, and walk/cycle/public transport for short journeys. First move: set a 7-day no-delivery rule and keep that money for bills or your goal."
-
-User: "How can I be ahead if I have £0?"
-Good answer: "You may not be ahead today. A statement-period net is historical flow, not current cash. If your current balance is £0, the right read is: any surplus from the period has already been spent, moved, or is outside the accounts I can see."
-Bad answer: claiming the user is still £2.4k ahead without a current balance calculation.
-
-Money rules:
-- Use only the supplied financial context.
-- Never invent numbers.
-- Always include the £ symbol when referring to money.
-- Assume the user's currency is GBP.
-- Prefer practical actions over abstract advice.
-- Give easy, realistic next moves.
-
-Statement intelligence rules:
-- The client may provide statement_intelligence, searchable_transactions, and monthly_breakdown_all.
-- statement_intelligence summaries are built from the full uploaded statement history.
-- searchable_transactions is the transaction-level ledger the model can inspect directly. If it is capped, use the supplied note and say when more source rows may be needed.
-- query_focus is built from the user's exact message against the full uploaded statement history. For questions like "how much did I send Ben?", use query_focus first because it can include older/smaller direct matches that are not in recent_transactions.
-- When the user asks about a merchant, category, income stream, subscription, debt, investment, account, transfer, or pattern, first use the relevant all-history summary, then inspect searchable_transactions for examples.
-- For people/payee questions, use query_focus.direct_matches and query_focus.grouped_matches for the total. If query_focus has only partial direct matches, say that the app can only count transactions where the statement text contains that name/reference; do not pretend unlabelled transfers belong to that person.
-- Distinguish real spending/income from internal transfers whenever that flag is provided.
-- Do not treat broker deposits as current investment value. They are cash flows unless an investment record or document provides a value.
-`;
-
-      userPrompt = `
-User message:
-${message}
-
-Response mode:
-${isCompactLookup(message) ? "compact_lookup" : "normal_coach"}
-
-Financial context:
-${JSON.stringify(
-  {
-    totals: context?.totals || {},
-    transaction_count: context?.transaction_count || 0,
-    recent_transactions: context?.recent_transactions || [],
-    searchable_transaction_note: context?.searchable_transaction_note || null,
-    searchable_transaction_count: context?.searchable_transaction_count || 0,
-    searchable_transactions: context?.searchable_transactions || [],
-    query_focus: context?.query_focus || null,
-    statement_intelligence: context?.statement_intelligence || null,
-    top_categories: context?.top_categories || [],
-    subscription_summary: context?.subscription_summary || null,
-    debts: context?.debts || [],
-    investments: context?.investments || [],
-    debt_signals: context?.debt_signals || [],
-    investment_signals: context?.investment_signals || [],
-    calendar_mode: context?.calendar_mode || null,
-    timeframe: context?.timeframe || null,
-    timeframe_label: context?.timeframe_label || null,
-    visible_window_label: context?.visible_window_label || null,
-    calendar_summary: context?.calendar_summary || null,
-    data_freshness: context?.data_freshness || null,
-    monthly_breakdown: context?.monthly_breakdown || [],
-    monthly_breakdown_all: context?.monthly_breakdown_all || [],
-    visible_transactions: context?.visible_transactions || [],
-    visible_transaction_count: context?.visible_transaction_count || 0,
-    selected_day: context?.selected_day || null,
-    recent_messages: recentMessages,
-  },
-  null,
-  2
-)}
-`;
-    }
-
-    if (!responseBody) {
-      responseBody = {
-        model: "gpt-5.1",
-        max_output_tokens: getCoachMaxOutputTokens(message),
-        input: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: userPrompt,
-          },
-        ],
-      };
-    }
-
-    const data = await callResponsesApi(apiKey, responseBody);
-    const rawReply =
-      data.output_text ||
-      data.output?.[0]?.content?.[0]?.text ||
-      (mode === "coach" ? "How can I help?" : "{}");
-
-    if (
-      mode === "extract_debt" ||
-      mode === "extract_investment" ||
-      mode === "extract_debt_document" ||
-      mode === "extract_investment_document"
-    ) {
-      const extracted = parseJsonReply(rawReply);
-
-      return new Response(
-        JSON.stringify({
-          extracted,
-          message:
-            mode === "extract_debt_document" || mode === "extract_investment_document"
-              ? "AI filled the form from the uploaded document. Check it before saving."
-              : "AI filled the form. Check it before saving.",
-          mode,
-        }),
-        {
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-
-    const reply = enforceCompactReply(rawReply, message);
-
-    return new Response(
-      JSON.stringify({
-        reply,
-        model: "gpt-5.1",
-        mode: "premium",
-      }),
-      {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (error) {
-    return new Response(
-      JSON.stringify({
-        error: "AI request could not be completed right now." }),
-      {
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: "AI service is not configured." }), {
         status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (mode === "market_price") {
+      const assetType = String(context?.asset_type || "").toLowerCase();
+      const rawSymbol = String(context?.ticker_symbol || message || "").trim();
+      if (!rawSymbol) throw new Error("Missing ticker symbol.");
+      const symbol = assetType === "crypto" && !rawSymbol.includes("-") ? `${rawSymbol.toUpperCase()}-USD` : rawSymbol;
+      const quote = await getYahooPrice(symbol);
+      return new Response(JSON.stringify({ ...quote, mode }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (mode === "extract_debt" || mode === "extract_investment" || mode === "extract_debt_document" || mode === "extract_investment_document") {
+      const kind = mode === "extract_debt" || mode === "extract_debt_document" ? "debt" : "investment";
+      const systemPrompt = buildExtractionPrompt(kind);
+      const input = mode.endsWith("_document")
+        ? buildDocumentExtractionInput(systemPrompt, String(message || ""), context)
+        : [{ role: "user", content: `${systemPrompt}\n\nUser description:\n${message}\n\nSignals:\n${JSON.stringify(kind === "debt" ? context?.debt_signals || [] : context?.investment_signals || [], null, 2)}` }];
+      const { data, model } = await callResponsesApiWithModels(apiKey, { input }, getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS"));
+      const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "{}";
+      return new Response(JSON.stringify({ extracted: parseJsonReply(rawReply), message: mode.endsWith("_document") ? "AI filled the form from the uploaded document. Check it before saving." : "AI filled the form. Check it before saving.", mode, model }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const safeMessage = String(message || "").trim();
+    if (!safeMessage) {
+      return new Response(JSON.stringify({ error: "Message is required." }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const savedContext = await getSavedCoachContext(req);
+    const wantsSearchableTransactions = isCompactLookup(safeMessage);
+    const promptContext = wantsSearchableTransactions
+      ? buildSavedCoachBrainForPrompt(savedContext, safeMessage)
+      : buildMinimalCoachBrainForPrompt(savedContext, safeMessage);
+    const deterministicReply = buildDeterministicLookupReply(safeMessage, promptContext);
+    if (deterministicReply) {
+      return new Response(JSON.stringify({ reply: deterministicReply, model: "app_query_focus", mode: "premium", context_source: "coach_context_snapshots", context_detail: "deterministic_query_focus" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    let contextDetail = wantsSearchableTransactions ? "searchable_compact" : "decision_compact";
+    let data: any;
+    let model = "";
+    try {
+      const result = await callResponsesApiWithModels(
+        apiKey,
+        buildCoachRequestBody(safeMessage, promptContext),
+        getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS")
+      );
+      data = result.data;
+      model = result.model;
+    } catch (error) {
+      if (!(error instanceof PublicFunctionError) || error.code !== "openai_request_failed" || !wantsSearchableTransactions) {
+        throw error;
       }
-    );
+      console.warn("ai-coach: retrying compact lookup with decision context only", { request_id: requestId });
+      contextDetail = "decision_compact_retry";
+      const result = await callResponsesApiWithModels(
+        apiKey,
+        buildCoachRequestBody(safeMessage, buildMinimalCoachBrainForPrompt(savedContext, safeMessage)),
+        getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS")
+      );
+      data = result.data;
+      model = result.model;
+    }
+
+    const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "How can I help?";
+    const reply = enforceCompactReply(rawReply, safeMessage);
+    return new Response(JSON.stringify({ reply, model, mode: "premium", context_source: "coach_context_snapshots", context_detail: contextDetail }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (error) {
+    const publicError = error instanceof PublicFunctionError
+      ? error
+      : new PublicFunctionError("ai_coach_failed", "AI request could not be completed right now.", 500, error instanceof Error ? error.message : String(error));
+    console.error("ai-coach request failed", {
+      request_id: requestId,
+      mode: modeForLogs,
+      code: publicError.code,
+      status: publicError.status,
+      message: publicError.message,
+    });
+    return new Response(JSON.stringify({ error: publicError.publicMessage, code: publicError.code, request_id: requestId }), {
+      status: publicError.status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });

@@ -1,12 +1,9 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
-import { buildCoachContext } from "../lib/coachContext";
 import { Section } from "../components/ui";
-import {
-  getDataFreshness,
-  getSubscriptionSummary,
-  getTopCategories,
-} from "../lib/dashboardIntelligence";
+import { getTopCategories } from "../lib/dashboardIntelligence";
+import { getStatementIntelligenceContext } from "../lib/statementIntelligence";
 import {
   getDebtSignals,
   getInvestmentSignals,
@@ -16,17 +13,14 @@ const COACH_DISPLAY_LIMIT = 18;
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
 const COACH_AUTOSEND_KEY = "moneyhub-coach-autosend";
 const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
+const COACH_BRAIN_CHECK_DELAY_MS = 1200;
 
 export default function CoachPage({
   transactions,
   moneyUnderstanding,
   appMoneyModel,
   goals,
-  debts,
-  investments,
   aiMessages,
-  subscriptionStatus,
-  bankFeedReadiness,
   onChange,
   onTransactionRulesChange,
   screenWidth,
@@ -50,6 +44,11 @@ export default function CoachPage({
     }
   });
   const [chatError, setChatError] = useState("");
+  const [coachBrainSyncStatus, setCoachBrainSyncStatus] = useState({
+    state: "checking",
+    label: "Checking Coach brain...",
+    helper: "Making sure Coach has the latest money read before you ask it anything.",
+  });
   const [freshCutoff, setFreshCutoff] = useState(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(COACH_FRESH_CUTOFF_KEY) || new Date().toISOString();
@@ -58,25 +57,9 @@ export default function CoachPage({
   const chatBottomRef = useRef(null);
   const latestMessageRef = useRef(null);
 
-  const totals = useMemo(() => ({
-    income: appMoneyModel?.income?.monthlyEstimate || 0,
-    spending: appMoneyModel?.flexibleSpending?.monthlyEstimate || 0,
-    bills: appMoneyModel?.monthlyBillTotal || 0,
-    net:
-      (appMoneyModel?.income?.monthlyEstimate || 0) -
-      (appMoneyModel?.monthlyBillTotal || 0) -
-      (appMoneyModel?.flexibleSpending?.monthlyEstimate || 0),
-    safeToSpend: appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0,
-    basis: "shared_money_model_monthly_estimate",
-  }), [appMoneyModel]);
   const debtSignals = useMemo(() => getDebtSignals(transactions), [transactions]);
   const investmentSignals = useMemo(() => getInvestmentSignals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
-  const subscriptionSummary = useMemo(
-    () => getSubscriptionSummary(transactions),
-    [transactions]
-  );
-  const dataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
   const correctionCandidates = useMemo(
     () => (moneyUnderstanding?.checks || [])
       .filter((candidate) => !dismissedRuleKeys.includes(candidate.key))
@@ -140,6 +123,64 @@ export default function CoachPage({
     latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [latestVisibleMessageKey, pendingUserMessage, thinking]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!transactions.length) {
+      setCoachBrainSyncStatus({
+        state: "empty",
+        label: "Coach brain waiting for statement data",
+        helper: "Upload or load transactions before Coach can build a proper money read.",
+      });
+      return undefined;
+    }
+
+    setCoachBrainSyncStatus({
+      state: "syncing",
+      label: "Updating Coach brain...",
+      helper: "Saving the latest interpreted money read in the background.",
+    });
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("coach_context_snapshots")
+          .select("updated_at, transaction_count, latest_transaction_date")
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (error) throw error;
+
+        if (!data) {
+          setCoachBrainSyncStatus({
+            state: "syncing",
+            label: "Building Coach brain...",
+            helper: "The first saved money read has not appeared yet. Give it a moment.",
+          });
+          return;
+        }
+
+        setCoachBrainSyncStatus({
+          state: "ready",
+          label: "Coach brain up to date",
+          helper: buildCoachBrainReadyHelper(data),
+        });
+      } catch {
+        if (cancelled) return;
+        setCoachBrainSyncStatus({
+          state: "error",
+          label: "Coach brain sync needs checking",
+          helper: "Coach may use the last saved money read until sync succeeds.",
+        });
+      }
+    }, COACH_BRAIN_CHECK_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [transactions.length, appMoneyModel, aiMessages.length]);
+
   async function sendMessage(nextMessage) {
     const text = String(nextMessage ?? message).trim();
     if (!text || thinking) return;
@@ -165,34 +206,20 @@ export default function CoachPage({
         content: text,
       });
 
-      const context = buildCoachContext({
-        transactions,
-        debts,
-        investments,
-        debtSignals,
-        investmentSignals,
-        totals,
-        topCategories,
-        subscriptionSummary,
-        dataFreshness,
-        baseMessages,
-        userMessage: text,
-        subscriptionStatus,
-        bankFeedReadiness,
-        moneyUnderstanding,
-        appMoneyModel,
-      });
+      await refreshSavedCoachQueryFocus(user.id, transactions, text);
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {
         body: {
           mode: "coach",
           message: text,
-          context,
         },
       });
 
       if (error) {
-        throw new Error(error.message || "AI request failed.");
+        throw new Error(await getFunctionErrorMessage(error));
+      }
+      if (data?.error) {
+        throw new Error(data.error);
       }
 
       await supabase.from("ai_messages").insert({
@@ -353,6 +380,8 @@ export default function CoachPage({
             ))}
           </div>
 
+          <CoachBrainSyncStatus status={coachBrainSyncStatus} styles={styles} />
+
           <div style={getChatMessagesStyle(styles)}>
             {freshCutoff && hiddenOlderByFreshView > 0 && (
               <div style={styles.historyNote}>New chat. History is still saved.</div>
@@ -361,8 +390,6 @@ export default function CoachPage({
             {!freshCutoff && hiddenCount > 0 && (
               <div style={styles.historyNote}>Showing the latest messages.</div>
             )}
-
-            {chatError && <div style={styles.errorNote}>{chatError}</div>}
 
             {visibleMessages.length === 0 && !pendingUserMessage ? (
               <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
@@ -401,6 +428,12 @@ export default function CoachPage({
             <div ref={chatBottomRef} />
           </div>
 
+          {chatError ? (
+            <div style={getStickyChatErrorStyle(styles)}>
+              {chatError}
+            </div>
+          ) : null}
+
           <div style={getChatInputBarStyle(styles)}>
             <input
               style={styles.chatInput}
@@ -434,6 +467,39 @@ export default function CoachPage({
       ) : null}
     </>
   );
+}
+
+function CoachBrainSyncStatus({ status, styles }) {
+  const state = status?.state || "checking";
+  const isBusy = state === "checking" || state === "syncing";
+  const isReady = state === "ready";
+  const isError = state === "error";
+
+  return (
+    <div style={getCoachBrainSyncStyle(styles, state)}>
+      <span style={getCoachBrainDotStyle(isBusy, isReady, isError)}>{isBusy ? "◌" : isReady ? "✓" : "!"}</span>
+      <span style={{ fontWeight: 800 }}>{status?.label || "Checking Coach brain..."}</span>
+      <span style={{ color: "#64748b" }}>{status?.helper || ""}</span>
+    </div>
+  );
+}
+
+function buildCoachBrainReadyHelper(data) {
+  const count = Number(data?.transaction_count || 0);
+  const latest = data?.latest_transaction_date ? ` Latest transaction: ${data.latest_transaction_date}.` : "";
+  const updated = data?.updated_at ? ` Saved ${formatRelativeSyncTime(data.updated_at)}.` : "";
+  return `${count ? `${count} transactions saved for Coach.` : "Saved money read is ready."}${latest}${updated}`;
+}
+
+function formatRelativeSyncTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "recently";
+  const diffSeconds = Math.max(Math.round((Date.now() - date.getTime()) / 1000), 0);
+  if (diffSeconds < 10) return "just now";
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  return new Intl.DateTimeFormat("en-GB", { hour: "numeric", minute: "2-digit" }).format(date);
 }
 
 function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
@@ -509,6 +575,65 @@ function formatChatTime(value) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+async function getFunctionErrorMessage(error) {
+  const fallback = error?.message || "AI request failed.";
+  try {
+    const response = error?.context;
+    if (response && typeof response.clone === "function") {
+      const data = await response.clone().json();
+      return data?.error || data?.code || fallback;
+    }
+  } catch {
+    // Keep the original Supabase error when the response body is not JSON.
+  }
+  return fallback;
+}
+
+async function refreshSavedCoachQueryFocus(userId, transactions, message) {
+  if (!userId || !transactions.length) return;
+
+  const statementIntelligence = getStatementIntelligenceContext(transactions, message);
+  const latestTransactionDate =
+    transactions
+      .map((transaction) => transaction.transaction_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
+
+  const { data, error } = await supabase
+    .from("coach_context_snapshots")
+    .select("context, context_hash")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.context) return;
+
+  const context = {
+    ...data.context,
+    query_focus: statementIntelligence.queryFocus,
+    statement_intelligence: statementIntelligence.summary,
+    searchable_transactions: statementIntelligence.searchableTransactions,
+    searchable_transaction_count: statementIntelligence.searchableTransactions.length,
+    searchable_transaction_note: statementIntelligence.searchableTransactionNote,
+  };
+
+  const { error: updateError } = await supabase.from("coach_context_snapshots").upsert(
+    {
+      user_id: userId,
+      source: "client_interpreted_money_layer",
+      context,
+      context_hash: data.context_hash || `message-focus:${latestTransactionDate || "none"}`,
+      transaction_count: transactions.length,
+      latest_transaction_date: latestTransactionDate,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (updateError) throw updateError;
 }
 
 function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals }) {
@@ -610,6 +735,53 @@ function getEmptyCoachStateStyle(screenWidth, styles) {
   return {
     ...styles.emptyCoachState,
     minHeight: screenWidth <= 480 ? "74px" : "96px",
+  };
+}
+
+function getCoachBrainSyncStyle(styles, state) {
+  const isError = state === "error";
+  const isReady = state === "ready";
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    flexWrap: "wrap",
+    flexShrink: 0,
+    borderRadius: "999px",
+    padding: "7px 10px",
+    fontSize: 12,
+    lineHeight: 1.25,
+    border: isError ? "1px solid rgba(239, 68, 68, 0.24)" : isReady ? "1px solid rgba(34, 197, 94, 0.2)" : "1px solid rgba(14, 165, 233, 0.22)",
+    background: isError ? "rgba(254, 242, 242, 0.92)" : isReady ? "rgba(240, 253, 244, 0.85)" : "rgba(240, 249, 255, 0.9)",
+    color: "#0f172a",
+    boxShadow: styles?.softShadow || "none",
+  };
+}
+
+function getCoachBrainDotStyle(isBusy, isReady, isError) {
+  return {
+    width: 18,
+    height: 18,
+    borderRadius: "999px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 12,
+    fontWeight: 900,
+    background: isError ? "rgba(239, 68, 68, 0.12)" : isReady ? "rgba(34, 197, 94, 0.14)" : "rgba(14, 165, 233, 0.14)",
+    color: isError ? "#b91c1c" : isReady ? "#15803d" : "#0369a1",
+    transform: isBusy ? "scale(1.04)" : "none",
+  };
+}
+
+function getStickyChatErrorStyle(styles) {
+  return {
+    ...(styles.errorNote || {}),
+    flexShrink: 0,
+    margin: "2px 0 0",
+    position: "relative",
+    zIndex: 40,
+    boxShadow: "0 10px 28px rgba(185, 28, 28, 0.08)",
   };
 }
 
