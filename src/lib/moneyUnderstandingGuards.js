@@ -38,9 +38,9 @@ export function isAllowedBillStream(stream) {
 }
 
 export function mergeBillStreams(primary = [], fallback = []) {
-  return [...primary, ...fallback]
+  const merged = [...primary, ...fallback]
     .filter(isAllowedBillStream)
-    .reduce((merged, stream) => {
+    .reduce((list, stream) => {
       const normal = {
         ...stream,
         name: cleanBillName(stream.name || stream.title || "Bill"),
@@ -48,18 +48,38 @@ export function mergeBillStreams(primary = [], fallback = []) {
         day: Math.max(1, Math.min(Number(stream.day ?? stream.usual_day ?? 1) || 1, 28)),
       };
       const base = getBillBaseName(normal.name);
-      const matchIndex = merged.findIndex((existing) => {
+      const matchIndex = list.findIndex((existing) => {
         const existingBase = getBillBaseName(existing.name);
         const closeAmount = Math.abs(Number(existing.amount || 0) - Number(normal.amount || 0)) <= Math.max(3, Number(normal.amount || 0) * 0.08);
         const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 4;
         return existing.key === normal.key || (base && existingBase && base === existingBase && closeAmount && closeDay);
       });
-      if (matchIndex < 0) return [...merged, normal];
-      const current = merged[matchIndex];
+      if (matchIndex < 0) return [...list, normal];
+      const current = list[matchIndex];
       const better = scoreStream(normal) > scoreStream(current) ? normal : current;
-      return merged.map((item, index) => (index === matchIndex ? better : item));
-    }, [])
+      return list.map((item, index) => (index === matchIndex ? better : item));
+    }, []);
+
+  return collapseDependentRentStreams(merged)
     .sort((a, b) => Number(a.day || 0) - Number(b.day || 0) || Number(b.amount || 0) - Number(a.amount || 0));
+}
+
+function collapseDependentRentStreams(streams) {
+  const rentStreams = streams.filter((stream) => normalizeText(`${stream.kind} ${stream.name}`).includes("rent"));
+  if (rentStreams.length < 2) return streams;
+
+  const largestRent = rentStreams.slice().sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))[0];
+  const largestAmount = Number(largestRent.amount || 0);
+
+  return streams.filter((stream) => {
+    const text = normalizeText(`${stream.kind} ${stream.name}`);
+    if (!text.includes("rent")) return true;
+    if (stream === largestRent || stream.key === largestRent.key) return true;
+    const amount = Number(stream.amount || 0);
+    const sameDay = Math.abs(Number(stream.day || 0) - Number(largestRent.day || 0)) <= 4;
+    const looksLikeHalfOrPartPayment = amount < largestAmount && amount >= largestAmount * 0.35 && amount <= largestAmount * 0.75;
+    return !(sameDay && looksLikeHalfOrPartPayment);
+  });
 }
 
 function scoreStream(stream) {
