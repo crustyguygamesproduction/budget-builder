@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { formatCurrency, getMeaningfulCategory } from "../lib/finance";
 import { Row, Section } from "../components/ui";
+import { cleanBillName, isAllowedBillStream } from "../lib/moneyUnderstandingGuards";
 
 export default function HomePage({
   transactions,
@@ -71,7 +72,7 @@ export default function HomePage({
       </section>
 
       <Section title={pressure.isBroke ? "Your Plan Right Now" : "Your Next Move"} styles={styles}>
-        <p style={styles.sectionIntro}>{pressure.isBroke ? "Do these in this order. The app should help you act, not just describe the problem." : "One clear plan first. Extra detail is tucked away below."}</p>
+        <p style={styles.sectionIntro}>{pressure.isBroke ? "Do these in this order. These buttons take you to the right page or ask AI for the next action." : "Do these in order. Each button takes you to the page that helps with that step."}</p>
         <div style={getPlanListStyle()}>
           {planSteps.map((step, index) => (
             <button key={step.title} type="button" onClick={step.onClick} style={getPlanStepStyle(index === 0)}>
@@ -137,22 +138,34 @@ function getVisibleCash(accounts) {
 
 function estimateBillMoney(moneyUnderstanding) {
   const summary = moneyUnderstanding?.summary || {};
-  const upcoming = summary.upcomingBills || [];
-  const streams = moneyUnderstanding?.billStreams || [];
-  const total = Number(summary.upcomingBillsTotal || 0);
-  const source = upcoming.length ? upcoming : streams;
+  const source = [
+    ...(moneyUnderstanding?.recurringEvents || []).map((event) => ({
+      key: event.key,
+      name: event.title,
+      amount: Math.abs(Number(event.amount || 0)),
+      day: event.day,
+      kind: event.kind === "subscription" ? "subscription" : "bill",
+      confidence: event.confidenceLabel,
+      note: event.estimateNote,
+      sourceCount: event.sourceCount || 0,
+      sourceMonths: event.sourceMonths || 0,
+    })),
+    ...(moneyUnderstanding?.billStreams || []),
+  ].filter(isAllowedBillStream);
+  const deduped = dedupeBillItems(source);
+  const total = deduped.reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0);
   return {
-    count: source.length,
+    count: deduped.length,
     total,
-    includesRent: Boolean(summary.includesRent),
-    timeframeLabel: upcoming.length ? "Bills due soon" : "Bills found",
-    nextBill: summary.nextBill || null,
+    includesRent: deduped.some((item) => /rent|landlord|letting|mortgage/i.test(`${item.name} ${item.kind}`)) || Boolean(summary.includesRent && total > 0),
+    timeframeLabel: deduped.length ? "Bills due soon" : "Bills found",
+    nextBill: deduped[0] || null,
   };
 }
 
 function estimateRegularMonthlyPayments(moneyUnderstanding) {
-  const items = (moneyUnderstanding?.billStreams || []).map((item) => ({
-    name: item.name,
+  const items = dedupeBillItems((moneyUnderstanding?.billStreams || []).filter(isAllowedBillStream)).map((item) => ({
+    name: cleanBillName(item.name),
     count: item.sourceCount || item.sourceMonths || 0,
     monthlyEstimate: Number(item.amount || 0),
   })).sort((a, b) => b.monthlyEstimate - a.monthlyEstimate);
@@ -162,6 +175,27 @@ function estimateRegularMonthlyPayments(moneyUnderstanding) {
     monthlyTotal,
     summary: items.length ? `About ${formatCurrency(monthlyTotal)} / month from ${items.length} bill${items.length === 1 ? "" : "s"}` : "No regular bills found yet",
   };
+}
+
+function dedupeBillItems(items = []) {
+  return (items || []).reduce((merged, item) => {
+    const normal = {
+      ...item,
+      name: cleanBillName(item.name || item.title || "Bill"),
+      amount: Math.abs(Number(item.amount || item.usual_amount || 0)),
+      day: Number(item.day || item.usual_day || 1) || 1,
+    };
+    if (!normal.amount) return merged;
+    const base = normal.name.toLowerCase().replace(/bill around|around|£?\d+(\.\d{1,2})?|bill|subscription/g, "").replace(/\s+/g, " ").trim();
+    const matchIndex = merged.findIndex((existing) => {
+      const existingBase = existing.name.toLowerCase().replace(/bill around|around|£?\d+(\.\d{1,2})?|bill|subscription/g, "").replace(/\s+/g, " ").trim();
+      const closeAmount = Math.abs(existing.amount - normal.amount) <= Math.max(3, normal.amount * 0.08);
+      const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 4;
+      return (base && existingBase && base === existingBase && closeAmount && closeDay) || existing.key === normal.key;
+    });
+    if (matchIndex < 0) return [...merged, normal];
+    return merged;
+  }, []).sort((a, b) => Number(a.day || 0) - Number(b.day || 0) || Number(b.amount || 0) - Number(a.amount || 0));
 }
 
 function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) {
@@ -177,7 +211,7 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       badge: "Urgent",
       heroLabel: "No money showing",
       heroAmount: "£0.00",
-      heroCopy: `${formatCurrency(billMoney.total)} of bills/subscriptions have been found from your uploaded history, but your visible balance is £0.00. Do not spend from this account today. First check what bill is due next, then ask AI for a 7-day plan.`,
+      heroCopy: `${formatCurrency(billMoney.total)} of bills and subscriptions have been found from your uploaded history, but your visible balance is £0.00. Do not spend from this account today. First check what bill is due next, then ask AI for a 7-day plan.`,
       mainHeadline: "You look broke right now",
       mainBody: "Stop spending from this account today, check upcoming bills, avoid non-essentials like takeaways, taxis and gaming, then update your bank history when the urgent checks are done.",
       shortReason: `£0 showing and ${formatCurrency(billMoney.total)} of bills found`,
@@ -250,17 +284,29 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
 }
 
 function buildPlanSteps({ pressure, billMoney, dataFreshness, hasConfidenceChecks, confidenceCheckCount, topCategory, onNavigate, onGoToCoach }) {
-  if (pressure.isBroke) {
+  if (!dataFreshness.hasData) {
     return [
-      { title: "Freeze spending today", body: "Only spend if it is genuinely essential. No takeaways, taxis, gaming, random shops or top-ups.", cta: "Plan", onClick: () => onGoToCoach("I have no money showing and bills coming. Give me a practical 7-day plan. Be direct and simple.", { autoSend: true }) },
-      { title: "Check the next bill", body: `${billMoney.count || "Some"} bill payment${billMoney.count === 1 ? "" : "s"} found. See what might hit next.`, cta: "Calendar", onClick: () => onNavigate("calendar") },
-      { title: dataFreshness.needsUpload ? "Then add your latest statement" : "Keep the numbers fresh", body: dataFreshness.needsUpload ? "Do this after the urgent check, so the plan is based on today’s reality." : "Your data is fairly fresh, but the latest statement still helps.", cta: "Upload", onClick: () => onNavigate("upload") },
+      { title: "Add your first statement", body: "This is the first useful step. Money Hub cannot find your real bills until you upload history.", cta: "Upload", onClick: () => onNavigate("upload") },
+      { title: "Then check Calendar", body: "Once your statement is in, Calendar should show only bills Money Hub is confident about.", cta: "Calendar", onClick: () => onNavigate("calendar") },
     ];
   }
 
-  const steps = [
-    { title: "Check your upcoming bills", body: `${billMoney.count || "No"} bill payment${billMoney.count === 1 ? "" : "s"} found. Check Calendar so nothing surprises you.`, cta: "Calendar", onClick: () => onNavigate("calendar") },
-  ];
+  if (pressure.isBroke) {
+    const steps = [
+      { title: "Freeze spending today", body: "Only spend if it is genuinely essential. No takeaways, taxis, gaming, random shops or top-ups.", cta: "Plan", onClick: () => onGoToCoach("I have no money showing and bills coming. Give me a practical 7-day plan. Be direct and simple.", { autoSend: true }) },
+    ];
+    if (billMoney.count > 0) steps.push({ title: "Check the next bill", body: `${billMoney.count} bill payment${billMoney.count === 1 ? "" : "s"} found. See what might hit next.`, cta: "Calendar", onClick: () => onNavigate("calendar") });
+    if (hasConfidenceChecks) steps.push({ title: "Answer bill checks", body: `${confidenceCheckCount} thing${confidenceCheckCount === 1 ? "" : "s"} need checking so the app stops guessing.`, cta: "Checks", onClick: () => onNavigate("confidence") });
+    steps.push({ title: dataFreshness.needsUpload ? "Then add your latest statement" : "Keep the numbers fresh", body: dataFreshness.needsUpload ? "Do this after the urgent check, so the plan is based on today’s reality." : "Your data is fairly fresh, but the latest statement still helps.", cta: "Upload", onClick: () => onNavigate("upload") });
+    return steps.slice(0, 3);
+  }
+
+  const steps = [];
+  if (billMoney.count > 0) {
+    steps.push({ title: "Check your upcoming bills", body: `${billMoney.count} bill payment${billMoney.count === 1 ? "" : "s"} found. Check Calendar so nothing surprises you.`, cta: "Calendar", onClick: () => onNavigate("calendar") });
+  } else {
+    steps.push({ title: "Help Money Hub find your bills", body: "No solid bills are showing yet. Add more history or answer Checks so Calendar can stop guessing.", cta: hasConfidenceChecks ? "Checks" : "Upload", onClick: () => onNavigate(hasConfidenceChecks ? "confidence" : "upload") });
+  }
 
   if (hasConfidenceChecks) {
     steps.push({ title: `${confidenceCheckCount} payment check${confidenceCheckCount === 1 ? "" : "s"} waiting`, body: "Answer only the checks that are actually waiting.", cta: "Checks", onClick: () => onNavigate("confidence") });
