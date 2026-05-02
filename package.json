@@ -6,7 +6,8 @@
   "scripts": {
     "patch:shared-contributions": "node scripts/patch-shared-contribution-grouping.mjs",
     "patch:calendar-bill-share": "node scripts/patch-calendar-bill-share.mjs",
-    "patch:app": "npm run patch:shared-contributions && npm run patch:calendar-bill-share",
+    "patch:income-forecast": "node scripts/patch-income-forecast.mjs",
+    "patch:app": "npm run patch:shared-contributions && npm run patch:calendar-bill-share && npm run patch:income-forecast",
     "predev": "npm run patch:app",
     "dev": "vite",
     "prebuild": "npm run patch:app",
