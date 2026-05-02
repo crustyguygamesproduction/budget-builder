@@ -25,7 +25,7 @@ export function buildAppMoneyModel({
   const transactions = moneyUnderstanding?.transactions || [];
   const billStreams = moneyUnderstanding?.billStreams || [];
   const calendarBills = getCalendarBillItems(moneyUnderstanding?.recurringEvents || [], billStreams);
-  const upcomingBills = moneyUnderstanding?.summary?.upcomingBills || getUpcomingBills(billStreams);
+  const upcomingBills = getUpcomingBills(calendarBills);
   const monthWindow = getRecentMonthWindow(transactions, 3);
   const monthCount = Math.max(monthWindow.monthKeys.length, 1);
   const windowTransactions = transactions.filter((transaction) =>
@@ -49,8 +49,9 @@ export function buildAppMoneyModel({
     (transaction) => !contributionSourceIds.has(getTransactionSourceId(transaction))
   );
   const incomeTotal = sumAmounts(incomeTransactions);
-  const monthlyIncome = incomeTransactions.length ? incomeTotal / monthCount : 0;
   const incomeConfidence = getIncomeConfidence(incomeTransactions, monthWindow.monthKeys);
+  const incomeProfile = getIncomeProfile(incomeTransactions, incomeConfidence, monthCount);
+  const monthlyIncome = incomeProfile.monthlyEstimate || (incomeTransactions.length ? incomeTotal / monthCount : 0);
   const upcomingIncome = getUpcomingIncome(incomeTransactions, incomeConfidence);
 
   const monthlySharedContributionTotal = sharedBillContributions.confirmed.reduce(
@@ -109,6 +110,7 @@ export function buildAppMoneyModel({
     monthlyBillTotal: roundMoney(grossMonthlyBillTotal),
     grossMonthlyBillTotal: roundMoney(grossMonthlyBillTotal),
     monthlyBillBurdenTotal: roundMoney(monthlyBillBurdenTotal),
+    monthlyScheduledOutgoingsTotal: roundMoney(monthlyBillBurdenTotal),
     monthlySharedContributionTotal: roundMoney(monthlySharedContributionTotal),
     fixedCommitments: billStreams,
     sharedBillContributions,
@@ -116,7 +118,9 @@ export function buildAppMoneyModel({
       transactions: incomeTransactions,
       monthlyEstimate: roundMoney(monthlyIncome),
       confidence: incomeConfidence,
-      label: incomeConfidence === "low" ? "Income is not clear yet" : formatCurrency(monthlyIncome),
+      label: incomeConfidence === "low" ? "Income is not clear yet" : `About ${formatCurrency(monthlyIncome)}/month`,
+      payCycleSummary: incomeProfile.payCycleSummary,
+      nextPay: upcomingIncome.items?.[0] || null,
       upcoming30Days: upcomingIncome,
       excludedSharedContributions: sharedBillContributions.confirmed,
     },
@@ -126,6 +130,8 @@ export function buildAppMoneyModel({
       monthlyEstimate: roundMoney(monthlyFlexibleSpending),
       confidence: flexibleSpendingConfidence,
       label: flexibleSpendingConfidence === "low" ? "Needs checking" : formatCurrency(monthlyFlexibleSpending),
+      planningLabel: getFlexiblePlanningLabel(monthlyFlexibleSpending, monthlyIncome, flexibleSpendingConfidence),
+      isUsefulForPlanning: isFlexibleSpendingUseful(monthlyFlexibleSpending, monthlyIncome, flexibleSpendingConfidence),
       topCategories: getTopFlexibleCategories(flexibleTransactions),
     },
     savingsCapacity: {
@@ -152,14 +158,18 @@ export function buildAppMoneyModel({
     }),
     aiContext: {
       monthly_income_estimate: roundMoney(monthlyIncome),
+      monthly_income_label: incomeConfidence === "low" ? "Income is not clear yet" : `About ${formatCurrency(monthlyIncome)}/month`,
+      income_pay_cycle_summary: incomeProfile.payCycleSummary,
       income_confidence: incomeConfidence,
       expected_income_next_30_days: upcomingIncome,
       monthly_bills_from_calendar: roundMoney(grossMonthlyBillTotal),
       monthly_shared_bill_contributions: roundMoney(monthlySharedContributionTotal),
       monthly_bill_burden_after_contributions: roundMoney(monthlyBillBurdenTotal),
+      monthly_outgoings_to_cover: roundMoney(monthlyBillBurdenTotal),
       shared_bill_contributions: sharedBillContributions.confirmed,
       possible_shared_bill_contributions_to_check: sharedBillContributions.needsChecking,
       monthly_flexible_spending_estimate: roundMoney(monthlyFlexibleSpending),
+      monthly_flexible_spending_planning_label: getFlexiblePlanningLabel(monthlyFlexibleSpending, monthlyIncome, flexibleSpendingConfidence),
       flexible_spending_confidence: flexibleSpendingConfidence,
       safe_monthly_saving_amount: roundMoney(safeMonthlySaving),
       stretch_monthly_saving_amount: roundMoney(stretchMonthlySaving),
@@ -407,7 +417,7 @@ function getContributionConfidence({ group, match, monthWindow }) {
   if (!match) return group.monthKeys.size >= 2 ? "needs_checking" : "low";
   const enoughHistory = group.monthKeys.size >= Math.min(2, Math.max(monthWindow?.monthKeys?.length || 1, 1));
   const closeHalf = Math.abs((match.ratio || 0) - 0.5) <= 0.12;
-  const nearBillDay = Number(match.dayDistance || 99) <= 10;
+  const nearBillDay = Number(match.dayDistance ?? 99) <= 10;
   if (enoughHistory && closeHalf && nearBillDay) return "high";
   if (enoughHistory && closeHalf && match.score >= 0.55) return "medium";
   if (enoughHistory && match.score >= 0.4) return "needs_checking";
@@ -441,21 +451,7 @@ function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
     };
   }
 
-  const groups = incomeTransactions.reduce((map, transaction) => {
-    const amount = Math.abs(Number(transaction.amount || 0));
-    const date = parseAppDate(transaction.transaction_date);
-    if (!amount || !date) return map;
-    const key = incomeProviderKey(transaction);
-    if (!key) return map;
-    if (!map.has(key)) {
-      map.set(key, { key, name: cleanIncomeName(transaction), amounts: [], dates: [], monthKeys: new Set() });
-    }
-    const group = map.get(key);
-    group.amounts.push(amount);
-    group.dates.push(date);
-    group.monthKeys.add(monthKey(date));
-    return map;
-  }, new Map());
+  const groups = groupIncomeTransactions(incomeTransactions);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -479,6 +475,64 @@ function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
       ? `${formatCurrency(amount)} expected over the next 30 days${cadenceSummary ? ` from ${cadenceSummary}` : ""}. Dates can move if pay lands late.`
       : "Income history exists, but the next date is not clear yet.",
   };
+}
+
+function getIncomeProfile(incomeTransactions = [], incomeConfidence = "low", monthCount = 1) {
+  if (incomeConfidence === "low" || !incomeTransactions.length) {
+    return { monthlyEstimate: 0, payCycleSummary: "Income not clear yet", groups: [] };
+  }
+
+  const groups = groupIncomeTransactions(incomeTransactions);
+  const profiledGroups = [...groups.values()].map((group) => {
+    const sortedDates = group.dates.slice().sort((a, b) => a - b);
+    const cadence = detectIncomeCadence(sortedDates);
+    const usual = roundMoney(usualAmount(group.amounts));
+    const monthlyEquivalent = cadence.confidence === "low"
+      ? group.amounts.reduce((sum, amount) => sum + amount, 0) / Math.max(monthCount, 1)
+      : usual * (365.25 / 12 / cadence.days);
+    return {
+      ...group,
+      usualAmount: usual,
+      cadence,
+      monthlyEquivalent: roundMoney(monthlyEquivalent),
+    };
+  }).filter((group) => group.monthlyEquivalent > 0);
+
+  const monthlyEstimate = roundMoney(profiledGroups.reduce((sum, group) => sum + group.monthlyEquivalent, 0));
+  return {
+    monthlyEstimate,
+    payCycleSummary: summariseIncomeProfile(profiledGroups),
+    groups: profiledGroups,
+  };
+}
+
+function groupIncomeTransactions(incomeTransactions = []) {
+  return incomeTransactions.reduce((map, transaction) => {
+    const amount = Math.abs(Number(transaction.amount || 0));
+    const date = parseAppDate(transaction.transaction_date);
+    if (!amount || !date) return map;
+    const key = incomeProviderKey(transaction);
+    if (!key) return map;
+    if (!map.has(key)) {
+      map.set(key, { key, name: cleanIncomeName(transaction), amounts: [], dates: [], monthKeys: new Set() });
+    }
+    const group = map.get(key);
+    group.amounts.push(amount);
+    group.dates.push(date);
+    group.monthKeys.add(monthKey(date));
+    return map;
+  }, new Map());
+}
+
+function summariseIncomeProfile(groups = []) {
+  if (!groups.length) return "Income not clear yet";
+  const best = groups.slice().sort((a, b) => b.monthlyEquivalent - a.monthlyEquivalent)[0];
+  if (!best) return "Income not clear yet";
+  const cadenceLabel = best.cadence?.label || "regular income";
+  if (best.cadence?.days === 7) return `About ${formatCurrency(best.usualAmount)}/week from ${best.name}`;
+  if (best.cadence?.days === 14) return `About ${formatCurrency(best.usualAmount)} every 2 weeks from ${best.name}`;
+  if (best.cadence?.days >= 26 && best.cadence?.days <= 35) return `About ${formatCurrency(best.usualAmount)}/month from ${best.name}`;
+  return `Regular money from ${best.name} (${cadenceLabel})`;
 }
 
 function incomeProviderKey(transaction) {
@@ -555,7 +609,10 @@ function summariseIncomeCadences(items = []) {
 }
 
 function cleanIncomeName(transaction) {
-  const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "Income");
+  const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "Income")
+    .replace(/\b(wage|wages|salary|payroll|paye|regular income)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return provider ? provider.split(" ").slice(0, 4).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Income";
 }
 
@@ -758,6 +815,20 @@ function getAffordabilityTone({ visibleCash, monthlyIncome, monthlyBillTotal, gr
   };
 }
 
+function isFlexibleSpendingUseful(monthlyFlexibleSpending, monthlyIncome, confidence) {
+  if (confidence === "low") return false;
+  if (!monthlyFlexibleSpending) return false;
+  if (monthlyIncome > 0 && monthlyFlexibleSpending > monthlyIncome * 1.25) return false;
+  return true;
+}
+
+function getFlexiblePlanningLabel(monthlyFlexibleSpending, monthlyIncome, confidence) {
+  if (!isFlexibleSpendingUseful(monthlyFlexibleSpending, monthlyIncome, confidence)) {
+    return "Spending needs checking";
+  }
+  return `About ${formatCurrency(monthlyFlexibleSpending)}/month`;
+}
+
 function getTopFlexibleCategories(transactions) {
   const totals = transactions.reduce((groups, transaction) => {
     const category = getMeaningfulCategory(transaction) || "Spending";
@@ -816,7 +887,12 @@ function getCalendarBillItems(recurringEvents = [], billStreams = []) {
       const sameKey = existing.key && normal.key && existing.key === normal.key;
       const sameProvider = provider && existingProvider && provider === existingProvider;
       const closeAmount = Math.abs(existing.amount - normal.amount) <= Math.max(3, normal.amount * 0.12);
-      return sameKey || (sameProvider && closeAmount);
+      const closeDay = dayDistance(existing.day, normal.day) <= 3;
+      const sameHousingPayment =
+        /rent|mortgage|landlord|letting/.test(normalizeText(`${normal.name} ${normal.kind} ${existing.name} ${existing.kind}`)) &&
+        closeAmount &&
+        closeDay;
+      return sameKey || (sameProvider && closeAmount) || sameHousingPayment;
     });
     if (matchIndex >= 0) return list;
     return [...list, normal];

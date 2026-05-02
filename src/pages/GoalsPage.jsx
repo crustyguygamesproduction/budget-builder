@@ -170,15 +170,15 @@ export default function GoalsPage({
         </Section>
       ) : null}
 
-      <Section styles={styles} title="Safe Monthly Amount">
+      <Section styles={styles} title="Goal Money">
         <div style={getSafetyReadStyle(appMoneyModel?.savingsCapacity?.status)}>
           <strong>{appMoneyModel?.savingsCapacity?.label || "Needs better data"}</strong>
           <span>{appMoneyModel?.savingsCapacity?.body || "Upload statements so Money Hub can make this useful."}</span>
         </div>
         <div style={styles.inlineInfoBlock}>
-          <Row styles={styles} name="Clear income" value={appMoneyModel?.income?.label || "Not clear yet"} />
-          <Row styles={styles} name="Calendar bills" value={formatCurrency(appMoneyModel?.monthlyBillTotal || 0)} />
-          <Row styles={styles} name="Usual spending" value={appMoneyModel?.flexibleSpending?.label || "Needs checking"} />
+          <Row styles={styles} name="Regular income" value={appMoneyModel?.income?.label || "Not clear yet"} />
+          <Row styles={styles} name="Scheduled outgoings" value={formatCurrency(getMonthlyOutgoingsToCover(appMoneyModel))} />
+          <Row styles={styles} name="Everyday spending" value={appMoneyModel?.flexibleSpending?.planningLabel || "Spending needs checking"} />
           <Row styles={styles} name="Checks waiting" value={`${appMoneyModel?.checksWaiting?.length || 0}`} />
         </div>
       </Section>
@@ -220,8 +220,10 @@ export default function GoalsPage({
 }
 
 function getRecommendedGoals(appMoneyModel) {
-  const monthlyBills = Number(appMoneyModel?.monthlyBillTotal || 0);
-  const usualSpending = Number(appMoneyModel?.flexibleSpending?.monthlyEstimate || 0);
+  const monthlyBills = getMonthlyOutgoingsToCover(appMoneyModel);
+  const usualSpending = appMoneyModel?.flexibleSpending?.isUsefulForPlanning
+    ? Number(appMoneyModel?.flexibleSpending?.monthlyEstimate || 0)
+    : 0;
   const safetyTarget = Math.max(500, roundToNearest(monthlyBills + usualSpending, 50));
   const growthTarget = Math.max(1000, roundToNearest(safetyTarget * 3, 100));
 
@@ -231,7 +233,9 @@ function getRecommendedGoals(appMoneyModel) {
       label: "Start here",
       name: "Safety buffer",
       target: safetyTarget,
-      body: "One month of bills and normal spending. This is the goal that stops small problems becoming disasters.",
+      body: usualSpending > 0
+        ? "One month of outgoings and normal spending. This is the boring buffer that stops small problems becoming disasters."
+        : "Start with one month of scheduled outgoings. Once spending is clearer, Money Hub can tune this up.",
     },
     {
       key: "growth",
@@ -249,11 +253,20 @@ function buildGoalCoachPrompt({ goal, appMoneyModel, formatCurrency }) {
     `Goal: ${goal?.name || "Safety buffer"}.`,
     `Target: ${formatCurrency(goal?.target || goal?.target_amount || 0)}.`,
     `Safe monthly amount: ${formatCurrency(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0)}.`,
-    `Calendar bills: ${formatCurrency(appMoneyModel?.monthlyBillTotal || 0)}.`,
+    `Scheduled outgoings to cover: ${formatCurrency(getMonthlyOutgoingsToCover(appMoneyModel))}.`,
     `Income: ${appMoneyModel?.income?.label || "not clear"}.`,
-    `Usual spending: ${appMoneyModel?.flexibleSpending?.label || "needs checking"}.`,
+    `Everyday spending: ${appMoneyModel?.flexibleSpending?.planningLabel || "needs checking"}.`,
     "Explain it for someone bad with money. Give one next action.",
   ].join(" ");
+}
+
+function getMonthlyOutgoingsToCover(appMoneyModel) {
+  return Number(
+    appMoneyModel?.monthlyScheduledOutgoingsTotal ??
+    appMoneyModel?.monthlyBillBurdenTotal ??
+    appMoneyModel?.monthlyBillTotal ??
+    0
+  );
 }
 
 function roundToNearest(value, step) {

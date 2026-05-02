@@ -218,5 +218,38 @@ function amounts(items) {
   assert.equal(understanding.billStreams[0].amount, 7.99);
 }
 
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Matt Coulthard wages", 450, "2026-03-01", { category: "Wages" }),
+      tx("Matt Coulthard wages", 450, "2026-03-08", { category: "Wages" }),
+      tx("Matt Coulthard wages", 450, "2026-03-15", { category: "Wages" }),
+      tx("Matt Coulthard wages", 450, "2026-03-22", { category: "Wages" }),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.income.payCycleSummary, "About £450.00/week from Matt Coulthard");
+  assert.ok(appModel.income.monthlyEstimate > 1900);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Matt rent contribution", 725, "2026-02-01"),
+      tx("Matt rent contribution", 725, "2026-03-01"),
+      tx("Matt rent contribution", 725, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyBillTotal, 1450);
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
 await server.close();
 console.log("money understanding checks passed");

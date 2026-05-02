@@ -340,7 +340,6 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
         {calendarMode === "recurring" ? (
           <div style={getCalendarSummaryGridStyle(screenWidth)}>
             <MiniCard styles={styles} title={sharedBillMoney > 0 ? "Bills to cover" : "Bills this month"} value={formatCurrency(personalBillTotal)} />
-            {sharedBillMoney > 0 ? <MiniCard styles={styles} title="Leaving account" value={formatCurrency(recurringMonthTotal)} /> : null}
             <button type="button" onClick={() => setShowBillsList((open) => !open)} style={styles.calendarSummaryAction}>
               <span>Bills found</span>
               <strong>{recurringMonthEvents.length}</strong>
@@ -416,7 +415,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
       </Section>
 
       <Section styles={styles} title="What Stands Out" right={<button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button>}>
-        <InsightCard styles={styles} label={calendarAiText ? "AI answer" : "Quick read"} headline={calendarAiText ? `Read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming bill pressure" : patternSummary.headline} body={calendarAiText || (calendarMode === "recurring" ? recurringMonthEvents.length ? sharedBillMoney > 0 ? `Money Hub sees ${formatCurrency(personalBillTotal)} you need to cover this month. ${formatCurrency(recurringMonthTotal)} leaves the account before shared money is counted.` : `Money Hub expects ${recurringMonthEvents.length} future bill/payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you add more months and answer Checks.` : "No future bills found yet. Add more history or answer Checks when they appear." : patternSummary.body)} />
+        <InsightCard styles={styles} label={calendarAiText ? "AI answer" : "Quick read"} headline={calendarAiText ? `Read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming bill pressure" : patternSummary.headline} body={calendarAiText || (calendarMode === "recurring" ? recurringMonthEvents.length ? sharedBillMoney > 0 ? `Money Hub sees ${formatCurrency(personalBillTotal)} you need to cover this month after regular shared bill money.` : `Money Hub expects ${recurringMonthEvents.length} future bill/payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you add more months and answer Checks.` : "No future bills found yet. Add more history or answer Checks when they appear." : patternSummary.body)} />
         {calendarAiError ? <p style={styles.errorNote}>{calendarAiError}</p> : null}
       </Section>
 

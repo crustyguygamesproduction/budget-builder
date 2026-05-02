@@ -62,7 +62,12 @@ export function buildCoachContext({
     statement_intelligence: statementIntelligence.summary,
     app_money_model: appMoneyModel?.aiContext || {},
     monthly_income_estimate: appMoneyModel?.income || null,
-    monthly_bills_from_calendar: appMoneyModel?.monthlyBillTotal ?? null,
+    monthly_scheduled_outgoings_to_cover:
+      appMoneyModel?.monthlyScheduledOutgoingsTotal ??
+      appMoneyModel?.monthlyBillBurdenTotal ??
+      appMoneyModel?.monthlyBillTotal ??
+      null,
+    monthly_bills_from_calendar_gross: appMoneyModel?.grossMonthlyBillTotal ?? appMoneyModel?.monthlyBillTotal ?? null,
     monthly_flexible_spending: appMoneyModel?.flexibleSpending || null,
     savings_capacity: appMoneyModel?.savingsCapacity || null,
     cash_position: appMoneyModel?.cashPosition || null,
@@ -89,7 +94,7 @@ export function buildCoachContext({
     launch_safety_rules: {
       audience: "People who feel bad with money and need plain, trustworthy guidance.",
       maths_source_of_truth: "Use money_understanding, app-calculated totals, statement_intelligence, query_focus and rules. Do not invent or re-estimate core figures.",
-      shared_app_model: "For bills, income, usual spending, saving room and warnings, use app_money_model before older raw summaries.",
+      shared_app_model: "For bills, income, usual spending, saving room and warnings, use app_money_model before older raw summaries. For split bills, talk about the user's scheduled outgoings to cover, not the larger gross amount passing through the account.",
       safe_to_spend: "Only treat safe-to-spend as real spendable money when live balances or explicit current balances are supplied. Statement net is historical movement, not cash today.",
       checks_page: "If a person, bill, transfer, work payment or pass-through looks uncertain, tell the user to confirm it in Confidence Checks instead of guessing.",
       calendar: "Future Bills only contains regular bills/subscriptions Money Hub is confident about. Unclear repeated payments belong in Checks, not Calendar.",
