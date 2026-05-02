@@ -16,6 +16,7 @@ const COACH_DISPLAY_LIMIT = 18;
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
 const COACH_AUTOSEND_KEY = "moneyhub-coach-autosend";
 const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
+const COACH_BRAIN_CHECK_DELAY_MS = 1200;
 
 export default function CoachPage({
   transactions,
@@ -50,6 +51,11 @@ export default function CoachPage({
     }
   });
   const [chatError, setChatError] = useState("");
+  const [coachBrainSyncStatus, setCoachBrainSyncStatus] = useState({
+    state: "checking",
+    label: "Checking Coach brain...",
+    helper: "Making sure Coach has the latest money read before you ask it anything.",
+  });
   const [freshCutoff, setFreshCutoff] = useState(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(COACH_FRESH_CUTOFF_KEY) || new Date().toISOString();
@@ -139,6 +145,64 @@ export default function CoachPage({
     }
     latestMessageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [latestVisibleMessageKey, pendingUserMessage, thinking]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!transactions.length) {
+      setCoachBrainSyncStatus({
+        state: "empty",
+        label: "Coach brain waiting for statement data",
+        helper: "Upload or load transactions before Coach can build a proper money read.",
+      });
+      return undefined;
+    }
+
+    setCoachBrainSyncStatus({
+      state: "syncing",
+      label: "Updating Coach brain...",
+      helper: "Saving the latest interpreted money read in the background.",
+    });
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("coach_context_snapshots")
+          .select("updated_at, transaction_count, latest_transaction_date")
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (error) throw error;
+
+        if (!data) {
+          setCoachBrainSyncStatus({
+            state: "syncing",
+            label: "Building Coach brain...",
+            helper: "The first saved money read has not appeared yet. Give it a moment.",
+          });
+          return;
+        }
+
+        setCoachBrainSyncStatus({
+          state: "ready",
+          label: "Coach brain up to date",
+          helper: buildCoachBrainReadyHelper(data),
+        });
+      } catch {
+        if (cancelled) return;
+        setCoachBrainSyncStatus({
+          state: "error",
+          label: "Coach brain sync needs checking",
+          helper: "Coach may use the last saved money read until sync succeeds.",
+        });
+      }
+    }, COACH_BRAIN_CHECK_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [transactions.length, appMoneyModel, aiMessages.length]);
 
   async function sendMessage(nextMessage) {
     const text = String(nextMessage ?? message).trim();
@@ -353,6 +417,8 @@ export default function CoachPage({
             ))}
           </div>
 
+          <CoachBrainSyncStatus status={coachBrainSyncStatus} styles={styles} />
+
           <div style={getChatMessagesStyle(styles)}>
             {freshCutoff && hiddenOlderByFreshView > 0 && (
               <div style={styles.historyNote}>New chat. History is still saved.</div>
@@ -434,6 +500,39 @@ export default function CoachPage({
       ) : null}
     </>
   );
+}
+
+function CoachBrainSyncStatus({ status, styles }) {
+  const state = status?.state || "checking";
+  const isBusy = state === "checking" || state === "syncing";
+  const isReady = state === "ready";
+  const isError = state === "error";
+
+  return (
+    <div style={getCoachBrainSyncStyle(styles, state)}>
+      <span style={getCoachBrainDotStyle(isBusy, isReady, isError)}>{isBusy ? "◌" : isReady ? "✓" : "!"}</span>
+      <span style={{ fontWeight: 800 }}>{status?.label || "Checking Coach brain..."}</span>
+      <span style={{ color: "#64748b" }}>{status?.helper || ""}</span>
+    </div>
+  );
+}
+
+function buildCoachBrainReadyHelper(data) {
+  const count = Number(data?.transaction_count || 0);
+  const latest = data?.latest_transaction_date ? ` Latest transaction: ${data.latest_transaction_date}.` : "";
+  const updated = data?.updated_at ? ` Saved ${formatRelativeSyncTime(data.updated_at)}.` : "";
+  return `${count ? `${count} transactions saved for Coach.` : "Saved money read is ready."}${latest}${updated}`;
+}
+
+function formatRelativeSyncTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "recently";
+  const diffSeconds = Math.max(Math.round((Date.now() - date.getTime()) / 1000), 0);
+  if (diffSeconds < 10) return "just now";
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  return new Intl.DateTimeFormat("en-GB", { hour: "numeric", minute: "2-digit" }).format(date);
 }
 
 function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
@@ -610,6 +709,42 @@ function getEmptyCoachStateStyle(screenWidth, styles) {
   return {
     ...styles.emptyCoachState,
     minHeight: screenWidth <= 480 ? "74px" : "96px",
+  };
+}
+
+function getCoachBrainSyncStyle(styles, state) {
+  const isError = state === "error";
+  const isReady = state === "ready";
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    flexWrap: "wrap",
+    flexShrink: 0,
+    borderRadius: "999px",
+    padding: "7px 10px",
+    fontSize: 12,
+    lineHeight: 1.25,
+    border: isError ? "1px solid rgba(239, 68, 68, 0.24)" : isReady ? "1px solid rgba(34, 197, 94, 0.2)" : "1px solid rgba(14, 165, 233, 0.22)",
+    background: isError ? "rgba(254, 242, 242, 0.92)" : isReady ? "rgba(240, 253, 244, 0.85)" : "rgba(240, 249, 255, 0.9)",
+    color: "#0f172a",
+    boxShadow: styles?.softShadow || "none",
+  };
+}
+
+function getCoachBrainDotStyle(isBusy, isReady, isError) {
+  return {
+    width: 18,
+    height: 18,
+    borderRadius: "999px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 12,
+    fontWeight: 900,
+    background: isError ? "rgba(239, 68, 68, 0.12)" : isReady ? "rgba(34, 197, 94, 0.14)" : "rgba(14, 165, 233, 0.14)",
+    color: isError ? "#b91c1c" : isReady ? "#15803d" : "#0369a1",
+    transform: isBusy ? "scale(1.04)" : "none",
   };
 }
 
