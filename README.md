@@ -51,6 +51,21 @@ npm run dev
 
 ---
 
+## First-Time User Flow
+
+Money Hub is designed for people who want better finances without doing constant money admin.
+
+1. Install/open the app.
+2. Create an account.
+3. Upload CSV bank statements. Multiple files are fine; duplicate and overlap checks help avoid importing the same transactions twice.
+4. Open Calendar to check bills, rent, subscriptions, debt payments, missing bills, and past spending.
+5. Set one goal, starting with safety before growth.
+6. Ask the AI Coach for a plain-English overview, spending personality read, or simple plan.
+
+Setup runs on first login for each account, can be replayed from More/Settings, and users can delete all data or selected uploaded months if they want to restart.
+
+---
+
 ## ✅ Pre-Push Checks
 
 npm run check  
@@ -76,6 +91,10 @@ Money Hub handles sensitive financial data: statements, receipts, documents, tra
 ### Core App
 - src/App.jsx  
   Handles session, Supabase loading, shared state, and routing  
+- src/lib/moneyUnderstanding.js
+  Builds the shared interpreted money layer
+- src/lib/appMoneyModel.js
+  Turns moneyUnderstanding into page-friendly income, bills, spending, savings, warnings, and AI context
 
 ### Intelligence Layer
 - src/lib/dashboardIntelligence.js → summaries, freshness, trends  
@@ -89,6 +108,7 @@ Money Hub handles sensitive financial data: statements, receipts, documents, tra
 
 ### UI Layer
 - src/pages/*Page.jsx → workflows and page logic  
+- src/components/onboarding/* → first-run guided setup and replay
 - src/styles.js / src/lib/styleHelpers.js → design system  
 
 ---

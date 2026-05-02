@@ -74,6 +74,10 @@ Good wording:
 Goal: a user bad with money should understand what to do next without reading a manual.
 
 Must pass:
+- First login shows a guided setup flow: install/open app, account, upload CSVs, Calendar checks, Goals, AI Coach.
+- Setup can be replayed from More/Settings.
+- Settings can delete all user data and restart setup after clear confirmation.
+- Settings can delete selected uploaded months without wiping the whole account.
 - Bottom nav labels are short and understandable.
 - AI input does not jump when typing.
 - Send button is visible on iPhone-sized screens.

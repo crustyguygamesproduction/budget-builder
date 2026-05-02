@@ -2,7 +2,7 @@ import { useState } from "react";
 
 const PRIMARY_ITEMS = [
   { key: "today", label: "Home", icon: "home" },
-  { key: "calendar", label: "Bills", icon: "calendar" },
+  { key: "calendar", label: "Calendar", icon: "calendar" },
   { key: "upload", label: "Upload", icon: "upload", primary: true },
   { key: "goals", label: "Goals", icon: "target" },
   { key: "coach", label: "AI", icon: "spark" },

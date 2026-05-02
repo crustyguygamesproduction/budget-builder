@@ -9,26 +9,27 @@ Use this first when making changes so future work does not start by rereading th
 - `src/lib/styleHelpers.js` owns responsive/status style helper functions.
 - `src/components/ui.jsx` owns repeated small UI primitives: `Section`, `MiniCard`, `Row`, `InsightCard`, and `ActionCard`.
 - `src/components/TopBar.jsx` and `src/components/BottomNav.jsx` own the app frame.
-- `src/components/onboarding/*` owns first-time setup tips, user-scoped onboarding memory, and setup replay.
+- `src/components/onboarding/*` owns the first-run guided setup flow, user-scoped onboarding memory, and setup replay.
 
 ## Pages
 
 - `src/pages/TodayPage.jsx` is the home/dashboard experience and should stay focused on concise, bank-app-style money reads.
 - `src/pages/UploadPage.jsx` owns CSV statement upload, account guessing, field mapping, import preview, and saving imported transactions.
-- `src/pages/AccountsPage.jsx` owns account-level intelligence from uploaded statements.
 - `src/pages/CoachPage.jsx` owns the AI chat UX and coach context handoff.
 - `src/pages/GoalsPage.jsx` owns goals and goal-linked recommendations.
 - `src/pages/ReceiptsPage.jsx` owns receipt upload, receipt/payment matching, and receipt AI extraction fallbacks.
 - `src/pages/DebtsPage.jsx` owns debt records, debt document extraction, debt statement signals, and monthly debt status.
 - `src/pages/InvestmentsPage.jsx` owns investment records, broker statement signals, investment document extraction, and price refreshes.
 - `src/pages/CalendarPage.jsx` owns spending calendar, recurring event calendar, and calendar AI analysis.
-- `src/pages/SettingsPage.jsx` owns viewer mode, viewer access, and settings/admin surfaces.
+- `src/pages/SettingsPage.jsx` owns viewer mode, viewer access, setup replay, full data reset, and selected-month deletion.
 - `src/pages/AuthPage.jsx` owns login/signup.
 - `src/pages/PrivacyPage.jsx` owns the human-readable privacy and data-use explanation for users.
 
 ## Money Logic
 
 - `src/lib/finance.js` owns general money/date/transaction helpers. Put shared transaction classification and currency/date formatting here.
+- `src/lib/moneyUnderstanding.js` owns the shared interpreted money layer: smart transactions, bills, recurring events, checks, summary, and AI context.
+- `src/lib/appMoneyModel.js` owns page-friendly reads derived from `moneyUnderstanding`: Calendar bill totals, income, usual spending, safe saving amount, warnings, and next actions.
 - `src/lib/statementIntelligence.js` owns statement-derived intelligence.
 - `src/lib/coachContext.js` builds the AI coach context. If the coach needs to understand more data, start here.
 - `src/lib/importAnalysis.js` owns upload-specific import metadata: date ranges, duplicate fingerprints, overlap checks, and row confidence.

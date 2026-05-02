@@ -7,8 +7,10 @@ import { FREE_FEATURES, PREMIUM_FEATURES, getPremiumFeatureSummary } from "../li
 
 export default function SettingsPage({
   userId,
+  transactions = [],
   viewerAccess,
   onViewerChange,
+  onDataChange,
   viewerMode,
   setViewerMode,
   financialDocuments,
@@ -21,6 +23,10 @@ export default function SettingsPage({
   const [viewerEmail, setViewerEmail] = useState("");
   const [viewerLabel, setViewerLabel] = useState("");
   const [sharing, setSharing] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [monthDeleteBusy, setMonthDeleteBusy] = useState(false);
+  const [selectedMonths, setSelectedMonths] = useState([]);
+  const monthOptions = getMonthOptions(transactions);
 
   async function addViewer() {
     if (!viewerEmail.trim()) return;
@@ -51,6 +57,103 @@ export default function SettingsPage({
     } finally {
       setSharing(false);
     }
+  }
+
+  async function wipeAllData() {
+    const first = window.confirm("This deletes your Money Hub data and restarts setup. It cannot be undone. Continue?");
+    if (!first) return;
+    const typed = window.prompt("Type DELETE to wipe statements, goals, receipts, AI chat, rules, debts and investments.");
+    if (typed !== "DELETE") return;
+
+    setResetBusy(true);
+    try {
+      const { data: receipts } = await supabase
+        .from("receipts")
+        .select("file_path")
+        .eq("user_id", userId)
+        .not("file_path", "is", null);
+      const { data: docs } = await supabase
+        .from("financial_documents")
+        .select("file_path")
+        .eq("user_id", userId)
+        .not("file_path", "is", null);
+      const paths = [...(receipts || []), ...(docs || [])]
+        .map((item) => item.file_path)
+        .filter(Boolean);
+      if (paths.length) {
+        await supabase.storage.from("receipts").remove(paths);
+      }
+
+      const tables = [
+        "receipts",
+        "financial_documents",
+        "ai_messages",
+        "money_understanding_snapshots",
+        "transaction_rules",
+        "debts",
+        "investments",
+        "money_goals",
+        "transactions",
+        "statement_imports",
+        "accounts",
+      ];
+
+      for (const table of tables) {
+        const { error } = await supabase.from(table).delete().eq("user_id", userId);
+        if (error) throw error;
+      }
+
+      replayOnboarding(userId);
+      await onDataChange?.();
+      alert("Your Money Hub data was deleted. Setup will run again.");
+    } catch (error) {
+      alert(error.message || "Could not delete all data.");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
+  async function deleteSelectedMonths() {
+    if (!selectedMonths.length) return;
+    const confirmed = window.confirm(`Delete transactions for ${selectedMonths.length} selected month${selectedMonths.length === 1 ? "" : "s"}? This also clears AI money snapshots so the app can rebuild its read.`);
+    if (!confirmed) return;
+
+    setMonthDeleteBusy(true);
+    try {
+      for (const month of selectedMonths) {
+        const { startDate, endDate } = getMonthBounds(month);
+        const { error: txError } = await supabase
+          .from("transactions")
+          .delete()
+          .eq("user_id", userId)
+          .gte("transaction_date", startDate)
+          .lte("transaction_date", endDate);
+        if (txError) throw txError;
+
+        const { error: importError } = await supabase
+          .from("statement_imports")
+          .delete()
+          .eq("user_id", userId)
+          .lte("start_date", endDate)
+          .gte("end_date", startDate);
+        if (importError) throw importError;
+      }
+
+      await supabase.from("money_understanding_snapshots").delete().eq("user_id", userId);
+      setSelectedMonths([]);
+      await onDataChange?.();
+      alert("Selected month data deleted.");
+    } catch (error) {
+      alert(error.message || "Could not delete those months.");
+    } finally {
+      setMonthDeleteBusy(false);
+    }
+  }
+
+  function toggleMonth(month) {
+    setSelectedMonths((current) =>
+      current.includes(month) ? current.filter((item) => item !== month) : [...current, month]
+    );
   }
 
   return (
@@ -133,16 +236,53 @@ export default function SettingsPage({
 
       <Section title="Help And Tips" styles={styles}>
         <p style={styles.sectionIntro}>
-          Quick fintech-style pointers for getting clean answers from Money Hub. Tips appear once per login account and can be skipped.
+          Run setup again if you want the guided flow: upload statements, check Calendar, set a goal, then ask AI.
         </p>
-        <Row name="Best first upload" value="Oldest statements first" styles={styles} />
-        <Row name="If a number looks odd" value="Ask AI why" styles={styles} />
-        <Row name="Before saving goals" value="Check estimates" styles={styles} />
+        <Row name="Best first upload" value="Any CSV statements. Multiple files are fine." styles={styles} />
+        <Row name="Main check" value="Calendar finds bills, rent, subscriptions and debt payments." styles={styles} />
+        <Row name="Final step" value="Ask AI for a simple money overview." styles={styles} />
         <button style={styles.ghostBtn} type="button" onClick={() => replayOnboarding(userId)}>
-          Replay setup tips
+          Replay guided setup
         </button>
         <button style={styles.ghostBtn} type="button" onClick={onShowPrivacy}>
           Privacy
+        </button>
+      </Section>
+
+      <Section title="Reset Or Delete Data" styles={styles}>
+        <p style={styles.sectionIntro}>
+          Use this if an upload went wrong or you want to start again. Money Hub keeps this manual and obvious on purpose.
+        </p>
+        {monthOptions.length > 0 ? (
+          <>
+            <p style={styles.transactionMeta}>Delete selected months</p>
+            <div style={getMonthGridStyle()}>
+              {monthOptions.map((month) => (
+                <label key={month.key} style={getMonthOptionStyle(selectedMonths.includes(month.key))}>
+                  <input
+                    type="checkbox"
+                    checked={selectedMonths.includes(month.key)}
+                    onChange={() => toggleMonth(month.key)}
+                  />
+                  <span>{month.label}</span>
+                  <small>{month.count} transaction{month.count === 1 ? "" : "s"}</small>
+                </label>
+              ))}
+            </div>
+            <button
+              style={styles.secondaryBtn}
+              type="button"
+              onClick={deleteSelectedMonths}
+              disabled={monthDeleteBusy || selectedMonths.length === 0}
+            >
+              {monthDeleteBusy ? "Deleting..." : "Delete selected months"}
+            </button>
+          </>
+        ) : (
+          <p style={styles.emptyText}>No uploaded months to delete yet.</p>
+        )}
+        <button style={styles.ghostBtn} type="button" onClick={wipeAllData} disabled={resetBusy}>
+          {resetBusy ? "Deleting..." : "Delete all data and restart setup"}
         </button>
       </Section>
 
@@ -157,6 +297,63 @@ export default function SettingsPage({
       </Section>
     </>
   );
+}
+
+function getMonthOptions(transactions = []) {
+  const groups = new Map();
+  transactions.forEach((transaction) => {
+    const value = transaction.transaction_date;
+    if (!value) return;
+    const key = String(value).slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(key)) return;
+    if (!groups.has(key)) groups.set(key, 0);
+    groups.set(key, groups.get(key) + 1);
+  });
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([key, count]) => {
+      const [year, month] = key.split("-").map(Number);
+      const date = new Date(year, month - 1, 1);
+      return {
+        key,
+        count,
+        label: date.toLocaleDateString("en-GB", { month: "long", year: "numeric" }),
+      };
+    });
+}
+
+function getMonthBounds(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0);
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  };
+}
+
+function getMonthGridStyle() {
+  return {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+    gap: 8,
+    margin: "10px 0",
+  };
+}
+
+function getMonthOptionStyle(active) {
+  return {
+    display: "grid",
+    gridTemplateColumns: "auto 1fr",
+    gap: "3px 8px",
+    alignItems: "center",
+    border: active ? "1px solid rgba(37, 99, 235, 0.4)" : "1px solid rgba(148, 163, 184, 0.24)",
+    background: active ? "#eff6ff" : "#f8fafc",
+    borderRadius: 14,
+    padding: 10,
+    fontWeight: 800,
+  };
 }
 
 function FeatureList({ title, features, styles }) {

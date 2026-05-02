@@ -8,16 +8,23 @@ import "./onboarding.css";
 
 const PHASES = {
   WELCOME: "welcome",
-  CHOOSE: "choose",
+  ACCOUNT: "account",
   UPLOAD: "upload",
-  BANK: "bank",
-  EXPLORE: "explore",
+  CALENDAR: "calendar",
+  GOALS: "goals",
+  COACH: "coach",
+  DONE: "done",
 };
 
-const DEFAULT_ANCHORS = {
-  today: ["[data-page='today']", "[data-nav='today']", "button[aria-label*='Today']", "button"],
-  upload: ["[data-page='upload']", "[data-nav='upload']", "button[aria-label*='Upload']"],
-};
+const FLOW = [
+  PHASES.WELCOME,
+  PHASES.ACCOUNT,
+  PHASES.UPLOAD,
+  PHASES.CALENDAR,
+  PHASES.GOALS,
+  PHASES.COACH,
+  PHASES.DONE,
+];
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(false);
@@ -34,68 +41,24 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
-function findAnchor(selectors = []) {
-  if (typeof document === "undefined") return null;
-  for (const selector of selectors) {
-    const el = document.querySelector(selector);
-    if (el) return el;
-  }
-  return null;
-}
-
-function getSpotlightRect(phase) {
-  const key = phase === PHASES.UPLOAD ? "upload" : phase === PHASES.EXPLORE ? "today" : null;
-  if (!key) return null;
-  const el = findAnchor(DEFAULT_ANCHORS[key]);
-  if (!el) return null;
-  const rect = el.getBoundingClientRect();
-  if (rect.width < 8 || rect.height < 8) return null;
-  return {
-    top: Math.max(12, rect.top - 10),
-    left: Math.max(12, rect.left - 10),
-    width: Math.min(window.innerWidth - 24, rect.width + 20),
-    height: Math.min(window.innerHeight - 24, rect.height + 20),
-  };
-}
-
-function Sparkline() {
-  return (
-    <svg className="mh-ob-sparkline" viewBox="0 0 240 90" role="img" aria-label="Simple spending trend preview">
-      <defs>
-        <linearGradient id="mh-ob-line" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor="#06b6d4" />
-          <stop offset="100%" stopColor="#6366f1" />
-        </linearGradient>
-      </defs>
-      <path d="M8 70 C38 54 52 62 76 42 C104 18 124 40 148 28 C178 12 196 36 232 18" fill="none" stroke="url(#mh-ob-line)" strokeWidth="8" strokeLinecap="round" />
-      <path d="M8 70 C38 54 52 62 76 42 C104 18 124 40 148 28 C178 12 196 36 232 18 L232 90 L8 90 Z" fill="url(#mh-ob-line)" opacity="0.12" />
-    </svg>
-  );
-}
-
-function MiniDashboard({ hasData }) {
+function MoneyPathPreview() {
   return (
     <div className="mh-ob-phone" aria-hidden="true">
       <div className="mh-ob-phone-top">
         <span />
         <span />
       </div>
-
       <div className="mh-ob-balance-card">
-        <p>{hasData ? "Ready to analyse" : "Your money, sorted"}</p>
-        <strong>{hasData ? "Dashboard ready" : "Start with 1 file"}</strong>
+        <p>Money Hub setup</p>
+        <strong>Upload. Check. Plan.</strong>
       </div>
-
-      <Sparkline />
-
       <div className="mh-ob-mini-list">
-        <span><b /> Spending patterns found</span>
-        <span><b /> Subscriptions detected</span>
-        <span><b /> Answers ready instantly</span>
+        <span><b /> CSV statements sorted</span>
+        <span><b /> Bills, rent and subs checked</span>
+        <span><b /> Goals and AI plan next</span>
       </div>
-
       <p style={{ marginTop: 10, fontSize: 13, opacity: 0.7 }}>
-        Your data stays private and secure.
+        Built for people who want help, not homework.
       </p>
     </div>
   );
@@ -106,30 +69,19 @@ export default function OnboardingExperience({
   userId,
   screenWidth = 1024,
   transactionCount = 0,
-  accountCount = 0,
 }) {
   const [isOpen, setIsOpen] = useState(() => !hasCompletedOnboarding(userId));
   const [phase, setPhase] = useState(PHASES.WELCOME);
-  const [spotlight, setSpotlight] = useState(null);
   const dialogRef = useRef(null);
   const reducedMotion = usePrefersReducedMotion();
   const compact = screenWidth < 680;
-  const hasData = transactionCount > 0 || accountCount > 0;
+  const hasData = transactionCount > 0;
+  const stepIndex = FLOW.indexOf(phase);
 
   const close = useCallback((nextPage = null) => {
     completeOnboarding(userId);
-
-    if (nextPage === "upload" && typeof window !== "undefined") {
-      sessionStorage.setItem("moneyhub-highlight-upload", "true");
-    }
-
-    if (nextPage) {
-      setPage(nextPage);
-    }
-
-    setTimeout(() => {
-      setIsOpen(false);
-    }, 50);
+    if (nextPage) setPage(nextPage);
+    window.setTimeout(() => setIsOpen(false), 50);
   }, [setPage, userId]);
 
   useEffect(() => {
@@ -168,73 +120,89 @@ export default function OnboardingExperience({
     };
   }, [close, isOpen]);
 
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const updateSpotlight = () => setSpotlight(getSpotlightRect(phase));
-    updateSpotlight();
-    window.addEventListener("resize", updateSpotlight);
-    window.addEventListener("scroll", updateSpotlight, true);
-    return () => {
-      window.removeEventListener("resize", updateSpotlight);
-      window.removeEventListener("scroll", updateSpotlight, true);
-    };
-  }, [phase, isOpen]);
-
   const content = useMemo(() => ({
     [PHASES.WELCOME]: {
-      eyebrow: "Money Hub setup",
-      title: hasData ? "You're nearly there." : "Sort your money without the boring setup.",
-      body: hasData
-        ? "We’ll get you to a useful view of your money in under a minute."
-        : "No long tour. Choose one action and get to a useful money view quickly.",
-      primary: "Get started",
-      secondary: "Skip tips",
+      eyebrow: "First setup",
+      title: hasData ? "Let’s make your money easier to read." : "Install it, sign in, dump in statements.",
+      body: "Money Hub is for people who want help, not homework. Use it like an app, upload CSVs, let it sort the mess, then only check the important stuff.",
+      bullets: ["Install from your browser if you want it on your phone", "No spreadsheets to maintain", "Bulk uploads are fine"],
+      primary: "Show me the flow",
+      secondary: "Skip for now",
     },
-    [PHASES.CHOOSE]: {
-      eyebrow: "Pick your first win",
-      title: "What do you want to do first?",
-      body: "The best onboarding is the one that helps you actually do something. Choose the route that fits right now.",
+    [PHASES.ACCOUNT]: {
+      eyebrow: "Step 1",
+      title: "Create your account once.",
+      body: "You are already signed in now. New users do this first so their statements, goals and AI history stay private to them.",
+      bullets: ["Email login", "Private user data", "Replay setup anytime from More"],
+      primary: "Next: upload statements",
     },
     [PHASES.UPLOAD]: {
-      eyebrow: "Fastest value",
-      title: "Upload one statement. We'll turn it into insight.",
-      body: "The app reads your file, spots patterns, categorises spending and makes the dashboard useful immediately.",
-      primary: "Go to upload",
-      secondary: "Choose another route",
-      proof: ["Review before import", "Works before live bank feeds", "Great for testing the product"],
+      eyebrow: "Step 2",
+      title: "Dump in your bank statements.",
+      body: "CSV files are the easy mode. You can upload multiple files, old months first or all at once. Money Hub checks overlap and avoids putting the same transaction in twice.",
+      bullets: ["CSV format", "Multiple statements are fine", "Duplicates are checked before import"],
+      primary: "Go to Upload",
+      page: "upload",
     },
-    [PHASES.BANK]: {
-      eyebrow: "Coming soon",
-      title: "Live bank linking belongs here, but only after the backend is ready.",
-      body: "This will become your Plaid, TrueLayer or Yapily consent flow. For now, we keep the button visible but honest.",
-      primary: "Use statements for now",
-      secondary: "Choose another route",
-      proof: ["Secure consent flow", "Server-side token storage", "No bank secrets in the browser"],
+    [PHASES.CALENDAR]: {
+      eyebrow: "Step 3",
+      title: "Use Calendar to check bills, rent and subscriptions.",
+      body: "Calendar is where Money Hub shows bills it found, possible missing bills, hidden suggestions, and past spending. You confirm the big recurring stuff so the rest of the app stops guessing.",
+      bullets: ["Rent, bills, subs and debt payments", "Mark things as not bills", "Restore hidden suggestions if needed"],
+      primary: "Open Calendar",
+      page: "calendar",
     },
-    [PHASES.EXPLORE]: {
-      eyebrow: "No pressure",
-      title: "Explore the app first. Add data when you're ready.",
-      body: "You can look around without being trapped in setup. We'll keep a small nudge to upload when useful.",
-      primary: "Explore Today",
-      secondary: "Choose another route",
-      proof: ["No forced setup", "Replay anytime in More", "Useful prompts stay subtle"],
+    [PHASES.GOALS]: {
+      eyebrow: "Step 4",
+      title: "Set one goal: safety first, growth second.",
+      body: "Start with a safety buffer. Once that exists, move toward growth: debt freedom, investing, a move, a house, or whatever matters.",
+      bullets: ["Recommended safety goal", "Safe monthly amount", "No fake optimism"],
+      primary: "Open Goals",
+      page: "goals",
+    },
+    [PHASES.COACH]: {
+      eyebrow: "Step 5",
+      title: "Ask AI what your money pattern looks like.",
+      body: "The coach uses the organised money layer, Calendar bills, Checks and goals. Ask for a plain-English overview, a spending personality read, or a 7-day plan.",
+      bullets: ["Helpful, direct advice", "Uses your real app data", "Good for lazy check-ins"],
+      primary: "Open AI Coach",
+      page: "coach",
+    },
+    [PHASES.DONE]: {
+      eyebrow: "You’re ready",
+      title: "Money Hub now has a simple rhythm.",
+      body: "Upload statements, check Calendar, set one goal, then ask AI. In the paid future, live bank feeds can replace the upload chore.",
+      bullets: ["Redo this from More", "Delete your data anytime", "Delete single months if an upload was wrong"],
+      primary: "Start on Home",
+      page: "today",
     },
   }), [hasData]);
 
   if (!isOpen) return null;
 
-  function goToPhase(nextPhase, page = null) {
-    if (page) setPage(page);
-    setPhase(nextPhase);
+  const current = content[phase];
+  const canBack = stepIndex > 0;
+  const canNext = phase !== PHASES.DONE;
+
+  function next() {
+    if (phase === PHASES.DONE) {
+      close(current.page || "today");
+      return;
+    }
+    setPhase(FLOW[Math.min(stepIndex + 1, FLOW.length - 1)]);
   }
 
-  const current = content[phase];
-  const showSplit = phase === PHASES.WELCOME || (!compact && phase === PHASES.CHOOSE);
+  function back() {
+    setPhase(FLOW[Math.max(stepIndex - 1, 0)]);
+  }
+
+  function goToPage() {
+    close(current.page || "today");
+  }
 
   return (
     <div className={`mh-ob-root ${reducedMotion ? "mh-ob-reduced" : ""}`} role="presentation">
       <div className="mh-ob-veil" />
-      {spotlight && <div className="mh-ob-spotlight" style={spotlight} aria-hidden="true" />}
 
       <section
         ref={dialogRef}
@@ -244,92 +212,53 @@ export default function OnboardingExperience({
         aria-labelledby="mh-ob-title"
         tabIndex={-1}
       >
-        <button className="mh-ob-close" type="button" onClick={() => close()} aria-label="Skip onboarding">
+        <button className="mh-ob-close" type="button" onClick={() => close()} aria-label="Skip setup">
           x
         </button>
 
         <div className="mh-ob-copy">
           <div className="mh-ob-progress" aria-hidden="true">
-            <span className={phase === PHASES.WELCOME ? "active" : "done"} />
-            <span className={phase === PHASES.CHOOSE ? "active" : [PHASES.UPLOAD, PHASES.BANK, PHASES.EXPLORE].includes(phase) ? "done" : ""} />
-            <span className={[PHASES.UPLOAD, PHASES.BANK, PHASES.EXPLORE].includes(phase) ? "active" : ""} />
+            {FLOW.slice(0, -1).map((item, index) => (
+              <span key={item} className={index < stepIndex ? "done" : index === stepIndex ? "active" : ""} />
+            ))}
           </div>
 
           <p className="mh-ob-eyebrow">{current.eyebrow}</p>
           <h2 id="mh-ob-title">{current.title}</h2>
           <p className="mh-ob-body">{current.body}</p>
 
-          {phase === PHASES.WELCOME && (
-  <>
-    <div className="mh-ob-tip-strip" aria-label="Quick setup benefits">
-      <span>Upload statements in any order</span>
-      <span>We organise and categorise everything</span>
-      <span>Ask anything about your money</span>
-    </div>
+          <div className="mh-ob-proof-list">
+            {current.bullets.map((item) => <span key={item}>{item}</span>)}
+          </div>
 
-    <button type="button" className="mh-ob-trust-line mh-ob-trust-button" onClick={() => setPage("privacy")}>
-      Your data stays private and secure.
-    </button>
-  </>
-)}
-
-          {phase === PHASES.WELCOME && (
-            <div className="mh-ob-actions">
-              <button className="mh-ob-primary" type="button" onClick={() => setPhase(PHASES.CHOOSE)}>
+          <div className="mh-ob-actions">
+            {current.page ? (
+              <button className="mh-ob-primary" type="button" onClick={goToPage}>
                 {current.primary}
               </button>
+            ) : (
+              <button className="mh-ob-primary" type="button" onClick={next}>
+                {current.primary}
+              </button>
+            )}
+            {canNext ? (
+              <button className="mh-ob-secondary" type="button" onClick={next}>
+                Next
+              </button>
+            ) : null}
+            {canBack ? (
+              <button className="mh-ob-secondary" type="button" onClick={back}>
+                Back
+              </button>
+            ) : (
               <button className="mh-ob-secondary" type="button" onClick={() => close()}>
-                {current.secondary}
+                {current.secondary || "Skip"}
               </button>
-            </div>
-          )}
-
-          {phase === PHASES.CHOOSE && (
-            <div className="mh-ob-options">
-              <button className="mh-ob-option mh-ob-option-featured" type="button" onClick={() => close("upload")}>
-                <span className="mh-ob-icon">1</span>
-                <strong>Upload statement</strong>
-                <em>Fastest way to see real insight.</em>
-                <small>Recommended</small>
-              </button>
-              <button className="mh-ob-option" type="button" onClick={() => goToPhase(PHASES.BANK)}>
-                <span className="mh-ob-icon">2</span>
-                <strong>Connect bank</strong>
-                <em>Open Banking slot, coming soon.</em>
-              </button>
-              <button className="mh-ob-option" type="button" onClick={() => close("today")}>
-                <span className="mh-ob-icon">3</span>
-                <strong>Just explore</strong>
-                <em>No pressure. Add data later.</em>
-              </button>
-            </div>
-          )}
-
-          {[PHASES.UPLOAD, PHASES.BANK, PHASES.EXPLORE].includes(phase) && (
-            <>
-              <div className="mh-ob-proof-list">
-                {current.proof.map((item) => <span key={item}>{item}</span>)}
-              </div>
-              <div className="mh-ob-actions">
-                <button
-                  className="mh-ob-primary"
-                  type="button"
-                  onClick={() => {
-                    if (phase === PHASES.EXPLORE) close("today");
-                    else close("upload");
-                  }}
-                >
-                  {current.primary}
-                </button>
-                <button className="mh-ob-secondary" type="button" onClick={() => setPhase(PHASES.CHOOSE)}>
-                  {current.secondary}
-                </button>
-              </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
 
-        {showSplit && <MiniDashboard hasData={hasData} />}
+        {!compact ? <MoneyPathPreview /> : null}
       </section>
     </div>
   );
