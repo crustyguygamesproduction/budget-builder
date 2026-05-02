@@ -68,9 +68,9 @@ export default function HomePage({
             detail={nextBill ? `${formatCurrency(nextBill.amount)} ${nextBill.when}` : "Calendar is quiet"}
           />
           <HeroFact
-            label={billShare.hasSharedMoney ? "Your bill share" : "Bills this month"}
+            label={billShare.hasSharedMoney ? "Your bills after shared money" : "Bills this month"}
             value={formatCurrency(billShare.personalTotal)}
-            detail={billShare.hasSharedMoney ? `${formatCurrency(billShare.sharedMoney)} expected from shared bills` : `${calendarBills.count} bill${calendarBills.count === 1 ? "" : "s"} found by Calendar`}
+            detail={billShare.hasSharedMoney ? `Already allows for ${formatCurrency(billShare.sharedMoney)}` : `${calendarBills.count} bill${calendarBills.count === 1 ? "" : "s"} found by Calendar`}
           />
           <HeroFact
             label="Expected in"
@@ -96,9 +96,9 @@ export default function HomePage({
 
       <Section title="Your Next 30 Days" styles={styles}>
         <div style={styles.inlineInfoBlock}>
-          <Row name={billShare.hasSharedMoney ? "Your bill share" : "Bills due"} value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
-          {billShare.hasSharedMoney ? <Row name="Bills leaving account" value={`${formatCurrency(calendarBills.total)} before shared money`} styles={styles} /> : null}
-          {billShare.hasSharedMoney ? <Row name="Shared money expected" value={`${formatCurrency(billShare.sharedMoney)} towards bills`} styles={styles} /> : null}
+          <Row name={billShare.hasSharedMoney ? "Your bills after shared money" : "Bills due"} value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
+          {billShare.hasSharedMoney ? <Row name="Full bills leaving account" value={`${formatCurrency(calendarBills.total)} before shared money`} styles={styles} /> : null}
+          {billShare.hasSharedMoney ? <Row name="Shared money already counted" value={`${formatCurrency(billShare.sharedMoney)} from someone else`} styles={styles} /> : null}
           <Row name="Money expected in" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} next 30 days` : expectedIncome.label} styles={styles} />
           <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
           <Row name="Needs checking" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
@@ -212,7 +212,7 @@ function getCalendarBillRead(appMoneyModel) {
 function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome }) {
   const hasBills = billShare.personalTotal > 0;
   const billPhrase = billShare.hasSharedMoney
-    ? `${formatCurrency(billShare.personalTotal)} as your share of bills after ${formatCurrency(billShare.sharedMoney)} expected from shared bills`
+    ? `${formatCurrency(billShare.personalTotal)} of bills to cover yourself. This already allows for ${formatCurrency(billShare.sharedMoney)} expected from shared bills.`
     : `${formatCurrency(calendarBills.total)} of bills`;
   const nextBillText = nextBill ? `${nextBill.name} for ${formatCurrency(nextBill.amount)} ${nextBill.when}` : "no next bill found yet";
   const incomeText = expectedIncome?.hasExpectedIncome ? `Expected income: ${formatCurrency(expectedIncome.amount)}. ` : "";
@@ -237,11 +237,11 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
       badge: "Urgent",
       label: "Do not spend money",
       amount: formatCurrency(visibleCash.total),
-      body: `You have ${formatCurrency(visibleCash.total)} showing. Money Hub sees ${billPhrase}. ${incomeText}Next leaving your account: ${nextBillText}.`,
+      body: `You have ${formatCurrency(visibleCash.total)} showing. Money Hub sees ${billPhrase} ${incomeText}Next leaving your account: ${nextBillText}.`,
       headline: "Freeze non-essential spending today",
       nextMove: expectedIncome?.hasExpectedIncome ? "Protect the next income before spending it. Food, travel to work and bills only until money lands." : "Food, travel to work and bills only. No takeaways, shopping, gaming or top-ups until money is showing.",
       buttonLabel: "Make 7-day plan",
-      prompt: `Across the money Money Hub can see, I have ${formatCurrency(visibleCash.total)} showing, ${billPhrase}, ${incomeText}and my next bill leaving the account is ${nextBillText}. Give me a simple 7-day emergency plan.`,
+      prompt: `Across the money Money Hub can see, I have ${formatCurrency(visibleCash.total)} showing, ${billPhrase} ${incomeText}and my next bill leaving the account is ${nextBillText}. Give me a simple 7-day emergency plan.`,
     };
   }
 
@@ -251,11 +251,11 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
       badge: "Short",
       label: "Bills are bigger than balance",
       amount: formatCurrency(visibleCash.total),
-      body: `Money Hub sees ${billPhrase}. You look ${formatCurrency(Math.abs(moneyLeft))} short before normal spending. ${incomeText}`,
+      body: `Money Hub sees ${billPhrase} You look ${formatCurrency(Math.abs(moneyLeft))} short before normal spending. ${incomeText}`,
       headline: "Keep spending locked down",
       nextMove: `Next leaving your account: ${nextBillText}. Do not add new spending until this is covered.`,
       buttonLabel: "Make shortfall plan",
-      prompt: `My visible balance is ${formatCurrency(visibleCash.total)}, Money Hub sees ${billPhrase}, ${incomeText}and I look ${formatCurrency(Math.abs(moneyLeft))} short. Make a simple plan.`,
+      prompt: `My visible balance is ${formatCurrency(visibleCash.total)}, Money Hub sees ${billPhrase} ${incomeText}and I look ${formatCurrency(Math.abs(moneyLeft))} short. Make a simple plan.`,
     };
   }
 
@@ -265,24 +265,24 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
       badge: "No balance",
       label: "Current cash is missing",
       amount: "Need balance",
-      body: `Money Hub sees ${billPhrase}. ${incomeText}Next leaving your account: ${nextBillText}. It needs a current balance before saying what you can spend.`,
+      body: `Money Hub sees ${billPhrase} ${incomeText}Next leaving your account: ${nextBillText}. It needs a current balance before saying what you can spend.`,
       headline: "Good pattern, missing today",
       nextMove: "The app can show bills and expected income, but not real spending room until a balance or latest statement is in.",
       buttonLabel: "Ask what is safe",
-      prompt: `Money Hub sees ${billPhrase}, ${incomeText}next leaving the account is ${nextBillText}, but no current balance. Tell me what I can safely assume.`,
+      prompt: `Money Hub sees ${billPhrase} ${incomeText}next leaving the account is ${nextBillText}, but no current balance. Tell me what I can safely assume.`,
     };
   }
 
   return {
     tone: moneyLeft <= 25 ? "warn" : "good",
     badge: moneyLeft <= 25 ? "Tight" : "OK",
-    label: billShare.hasSharedMoney ? "Money after your bill share" : "Money after Calendar bills",
+    label: billShare.hasSharedMoney ? "Money after your bills" : "Money after Calendar bills",
     amount: formatCurrency(Math.max(moneyLeft, 0)),
-    body: `After ${billPhrase}, this is the cautious amount left from the visible balance. ${incomeText}Next leaving your account: ${nextBillText}.`,
+    body: `After ${billPhrase} this is the cautious amount left from the visible balance. ${incomeText}Next leaving your account: ${nextBillText}.`,
     headline: moneyLeft <= 25 ? "Keep it careful" : "You have some room",
     nextMove: moneyLeft <= 25 ? "Treat this as tight. Keep spending boring until more money lands." : "Bills are covered in this read. Still keep some back for surprises.",
     buttonLabel: "Check my week",
-    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${billPhrase}. ${incomeText}Next bill: ${nextBillText}.`,
+    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${billPhrase} ${incomeText}Next bill: ${nextBillText}.`,
   };
 }
 
