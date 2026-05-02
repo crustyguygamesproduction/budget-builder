@@ -38,10 +38,17 @@ export default function UploadPage({
     getTransferSummary,
   } = helpers;
 
-  const [files, setFiles] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [savingRuleKey, setSavingRuleKey] = useState("");
-  const [showUploadHint, setShowUploadHint] = useState(false);
+const [files, setFiles] = useState([]);
+const [saving, setSaving] = useState(false);
+const [savingRuleKey, setSavingRuleKey] = useState("");
+const [showUploadHint, setShowUploadHint] = useState(false);
+const [uploadStatus, setUploadStatus] = useState({
+  phase: "idle",
+  step: 0,
+  tone: "neutral",
+  title: "Ready to read your statements",
+  body: "Choose your CSV files. Money Hub will preview them before saving anything.",
+});
   const uploadGuidance = useMemo(
     () => buildUploadGuidance({ statementImports, existingTransactions }),
     [statementImports, existingTransactions]
@@ -414,30 +421,48 @@ export default function UploadPage({
     };
   }
 
-  function handleFiles(event) {
-    const selectedFiles = Array.from(event.target.files || []);
-    if (selectedFiles.length === 0) return;
+function handleFiles(event) {
+  const selectedFiles = Array.from(event.target.files || []);
+  if (selectedFiles.length === 0) return;
 
-    selectedFiles.forEach((file) => {
-      const validation = validateStatementCsvFile(file);
-      if (!validation.ok) {
-        alert(`${file.name}: ${validation.message}`);
-        return;
-      }
+  setUploadStatus({
+    phase: "reading",
+    step: 1,
+    tone: "working",
+    title: selectedFiles.length === 1 ? "Reading your statement" : `Reading ${selectedFiles.length} statements`,
+    body: "Money Hub is checking your file. Nothing has been saved yet.",
+  });
 
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        beforeFirstChunk(chunk) {
-          const headerIndex = detectHeaderRowIndex(chunk);
-          if (headerIndex <= 0) return chunk;
+  selectedFiles.forEach((file) => {
+    const validation = validateStatementCsvFile(file);
+    if (!validation.ok) {
+      alert(`${file.name}: ${validation.message}`);
+      return;
+    }
 
-          const lines = chunk.split(/\r?\n/);
-          return lines.slice(headerIndex).join("\n");
-        },
-        complete: async function (results) {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      beforeFirstChunk(chunk) {
+        const headerIndex = detectHeaderRowIndex(chunk);
+        if (headerIndex <= 0) return chunk;
+
+        const lines = chunk.split(/\r?\n/);
+        return lines.slice(headerIndex).join("\n");
+      },
+      complete: async function (results) {
+        try {
           const headers = Object.keys(results.data[0] || {});
           const sampleRows = results.data.slice(0, 5);
+
+          setUploadStatus({
+            phase: "mapping",
+            step: 2,
+            tone: "working",
+            title: `Understanding ${file.name}`,
+            body: "AI is matching the bank columns to date, description and money in/out.",
+          });
+
           const mapping = await requestCsvMapping(headers, sampleRows);
           const mappingMeta = summarizeMappingQuality(headers, mapping);
 
@@ -450,15 +475,40 @@ export default function UploadPage({
             const withoutDuplicate = prev.filter((item) => item.id !== nextCard.id);
             return [...withoutDuplicate, nextCard].sort((a, b) => a.fileName.localeCompare(b.fileName));
           });
-        },
-        error() {
-          alert(`Could not read ${file.name}. Please check the file format and try again.`);
-        },
-      });
-    });
 
-    event.target.value = "";
-  }
+          setUploadStatus({
+            phase: "ready",
+            step: 3,
+            tone: "good",
+            title: "Statement ready to import",
+            body: "Check the preview below, then tap Import. Nothing has been saved yet.",
+          });
+        } catch {
+          setUploadStatus({
+            phase: "error",
+            step: 2,
+            tone: "bad",
+            title: "Could not read that statement",
+            body: "Please check the file format and try again.",
+          });
+          alert(`Could not read ${file.name}. Please check the file format and try again.`);
+        }
+      },
+      error() {
+        setUploadStatus({
+          phase: "error",
+          step: 1,
+          tone: "bad",
+          title: "Could not read that statement",
+          body: "Please check the file format and try again.",
+        });
+        alert(`Could not read ${file.name}. Please check the file format and try again.`);
+      },
+    });
+  });
+
+  event.target.value = "";
+}
 
   function updateFile(id, patch) {
     setFiles((prev) =>
@@ -501,6 +551,13 @@ export default function UploadPage({
     if (files.length === 0) return;
 
     setSaving(true);
+    setUploadStatus({
+  phase: "saving",
+  step: 4,
+  tone: "working",
+  title: "Importing your statements",
+  body: "Saving your transactions safely. Keep this page open.",
+});
 
     try {
       const {
@@ -608,13 +665,35 @@ export default function UploadPage({
         totalRows += fileItem.rows.length;
       }
 
-      alert(
-        `Imported ${totalSavedFiles} file${totalSavedFiles === 1 ? "" : "s"}, scanned ${totalRows} rows, and skipped ${skippedFiles} file${skippedFiles === 1 ? "" : "s"} that already looked imported.`
-      );
-      setFiles([]);
-      onImportDone();
+setUploadStatus({
+  phase: "organising",
+  step: 5,
+  tone: "working",
+  title: "Organising your money with AI",
+  body: "Finding your bills, rent, subscriptions and spending patterns for Home and Calendar.",
+});
+
+await onImportDone?.();
+
+setFiles([]);
+
+setUploadStatus({
+  phase: "done",
+  step: 5,
+  tone: "good",
+  title: "Import complete",
+  body: `Imported ${totalSavedFiles} file${totalSavedFiles === 1 ? "" : "s"}, scanned ${totalRows} rows, and skipped ${skippedFiles} duplicate-looking file${skippedFiles === 1 ? "" : "s"}. Home and Calendar are ready to check.`,
+});
     } catch (error) {
-      alert(error.message || "Import failed.");
+setUploadStatus({
+  phase: "error",
+  step: 4,
+  tone: "bad",
+  title: "Import failed",
+  body: error.message || "Something went wrong while saving your statement.",
+});
+
+alert(error.message || "Import failed.");
     } finally {
       setSaving(false);
     }
@@ -695,11 +774,13 @@ export default function UploadPage({
           and get much sharper once you have around three months of history.
         </p>
 
-        <div
+        <UploadProgressCard status={uploadStatus} styles={styles} />
+
+<div
   style={{
     position: "relative",
     padding: showUploadHint ? 14 : 0,
-    borderRadius: 18,
+    borderRadius: 22,
     boxShadow: showUploadHint
       ? "0 0 0 4px rgba(34, 211, 238, 0.22), 0 18px 50px rgba(15, 23, 42, 0.18)"
       : "none",
@@ -724,11 +805,85 @@ export default function UploadPage({
     accept=".csv"
     multiple
     onChange={handleFiles}
-    style={styles.input}
+    disabled={saving || uploadStatus.tone === "working"}
+    style={{
+      position: "absolute",
+      width: 1,
+      height: 1,
+      opacity: 0,
+      pointerEvents: "none",
+    }}
   />
+
+  <label
+    htmlFor="statement-upload-input"
+    style={{
+      minHeight: 118,
+      borderRadius: 22,
+      border: "1px dashed rgba(37, 99, 235, 0.35)",
+      background: saving || uploadStatus.tone === "working" ? "#f8fafc" : "#eff6ff",
+      boxShadow: "0 12px 30px rgba(15, 23, 42, 0.06)",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      textAlign: "center",
+      cursor: saving || uploadStatus.tone === "working" ? "not-allowed" : "pointer",
+      color: saving || uploadStatus.tone === "working" ? "#64748b" : "#1d4ed8",
+      padding: 18,
+    }}
+  >
+    <strong>{saving || uploadStatus.tone === "working" ? "Working on your statement..." : "Choose CSV statements"}</strong>
+    <span style={{ fontSize: 13 }}>
+      {saving || uploadStatus.tone === "working"
+        ? "Keep this page open while Money Hub reads it."
+        : "Tap here, choose your file, then check the preview before importing."}
+    </span>
+  </label>
 </div>
       </Section>
+{files.length > 0 && (
+  <div
+    style={{
+      position: "sticky",
+      top: screenWidth <= 700 ? 8 : 14,
+      zIndex: 8,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      padding: 14,
+      marginBottom: 14,
+      borderRadius: 20,
+      background: "rgba(15, 23, 42, 0.94)",
+      color: "white",
+      boxShadow: "0 18px 45px rgba(15, 23, 42, 0.28)",
+    }}
+  >
+    <div>
+      <strong>
+        {files.length} statement{files.length === 1 ? "" : "s"} ready
+      </strong>
+      <p style={{ ...styles.transactionMeta, margin: 0, color: "rgba(255,255,255,0.78)" }}>
+        {allPreviewRows.length} rows found. Nothing has been saved yet.
+      </p>
+    </div>
 
+    <button
+      style={{
+        ...styles.primaryInlineBtn,
+        minWidth: 132,
+        background: "white",
+        color: "#0f172a",
+      }}
+      onClick={saveAllImports}
+      disabled={saving}
+    >
+      {saving ? "Importing..." : "Import now"}
+    </button>
+  </div>
+)}
       <Section styles={styles} title="Upload Plan">
         <div style={styles.aiInsightGrid}>
           <InsightCard styles={styles}
@@ -897,5 +1052,101 @@ export default function UploadPage({
   );
 }
 
+function UploadProgressCard({ status, styles }) {
+  const steps = ["Choose", "Read", "Map", "Review", "Import", "AI"];
 
+  const background =
+    status.tone === "bad"
+      ? "rgba(254, 242, 242, 0.95)"
+      : status.tone === "good"
+        ? "rgba(240, 253, 244, 0.95)"
+        : status.tone === "working"
+          ? "rgba(239, 246, 255, 0.95)"
+          : "rgba(248, 250, 252, 0.95)";
+
+  const pillBackground =
+    status.tone === "bad"
+      ? "#fee2e2"
+      : status.tone === "good"
+        ? "#dcfce7"
+        : status.tone === "working"
+          ? "#dbeafe"
+          : "#e2e8f0";
+
+  const pillColor =
+    status.tone === "bad"
+      ? "#991b1b"
+      : status.tone === "good"
+        ? "#166534"
+        : status.tone === "working"
+          ? "#1d4ed8"
+          : "#334155";
+
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(148, 163, 184, 0.24)",
+        background,
+        borderRadius: 20,
+        padding: 14,
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <strong>{status.title}</strong>
+          <p style={{ ...styles.transactionMeta, marginBottom: 0 }}>{status.body}</p>
+        </div>
+
+        <span
+          style={{
+            background: pillBackground,
+            color: pillColor,
+            borderRadius: 999,
+            padding: "6px 10px",
+            fontSize: 12,
+            fontWeight: 800,
+            textTransform: "capitalize",
+            whiteSpace: "nowrap",
+            height: "fit-content",
+          }}
+        >
+          {status.phase === "idle" ? "Not started" : status.phase}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+          gap: 5,
+          marginTop: 12,
+        }}
+      >
+        {steps.map((step, index) => {
+          const done = index <= status.step;
+
+          return (
+            <div
+              key={step}
+              style={{
+                borderRadius: 12,
+                padding: "8px 4px",
+                textAlign: "center",
+                display: "grid",
+                gap: 2,
+                background: done ? "#bfdbfe" : "#e2e8f0",
+                color: done ? "#1e40af" : "#64748b",
+                minWidth: 0,
+              }}
+            >
+              <strong style={{ fontSize: 12 }}>{index + 1}</strong>
+              <small style={{ fontSize: 10, overflow: "hidden", textOverflow: "ellipsis" }}>{step}</small>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
