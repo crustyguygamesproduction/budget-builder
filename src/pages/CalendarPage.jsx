@@ -35,6 +35,7 @@ import {
   isShortTimeframe,
 } from "../lib/calendarIntelligence";
 import { getCalendarEventStyle } from "../lib/styleHelpers";
+import { cleanBillName, isAllowedBillStream } from "../lib/moneyUnderstandingGuards";
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -51,7 +52,16 @@ export default function CalendarPage({ transactions, moneyUnderstanding, screenW
   const [calendarAiError, setCalendarAiError] = useState("");
 
   const recurringEvents = useMemo(
-    () => moneyUnderstanding?.recurringEvents || [],
+    () => (moneyUnderstanding?.recurringEvents || [])
+      .filter((event) => isAllowedBillStream({
+        ...event,
+        name: event.title,
+        amount: Math.abs(Number(event.amount || 0)),
+        kind: event.kind === "subscription" ? "subscription" : "bill",
+        confidence: event.confidenceLabel,
+        note: event.estimateNote,
+      }))
+      .map((event) => ({ ...event, title: cleanBillName(event.title) })),
     [moneyUnderstanding]
   );
   const allHistoryMonths = useMemo(
