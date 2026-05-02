@@ -54,7 +54,7 @@ export function buildAppMoneyModel({
   const upcomingIncome = getUpcomingIncome(incomeTransactions, incomeConfidence);
 
   const monthlySharedContributionTotal = sharedBillContributions.confirmed.reduce(
-    (sum, contribution) => sum + Math.abs(Number(contribution.monthlyAmount || 0)),
+    (sum, contribution) => sum + Math.abs(Number(contribution.appliedMonthlyAmount || contribution.monthlyAmount || 0)),
     0
   );
   const monthlyBillBurdenTotal = Math.max(grossMonthlyBillTotal - monthlySharedContributionTotal, 0);
@@ -260,11 +260,12 @@ function getIncomeTransactions(transactions) {
 
 function getSharedBillContributions({ transactions = [], calendarBills = [], monthWindow }) {
   const recurringContributionKeys = recurringKeys(
-    transactions.filter((transaction) => Number(transaction.amount || 0) > 0 && Math.abs(Number(transaction.amount || 0)) >= 100)
+    transactions.filter((transaction) => Number(transaction.amount || 0) > 0 && Math.abs(Number(transaction.amount || 0)) >= 100),
+    contributionKey
   );
   const groups = transactions.reduce((map, transaction) => {
     if (!isPossibleSharedBillContribution(transaction, recurringContributionKeys)) return map;
-    const key = transactionKey(transaction);
+    const key = contributionKey(transaction);
     const date = parseAppDate(transaction.transaction_date);
     if (!key || !date) return map;
     if (!map.has(key)) {
@@ -316,9 +317,11 @@ function getSharedBillContributions({ transactions = [], calendarBills = [], mon
   }).filter((candidate) => candidate.monthlyAmount > 0);
 
   const confirmed = candidates
-    .filter((candidate) => ["high", "medium"].includes(candidate.confidence) && candidate.matchedBillName)
-    .sort((a, b) => b.monthlyAmount - a.monthlyAmount);
+    .map(applySharedBillContributionCap)
+    .filter((candidate) => candidate.confidence === "high" && candidate.matchedBillName && candidate.appliedMonthlyAmount > 0)
+    .sort((a, b) => b.appliedMonthlyAmount - a.appliedMonthlyAmount);
   const needsChecking = candidates
+    .map(applySharedBillContributionCap)
     .filter((candidate) => !confirmed.some((item) => item.key === candidate.key))
     .filter((candidate) => candidate.confidence !== "low")
     .slice(0, 5);
@@ -326,9 +329,9 @@ function getSharedBillContributions({ transactions = [], calendarBills = [], mon
   return {
     confirmed,
     needsChecking,
-    monthlyTotal: roundMoney(confirmed.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0)),
+    monthlyTotal: roundMoney(confirmed.reduce((sum, item) => sum + Number(item.appliedMonthlyAmount || item.monthlyAmount || 0), 0)),
     label: confirmed.length
-      ? `${formatCurrency(confirmed.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} shared bill contribution${confirmed.length === 1 ? "" : "s"}`
+      ? `${formatCurrency(confirmed.reduce((sum, item) => sum + Number(item.appliedMonthlyAmount || item.monthlyAmount || 0), 0))} shared bill contribution${confirmed.length === 1 ? "" : "s"}`
       : "No shared bill contributions found",
   };
 }
@@ -370,13 +373,43 @@ function getBestContributionBillMatch({ monthlyAmount, day, calendarBills }) {
   return matches[0] || null;
 }
 
+function applySharedBillContributionCap(candidate) {
+  const billAmount = Math.abs(Number(candidate.matchedBillAmount || 0));
+  const monthlyAmount = Math.abs(Number(candidate.monthlyAmount || 0));
+  if (!billAmount || !monthlyAmount) return { ...candidate, appliedMonthlyAmount: monthlyAmount };
+  const ratio = monthlyAmount / billAmount;
+  const looksLikeHalfShare = Math.abs(ratio - 0.5) <= 0.15;
+  if (looksLikeHalfShare) {
+    const appliedMonthlyAmount = roundMoney(billAmount * 0.5);
+    const ignoredExtra = Math.max(monthlyAmount - appliedMonthlyAmount, 0);
+    return {
+      ...candidate,
+      appliedMonthlyAmount,
+      ignoredExtra: roundMoney(ignoredExtra),
+      helper: ignoredExtra > 10
+        ? `${formatCurrency(appliedMonthlyAmount)} looks like the regular shared bill amount. The extra ${formatCurrency(ignoredExtra)} is variable, so Money Hub will not rely on it.`
+        : candidate.helper,
+    };
+  }
+  if (ratio > 0.65) {
+    return {
+      ...candidate,
+      confidence: "needs_checking",
+      appliedMonthlyAmount: 0,
+      ignoredExtra: monthlyAmount,
+      helper: `${formatCurrency(monthlyAmount)} may include extra top-ups, so confirm this before Money Hub relies on it.`,
+    };
+  }
+  return { ...candidate, appliedMonthlyAmount: monthlyAmount };
+}
+
 function getContributionConfidence({ group, match, monthWindow }) {
   if (!match) return group.monthKeys.size >= 2 ? "needs_checking" : "low";
   const enoughHistory = group.monthKeys.size >= Math.min(2, Math.max(monthWindow?.monthKeys?.length || 1, 1));
   const closeHalf = Math.abs((match.ratio || 0) - 0.5) <= 0.12;
   const nearBillDay = Number(match.dayDistance || 99) <= 10;
   if (enoughHistory && closeHalf && nearBillDay) return "high";
-  if (enoughHistory && (closeHalf || nearBillDay || match.score >= 0.55)) return "medium";
+  if (enoughHistory && closeHalf && match.score >= 0.55) return "medium";
   if (enoughHistory && match.score >= 0.4) return "needs_checking";
   return "low";
 }
@@ -404,6 +437,7 @@ function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
       confidence: "low",
       label: "Income not clear yet",
       helper: "Upload more history or confirm income before Money Hub predicts money coming in.",
+      periodLabel: "next 30 days",
     };
   }
 
@@ -411,7 +445,7 @@ function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
     const amount = Math.abs(Number(transaction.amount || 0));
     const date = parseAppDate(transaction.transaction_date);
     if (!amount || !date) return map;
-    const key = transactionKey(transaction);
+    const key = incomeProviderKey(transaction);
     if (!key) return map;
     if (!map.has(key)) {
       map.set(key, { key, name: cleanIncomeName(transaction), amounts: [], dates: [], monthKeys: new Set() });
@@ -425,46 +459,104 @@ function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const horizonDays = 30;
   const items = [...groups.values()]
-    .filter((group) => group.monthKeys.size >= 2 || incomeConfidence === "high")
-    .map((group) => {
-      const day = likelyDay(group.dates);
-      const date = nextDateForDay(day, today);
-      return {
-        key: group.key,
-        name: group.name,
-        amount: roundMoney(usualAmount(group.amounts)),
-        day,
-        date: toIsoDate(date),
-        daysAway: Math.max(Math.round((date - today) / 86400000), 0),
-        confidence: group.monthKeys.size >= 2 ? "high" : "medium",
-      };
-    })
-    .filter((item) => item.amount > 0 && item.daysAway <= 30)
+    .filter((group) => group.monthKeys.size >= 1)
+    .flatMap((group) => forecastIncomeGroup(group, today, horizonDays))
+    .filter((item) => item.amount > 0 && item.daysAway <= horizonDays)
     .sort((a, b) => a.daysAway - b.daysAway || b.amount - a.amount);
 
   const amount = roundMoney(items.reduce((sum, item) => sum + item.amount, 0));
+  const cadenceSummary = summariseIncomeCadences(items);
   return {
     amount,
     count: items.length,
     items,
     confidence: items.length ? incomeConfidence : "low",
     label: items.length ? formatCurrency(amount) : "No expected income found",
-    helper: items.length ? "Based on repeated income in your uploaded statements." : "Income history exists, but the next date is not clear yet.",
+    periodLabel: "next 30 days",
+    helper: items.length
+      ? `${formatCurrency(amount)} expected over the next 30 days${cadenceSummary ? ` from ${cadenceSummary}` : ""}. Dates can move if pay lands late.`
+      : "Income history exists, but the next date is not clear yet.",
   };
+}
+
+function incomeProviderKey(transaction) {
+  const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "");
+  return provider ? `income:${provider}` : "";
+}
+
+function forecastIncomeGroup(group, today, horizonDays) {
+  const sortedDates = group.dates.slice().sort((a, b) => a - b);
+  const cadence = detectIncomeCadence(sortedDates);
+  const amount = roundMoney(usualAmount(group.amounts));
+  if (!amount || !cadence.days) return [];
+
+  let next = new Date(sortedDates[sortedDates.length - 1]);
+  next.setHours(0, 0, 0, 0);
+  let safety = 0;
+
+  while (next < today && safety < 20) {
+    next = addCalendarDays(next, cadence.days);
+    safety += 1;
+  }
+
+  const forecast = [];
+  while (safety < 40) {
+    const daysAway = Math.round((next - today) / 86400000);
+    if (daysAway > horizonDays) break;
+    if (daysAway >= 0) {
+      forecast.push({
+        key: `${group.key}:${toIsoDate(next)}`,
+        providerKey: group.key,
+        name: group.name,
+        amount,
+        date: toIsoDate(next),
+        daysAway,
+        cadence: cadence.label,
+        confidence: cadence.confidence,
+      });
+    }
+    next = addCalendarDays(next, cadence.days);
+    safety += 1;
+  }
+
+  return forecast;
+}
+
+function detectIncomeCadence(dates = []) {
+  if (dates.length < 2) {
+    return { days: 30, label: "monthly income", confidence: "low" };
+  }
+  const gaps = [];
+  for (let index = 1; index < dates.length; index += 1) {
+    const gap = Math.round((dates[index] - dates[index - 1]) / 86400000);
+    if (gap >= 5 && gap <= 45) gaps.push(gap);
+  }
+  if (!gaps.length) return { days: 30, label: "monthly income", confidence: "low" };
+  const median = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+  if (median >= 5 && median <= 9) return { days: 7, label: "weekly income", confidence: "high" };
+  if (median >= 12 && median <= 16) return { days: 14, label: "fortnightly income", confidence: "medium" };
+  if (median >= 26 && median <= 35) return { days: 30, label: "monthly income", confidence: "medium" };
+  return { days: Math.max(7, Math.min(median, 30)), label: "regular income", confidence: "low" };
+}
+
+function addCalendarDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + Number(days || 0));
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function summariseIncomeCadences(items = []) {
+  const cadences = [...new Set(items.map((item) => item.cadence).filter(Boolean))];
+  if (!cadences.length) return "regular income";
+  return cadences.slice(0, 2).join(" and ");
 }
 
 function cleanIncomeName(transaction) {
   const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "Income");
   return provider ? provider.split(" ").slice(0, 4).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Income";
-}
-
-function nextDateForDay(day, today) {
-  const safeDay = Math.max(1, Math.min(Number(day || 1), 28));
-  let date = new Date(today.getFullYear(), today.getMonth(), safeDay);
-  if (date < today) date = new Date(today.getFullYear(), today.getMonth() + 1, safeDay);
-  date.setHours(0, 0, 0, 0);
-  return date;
 }
 
 function likelyDay(dates = []) {
@@ -545,9 +637,9 @@ function getFlexibleConfidence(flexibleTransactions, monthKeys) {
   return "low";
 }
 
-function recurringKeys(transactions) {
+function recurringKeys(transactions, keyFn = transactionKey) {
   const groups = transactions.reduce((map, transaction) => {
-    const key = transactionKey(transaction);
+    const key = keyFn(transaction);
     const date = parseAppDate(transaction.transaction_date);
     if (!key || !date) return map;
     if (!map.has(key)) map.set(key, new Set());
@@ -562,6 +654,11 @@ function transactionKey(transaction) {
   const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "");
   const amountBand = Math.round(Math.abs(Number(transaction.amount || 0)) / 10) * 10;
   return provider ? `${provider}:${amountBand}` : "";
+}
+
+function contributionKey(transaction) {
+  const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "");
+  return provider ? `contribution:${provider}` : "";
 }
 
 function getVisibleCash(accounts) {

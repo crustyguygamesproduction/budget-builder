@@ -37,7 +37,7 @@ export default function HomePage({
   const expectedIncome = useMemo(() => getExpectedIncomeRead(appMoneyModel), [appMoneyModel]);
   const nextBill = calendarBills.nextBill;
   const moneyLeft = visibleCash.hasBalance ? visibleCash.total - billShare.personalTotal : null;
-  const homeRead = getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome });
+  const homeRead = getHomeRead({ visibleCash, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome });
   const checksWaitingCount = appMoneyModel?.checksWaiting?.length || 0;
   const primaryGoal = getPrimaryGoal(goals);
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
@@ -63,9 +63,9 @@ export default function HomePage({
 
         <div style={getHeroFocusGridStyle(screenWidth)}>
           <HeroFact
-            label="Bills to cover"
+            label={billShare.hasSharedMoney ? "Your bill share" : "Bills to cover"}
             value={formatCurrency(billShare.personalTotal)}
-            detail="This month"
+            detail={billShare.hasSharedMoney ? `${formatCurrency(billShare.sharedMoney)} shared help counted` : "This month"}
           />
           <HeroFact
             label="Next bill"
@@ -80,7 +80,7 @@ export default function HomePage({
         </div>
       </section>
 
-      <Section title="Today’s call" styles={styles}>
+      <Section title="Today" styles={styles}>
         <div style={getNowCardStyle(homeRead.tone)}>
           <strong>{homeRead.headline}</strong>
           <span>{homeRead.nextMove}</span>
@@ -95,7 +95,8 @@ export default function HomePage({
 
       <Section title="Your Next 30 Days" styles={styles}>
         <div style={styles.inlineInfoBlock}>
-          <Row name="Bills to cover" value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
+          <Row name={billShare.hasSharedMoney ? "Your bill share" : "Bills to cover"} value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
+          {billShare.hasSharedMoney ? <Row name="Shared money counted" value={formatCurrency(billShare.sharedMoney)} styles={styles} /> : null}
           <Row name="Money expected in" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} next 30 days` : expectedIncome.label} styles={styles} />
           <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
           <Row name="Needs checking" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
@@ -207,7 +208,7 @@ function getCalendarBillRead(appMoneyModel) {
   };
 }
 
-function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome }) {
+function getHomeRead({ visibleCash, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome }) {
   const hasBills = billShare.personalTotal > 0;
   const nextBillText = nextBill ? `${nextBill.name} for ${formatCurrency(nextBill.amount)} ${nextBill.when}` : "no next bill found yet";
   const expectedText = expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} expected in` : "money is next in";
@@ -233,8 +234,8 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
       label: "Nothing spare today",
       amount: formatCurrency(visibleCash.total),
       body: `${formatCurrency(billShare.personalTotal)} still needs covering this month. ${expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} is expected soon.` : "No clear money coming in yet."} Keep it boring today.`,
-      headline: "Don’t spend from this account today",
-      nextMove: `Bills only until ${expectedText}. No takeaways, shops, gaming or random top-ups. Next bill: ${nextBillText}.`,
+      headline: "Do not spend money today",
+      nextMove: `Bills and essentials only until ${expectedText}. No takeaways, shops, gaming or random top-ups. Next bill: ${nextBillText}.`,
       buttonLabel: "Make 7-day plan",
       prompt: `I have ${formatCurrency(visibleCash.total)} showing, ${formatCurrency(billShare.personalTotal)} of bills to cover this month, ${expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} expected in` : "no clear incoming money"}, and my next bill is ${nextBillText}. Give me a short, human, practical 7-day plan.`,
     };
@@ -323,7 +324,7 @@ function getBigMoneyStyle(screenWidth) {
     fontSize: screenWidth <= 390 ? 46 : screenWidth <= 520 ? 58 : 72,
     lineHeight: 0.94,
     margin: "8px 0 12px",
-    letterSpacing: "-0.04em",
+    letterSpacing: 0,
   };
 }
 

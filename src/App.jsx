@@ -312,11 +312,22 @@ export default function App() {
     [moneyUnderstanding, accounts, goals, debts, investments]
   );
 
-  const debtSignals = getDebtSignals(smartTransactions);
-  const investmentSignals = getInvestmentSignals(smartTransactions);
-  const trendSummary = getTrendSummary(smartTransactions);
-  const subscriptionStatus = getSubscriptionStatus(subscriptionProfile);
-  const bankFeedReadiness = getBankFeedReadiness(subscriptionStatus, bankConnections);
+  const debtSignals = useMemo(() => getDebtSignals(smartTransactions), [smartTransactions]);
+  const investmentSignals = useMemo(() => getInvestmentSignals(smartTransactions), [smartTransactions]);
+  const trendSummary = useMemo(() => getTrendSummary(smartTransactions), [smartTransactions]);
+  const subscriptionStatus = useMemo(() => getSubscriptionStatus(subscriptionProfile), [subscriptionProfile]);
+  const bankFeedReadiness = useMemo(
+    () => getBankFeedReadiness(subscriptionStatus, bankConnections),
+    [subscriptionStatus, bankConnections]
+  );
+  const debtDocuments = useMemo(
+    () => financialDocuments.filter((doc) => doc.record_type === "debt"),
+    [financialDocuments]
+  );
+  const investmentDocuments = useMemo(
+    () => financialDocuments.filter((doc) => doc.record_type === "investment"),
+    [financialDocuments]
+  );
 
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
   if (!session) {
@@ -333,8 +344,8 @@ export default function App() {
         {page === "today" && <TodayPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} accounts={accounts} goals={goals} debts={debts} investments={investments} debtSignals={debtSignals} investmentSignals={investmentSignals} trendSummary={trendSummary} statementImports={statementImports} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} screenWidth={screenWidth} styles={styles} helpers={{ buildDailyBrief, buildSubscriptionCoachPrompt, getCashSummary, getCoachPromptIdeas, getDataFreshness, getDebtStatusSummary, getDisplayedMonthSnapshot, getHomeStatusPillStyle, getInvestmentStatusSummary, getMoneyIntelligenceSummary, getRecurringSummary, getStatementCoverageSummary, getSubscriptionSummary, getTopCategories, getTransferSummary, hasMatchingDebt, hasMatchingInvestment }} />}
         {page === "upload" && <UploadPage accounts={accounts} statementImports={statementImports} existingTransactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onImportDone={async () => { await loadAllData(); await refreshMoneyOrganiser({ force: true }); await loadAllData(); }} onTransactionRulesChange={loadTransactionRules} onGoToCoach={openCoachWithPrompt} screenWidth={screenWidth} styles={styles} helpers={{ enhanceTransactions, getGridStyle, getHistorySummary, getRecurringSummary, getStatusPillStyle, getTransferSummary }} />}
         {page === "confidence" && <ConfidencePage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={loadTransactionRules} screenWidth={screenWidth} styles={styles} />}
-        {page === "debts" && <DebtsPage debts={debts} debtSignals={debtSignals} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={financialDocuments.filter((doc) => doc.record_type === "debt")} onChange={loadDebts} onDocumentsChange={loadFinancialDocuments} trendSummary={trendSummary} viewerMode={viewerMode} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} styles={styles} helpers={{ buildDebtDedupeKey, buildKeywords, fileToDataUrl, getDebtMatchSummary, getDebtMonthlyStatus, getDebtPortfolioSnapshot, getDebtProgressSummary, getStatusPillStyle, hasMatchingDebt, hasMeaningfulExtraction }} />}
-        {page === "investments" && <InvestmentsPage investments={investments} investmentSignals={investmentSignals} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={financialDocuments.filter((doc) => doc.record_type === "investment")} onChange={loadInvestments} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} styles={styles} helpers={{ buildInvestmentDedupeKey, buildKeywords, fileToDataUrl, formatInvestmentSignalMeta, formatInvestmentSignalNet, getInvestmentMatchSummary, getInvestmentMonthlyStatus, getInvestmentPerformanceSummary, getInvestmentPortfolioSnapshot, getInvestmentSignalNote, getStatusPillStyle, hasMatchingInvestment, hasMeaningfulExtraction }} />}
+        {page === "debts" && <DebtsPage debts={debts} debtSignals={debtSignals} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={debtDocuments} onChange={loadDebts} onDocumentsChange={loadFinancialDocuments} trendSummary={trendSummary} viewerMode={viewerMode} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} styles={styles} helpers={{ buildDebtDedupeKey, buildKeywords, fileToDataUrl, getDebtMatchSummary, getDebtMonthlyStatus, getDebtPortfolioSnapshot, getDebtProgressSummary, getStatusPillStyle, hasMatchingDebt, hasMeaningfulExtraction }} />}
+        {page === "investments" && <InvestmentsPage investments={investments} investmentSignals={investmentSignals} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={investmentDocuments} onChange={loadInvestments} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} styles={styles} helpers={{ buildInvestmentDedupeKey, buildKeywords, fileToDataUrl, formatInvestmentSignalMeta, formatInvestmentSignalNet, getInvestmentMatchSummary, getInvestmentMonthlyStatus, getInvestmentPerformanceSummary, getInvestmentPortfolioSnapshot, getInvestmentSignalNote, getStatusPillStyle, hasMatchingInvestment, hasMeaningfulExtraction }} />}
         {page === "calendar" && <CalendarPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} onTransactionRulesChange={loadTransactionRules} onRefreshMoneyUnderstanding={refreshMoneyUnderstandingAfterCorrection} screenWidth={screenWidth} styles={styles} helpers={{ getDataFreshness }} />}
         {page === "goals" && <GoalsPage goals={goals} accounts={accounts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} onChange={loadGoals} onAccountsChange={loadAccounts} onTransactionRulesChange={loadTransactionRules} styles={styles} helpers={{ getDataFreshness, getDisplayedMonthSnapshot, getSubscriptionSummary, isInternalTransferLike, isTransactionInMonth, formatCurrency, numberOrNull }} />}
         {page === "receipts" && <ReceiptsPage receipts={receipts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} onChange={loadReceipts} onGoToCoach={openCoachWithPrompt} styles={styles} />}
