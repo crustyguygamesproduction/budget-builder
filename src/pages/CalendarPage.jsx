@@ -7,6 +7,7 @@ import {
   formatCurrency,
   formatDateLong,
   getMeaningfulCategory,
+  normalizeText,
   startOfDay,
   toIsoDate,
 } from "../lib/finance";
@@ -52,6 +53,8 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
   const [calendarAiError, setCalendarAiError] = useState("");
   const [correctionBusyKey, setCorrectionBusyKey] = useState("");
   const [calendarNotice, setCalendarNotice] = useState("");
+  const [showBillsList, setShowBillsList] = useState(false);
+  const [showMissingBills, setShowMissingBills] = useState(false);
 
   const recurringEvents = useMemo(
     () => (moneyUnderstanding?.recurringEvents || [])
@@ -71,6 +74,7 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
     [transactions]
   );
   const availableMonthCount = allHistoryMonths.length;
+  const missingBillCandidates = useMemo(() => getMissingBillCandidates(transactions, recurringEvents), [transactions, recurringEvents]);
   const shortTimeframe = isShortTimeframe(timeframe);
   const usingShortHistoryView = shortTimeframe && calendarMode === "history";
   const shortWindowSize = getTimeframeDayCount(timeframe);
@@ -161,6 +165,28 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
     setSelectedDayKey((current) => (current === day.key ? "" : day.key));
   }
 
+  async function saveCalendarRule({ matchText, amount, category, isBill, isSubscription, notes }) {
+    if (!matchText) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("transaction_rules").upsert(
+      {
+        user_id: user.id,
+        rule_type: isBill || isSubscription ? "calendar_confirmed_bill" : "calendar_suppression",
+        match_text: matchText,
+        match_amount: Math.abs(Number(amount || 0)),
+        category,
+        is_bill: Boolean(isBill),
+        is_subscription: Boolean(isSubscription),
+        is_internal_transfer: false,
+        notes,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,rule_type,match_text,match_amount" }
+    );
+    if (error) throw error;
+    await onTransactionRulesChange?.();
+  }
+
   async function markEventNotBill(event) {
     const matchText = getEventMatchText(event);
     if (!matchText) return;
@@ -168,26 +194,9 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
     setCorrectionBusyKey(event.key || matchText);
     setCalendarNotice("");
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase.from("transaction_rules").upsert(
-        {
-          user_id: user.id,
-          rule_type: "calendar_suppression",
-          match_text: matchText,
-          match_amount: Math.abs(Number(event.amount || 0)),
-          category: "Ignore for Calendar",
-          is_bill: false,
-          is_subscription: false,
-          is_internal_transfer: false,
-          notes: `User marked ${event.title} as not a bill from Calendar.`,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,rule_type,match_text,match_amount" }
-      );
-      if (error) throw error;
+      await saveCalendarRule({ matchText, amount: event.amount, category: "Ignore for Calendar", isBill: false, isSubscription: false, notes: `User marked ${event.title} as not a bill from Calendar.` });
       setCalendarNotice(`${event.title} will be hidden from future bills.`);
       setSelectedDayKey("");
-      await onTransactionRulesChange?.();
     } catch (error) {
       setCalendarNotice(error.message || "Could not save that correction yet.");
     } finally {
@@ -195,12 +204,28 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
     }
   }
 
+  async function markCandidateAsBill(candidate, category) {
+    setCorrectionBusyKey(candidate.key);
+    setCalendarNotice("");
+    try {
+      const isSubscription = category === "Subscription";
+      await saveCalendarRule({ matchText: candidate.matchText, amount: candidate.amount, category, isBill: !isSubscription, isSubscription, notes: `User confirmed missing Calendar item as ${category}. Example: ${candidate.example}` });
+      setCalendarNotice(`${candidate.label} will be treated as ${category.toLowerCase()} now.`);
+      await onRefreshMoneyUnderstanding?.();
+    } catch (error) {
+      setCalendarNotice(error.message || "Could not save that bill yet.");
+    } finally {
+      setCorrectionBusyKey("");
+    }
+  }
+
   async function refreshMissingBills() {
+    setShowMissingBills(true);
     setCorrectionBusyKey("refresh-missing-bills");
     setCalendarNotice("Looking again for rent, bills, subscriptions and debts...");
     try {
       await onRefreshMoneyUnderstanding?.();
-      setCalendarNotice("Calendar refreshed. If something is still missing, check the Checks page or add more recent history.");
+      setCalendarNotice("Calendar refreshed. Review the missing-bill suggestions below if anything is still missing.");
     } catch (error) {
       setCalendarNotice(error.message || "Could not refresh Calendar yet.");
     } finally {
@@ -260,7 +285,11 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
         {calendarMode === "recurring" ? (
           <div style={getCalendarSummaryGridStyle(screenWidth)}>
             <MiniCard styles={styles} title="Bills this month" value={formatCurrency(recurringMonthTotal)} />
-            <MiniCard styles={styles} title="Bills found" value={`${recurringMonthEvents.length}`} />
+            <button type="button" onClick={() => setShowBillsList((open) => !open)} style={summaryButtonStyle()}>
+              <span>Bills found</span>
+              <strong>{recurringMonthEvents.length}</strong>
+              <small>{showBillsList ? "Tap to hide" : "Tap to manage"}</small>
+            </button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
             <MiniCard styles={styles} title="Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />
           </div>
@@ -272,6 +301,14 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
             <MiniCard styles={styles} title="Days used" value={`${summary.activeDays}`} />
           </div>
         )}
+
+        {calendarMode === "recurring" && showBillsList ? (
+          <CalendarBillsPanel events={recurringMonthEvents} styles={styles} busyKey={correctionBusyKey} onNotBill={markEventNotBill} />
+        ) : null}
+
+        {calendarMode === "recurring" && showMissingBills ? (
+          <MissingBillsPanel candidates={missingBillCandidates} styles={styles} busyKey={correctionBusyKey} onConfirm={markCandidateAsBill} onClose={() => setShowMissingBills(false)} />
+        ) : null}
 
         <div style={{ ...styles.calendarGridViewport, overflowX: allowHorizontalScroll ? "auto" : "hidden" }}>
           <div style={{ ...(shortTimeframe && calendarMode === "history" ? getRollingDaysGridStyle(screenWidth, shortWindowSize) : styles.calendarGrid), minWidth: usingShortHistoryView && allowHorizontalScroll ? `${Math.max(shortWindowSize, 7) * 96}px` : !usingShortHistoryView && screenWidth <= 760 ? "640px" : undefined }}>
@@ -303,7 +340,7 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
         ) : null}
       </Section>
 
-      <Section styles={styles} title="What Stands Out" right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><button type="button" style={styles.ghostBtn} onClick={refreshMissingBills} disabled={correctionBusyKey === "refresh-missing-bills"}>{correctionBusyKey === "refresh-missing-bills" ? "Checking..." : "Find missing bills"}</button><button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button></div>}>
+      <Section styles={styles} title="What Stands Out" right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><button type="button" style={styles.ghostBtn} onClick={refreshMissingBills} disabled={correctionBusyKey === "refresh-missing-bills"}>{correctionBusyKey === "refresh-missing-bills" ? "Checking..." : "Bills missing?"}</button><button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button></div>}>
         <InsightCard styles={styles} label={calendarAiText ? "AI answer" : "Quick read"} headline={calendarAiText ? `Read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming bill pressure" : patternSummary.headline} body={calendarAiText || (calendarMode === "recurring" ? recurringMonthEvents.length ? `Money Hub expects ${recurringMonthEvents.length} future bill/payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you add more months and answer Checks.` : "No future bills found yet. Add more history or answer Checks when they appear." : patternSummary.body)} />
         {calendarAiError ? <p style={styles.errorNote}>{calendarAiError}</p> : null}
       </Section>
@@ -313,6 +350,15 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
       </Section>
     </>
   );
+}
+
+function CalendarBillsPanel({ events, styles, busyKey, onNotBill }) {
+  const uniqueEvents = dedupeEvents(events);
+  return <div style={panelStyle()}><div style={panelHeaderStyle()}><div><strong>Bills Money Hub found</strong><p style={styles.transactionMeta}>Remove anything that is not a real bill, rent, debt or subscription.</p></div></div>{uniqueEvents.length ? uniqueEvents.map((event) => <div key={event.key} style={compactRowStyle()}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>About {formatCurrency(Math.abs(event.amount))} around day {event.day}</p></div><button style={styles.secondaryInlineBtn} type="button" onClick={() => onNotBill(event)} disabled={busyKey === (event.key || getEventMatchText(event))}>{busyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}</button></div>) : <p style={styles.emptyText}>No bills found yet.</p>}</div>;
+}
+
+function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onClose }) {
+  return <div style={panelStyle()}><div style={panelHeaderStyle()}><div><strong>Bills missing?</strong><p style={styles.transactionMeta}>These payments look like they could be bills. Confirm only the ones you actually want in Calendar.</p></div><button style={styles.ghostBtn} type="button" onClick={onClose}>Close</button></div>{candidates.length ? candidates.map((candidate) => <div key={candidate.key} style={compactRowStyle()}><div><strong>{candidate.label}</strong><p style={styles.transactionMeta}>Usually {formatCurrency(candidate.amount)} around day {candidate.day}. Seen {candidate.count} time{candidate.count === 1 ? "" : "s"}. Example: {candidate.example}</p></div><div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, candidate.suggestedCategory || "Major bill")}>{busyKey === candidate.key ? "Saving..." : candidate.suggestedCategory || "Bill"}</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Subscription")}>Sub</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Phone")}>Phone</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Broadband")}>Broadband</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Energy")}>Energy</button></div></div>) : <p style={styles.emptyText}>No strong missing bill candidates found. Add more months or use Checks when a payment appears there.</p>}</div>;
 }
 
 function TransactionRow({ name, meta, amount, styles }) {
@@ -333,4 +379,101 @@ function getEventMatchText(event) {
     .replace(/\bsubscription\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getMissingBillCandidates(transactions = [], events = []) {
+  const existingText = normalizeText(events.map((event) => event.title).join(" "));
+  const groups = new Map();
+  (transactions || []).forEach((transaction) => {
+    const amount = Math.abs(Number(transaction.amount || 0));
+    if (Number(transaction.amount || 0) >= 0 || amount < 2) return;
+    if (transaction._smart_internal_transfer || transaction.is_internal_transfer) return;
+    const text = normalizeText(`${transaction.description || ""} ${transaction.category || ""} ${transaction._smart_category || ""}`);
+    if (!looksLikePossibleBill(text, amount)) return;
+    const matchText = cleanCandidateText(transaction.description);
+    if (!matchText || existingText.includes(normalizeText(matchText))) return;
+    const date = new Date(transaction.transaction_date);
+    if (Number.isNaN(date.getTime())) return;
+    const amountBand = amount < 80 ? Math.round(amount / 5) * 5 : Math.round(amount / 10) * 10;
+    const key = `${matchText}:${amountBand}`;
+    const group = groups.get(key) || { key, matchText, label: niceCandidateName(matchText), amounts: [], days: [], examples: [], count: 0, suggestedCategory: suggestCategory(text) };
+    group.amounts.push(amount);
+    group.days.push(date.getDate());
+    group.examples.push(transaction.description);
+    group.count += 1;
+    groups.set(key, group);
+  });
+  return [...groups.values()]
+    .map((group) => ({ ...group, amount: usual(group.amounts), day: mode(group.days), example: group.examples[0] }))
+    .filter((group) => group.count >= 2 || /eon|e\.on|ee|bt|virgin|sky|vodafone|o2|three|octopus|british gas|edf|shell energy|water|council|insurance|premium funding/.test(normalizeText(group.matchText)))
+    .sort((a, b) => b.count - a.count || b.amount - a.amount)
+    .slice(0, 12);
+}
+
+function looksLikePossibleBill(text, amount) {
+  if (/mcdonald|takeaway|restaurant|greggs|uber eats|just eat|chickie|odeon|cinema|gaming|lvl up|xsolla|cash withdrawal|atm|tesco|aldi|lidl|sainsbury|asda|morrisons|one stop|premier/.test(text)) return false;
+  if (/eon|e\.on|energy|electric|gas|octopus|british gas|edf|water|ee|vodafone|o2|three|bt|virgin|sky|broadband|phone|mobile|insurance|premium funding|clearpay|klarna|loan|finance|council|tax|rent|landlord|subscription|netflix|apple|google|openai|spotify/.test(text)) return true;
+  return amount >= 25 && amount <= 500 && /direct debit|dd|standing order|so|payment/.test(text);
+}
+
+function suggestCategory(text) {
+  if (/eon|e\.on|energy|electric|gas|octopus|british gas|edf/.test(text)) return "Energy";
+  if (/broadband|bt|virgin|sky/.test(text)) return "Broadband";
+  if (/phone|mobile|ee|vodafone|o2|three/.test(text)) return "Phone";
+  if (/insurance|premium funding/.test(text)) return "Insurance";
+  if (/rent|landlord/.test(text)) return "Rent";
+  if (/netflix|spotify|apple|google|openai|subscription/.test(text)) return "Subscription";
+  return "Major bill";
+}
+
+function cleanCandidateText(value) {
+  return normalizeText(value)
+    .replace(/\b(direct debit|standing order|faster payment|card payment|payment to|payment from|reference|ref|dd|so|pos|visa)\b/g, " ")
+    .replace(/\b[a-z]*\d{4,}[a-z0-9]*\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 4)
+    .join(" ");
+}
+
+function niceCandidateName(value) {
+  return cleanCandidateText(value).split(" ").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") || "Possible bill";
+}
+
+function usual(values) {
+  const safe = values.map(Number).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (!safe.length) return 0;
+  return Math.round(safe[Math.floor(safe.length / 2)] * 100) / 100;
+}
+
+function mode(values) {
+  const counts = values.reduce((map, value) => map.set(value, (map.get(value) || 0) + 1), new Map());
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] || 1;
+}
+
+function dedupeEvents(events = []) {
+  const seen = new Set();
+  return events.filter((event) => {
+    const key = `${getEventMatchText(event)}:${Math.round(Math.abs(Number(event.amount || 0)) * 100)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function summaryButtonStyle() {
+  return { border: 0, borderRadius: 18, background: "rgba(255,255,255,0.86)", boxShadow: "0 14px 35px rgba(15, 23, 42, 0.06)", padding: 16, display: "grid", gap: 8, textAlign: "left", color: "#0f172a", cursor: "pointer" };
+}
+
+function panelStyle() {
+  return { border: "1px solid rgba(148,163,184,.22)", borderRadius: 22, padding: 14, margin: "12px 0", background: "rgba(248,250,252,.9)", display: "grid", gap: 10 };
+}
+
+function panelHeaderStyle() {
+  return { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" };
+}
+
+function compactRowStyle() {
+  return { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", border: "1px solid rgba(148,163,184,.2)", borderRadius: 16, padding: 12, background: "white" };
 }
