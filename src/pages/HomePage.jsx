@@ -33,9 +33,10 @@ export default function HomePage({
   const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
   const visibleCash = useMemo(() => getVisibleCash(appMoneyModel, accounts), [appMoneyModel, accounts]);
   const calendarBills = useMemo(() => getCalendarBillRead(appMoneyModel), [appMoneyModel]);
+  const expectedIncome = useMemo(() => getExpectedIncomeRead(appMoneyModel), [appMoneyModel]);
   const nextBill = calendarBills.nextBill;
   const moneyLeft = visibleCash.hasBalance ? visibleCash.total - calendarBills.total : null;
-  const homeRead = getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFreshness });
+  const homeRead = getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFreshness, expectedIncome });
   const checksWaitingCount = appMoneyModel?.checksWaiting?.length || 0;
   const primaryGoal = getPrimaryGoal(goals);
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
@@ -72,9 +73,9 @@ export default function HomePage({
             detail={`${calendarBills.count} found by Calendar`}
           />
           <HeroFact
-            label="Money after bills"
-            value={moneyLeft == null ? "Need balance" : formatCurrency(Math.max(moneyLeft, 0))}
-            detail={moneyLeft != null && moneyLeft < 0 ? `${formatCurrency(Math.abs(moneyLeft))} short` : statementCoverage.monthCountLabel || "Bank history"}
+            label="Expected in"
+            value={expectedIncome.hasExpectedIncome ? formatCurrency(expectedIncome.amount) : "Not clear"}
+            detail={expectedIncome.detail || (moneyLeft != null && moneyLeft < 0 ? `${formatCurrency(Math.abs(moneyLeft))} short after bills` : statementCoverage.monthCountLabel || "Bank history")}
           />
         </div>
       </section>
@@ -96,6 +97,7 @@ export default function HomePage({
       <Section title="What Money Hub Found" styles={styles}>
         <div style={styles.inlineInfoBlock}>
           <Row name="Calendar bills" value={`${formatCurrency(calendarBills.total)} across ${calendarBills.count}`} styles={styles} />
+          <Row name="Expected income" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} in 30 days` : expectedIncome.label} styles={styles} />
           <Row name="Checks waiting" value={checksWaitingCount ? `${checksWaitingCount} to answer` : "Nothing urgent"} styles={styles} />
           <Row name="Income" value={appMoneyModel?.income?.label || "Not clear yet"} styles={styles} />
           <Row name="Usual spending" value={appMoneyModel?.flexibleSpending?.label || "Needs checking"} styles={styles} />
@@ -152,6 +154,24 @@ function getVisibleCash(appMoneyModel, accounts) {
   return { hasBalance: values.length > 0, total: values.reduce((sum, value) => sum + value, 0) };
 }
 
+function getExpectedIncomeRead(appMoneyModel) {
+  const incoming = appMoneyModel?.upcomingIncome || appMoneyModel?.income?.upcoming30Days || null;
+  if (!incoming || !incoming.amount || incoming.confidence === "low") {
+    return {
+      hasExpectedIncome: false,
+      amount: 0,
+      label: incoming?.label || "Income not clear yet",
+      detail: incoming?.helper || "Upload more history first",
+      nextItem: null,
+    };
+  }
+  const nextItem = incoming.items?.[0] || null;
+  const detail = nextItem
+    ? `${nextItem.name} ${nextItem.daysAway === 0 ? "today" : nextItem.daysAway === 1 ? "tomorrow" : `in ${nextItem.daysAway} days`}`
+    : incoming.helper || "Based on repeated income";
+  return { hasExpectedIncome: true, amount: Number(incoming.amount || 0), label: incoming.label, detail, nextItem };
+}
+
 function getCalendarBillRead(appMoneyModel) {
   const items = (appMoneyModel?.calendarBills || []).map((bill) => ({
     key: bill.key,
@@ -177,9 +197,10 @@ function getCalendarBillRead(appMoneyModel) {
   };
 }
 
-function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFreshness }) {
+function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFreshness, expectedIncome }) {
   const hasBills = calendarBills.total > 0;
   const nextBillText = nextBill ? `${nextBill.name} for ${formatCurrency(nextBill.amount)} ${nextBill.when}` : "no next bill found yet";
+  const incomeText = expectedIncome?.hasExpectedIncome ? `Expected income: ${formatCurrency(expectedIncome.amount)}. ` : "";
 
   if (!dataFreshness.hasData) {
     return {
@@ -187,7 +208,7 @@ function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFres
       badge: "Start",
       label: "No bank history yet",
       amount: "No data",
-      body: "Upload a statement and Money Hub will show bills, spending and the first safe goal.",
+      body: "Upload a statement and Money Hub will show bills, income, spending and the first safe goal.",
       headline: "Start with one statement",
       nextMove: "One upload is enough to get the first useful read.",
       buttonLabel: "Help me start",
@@ -201,11 +222,11 @@ function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFres
       badge: "Urgent",
       label: "Do not spend money",
       amount: formatCurrency(visibleCash.total),
-      body: `You have ${formatCurrency(visibleCash.total)} showing. Calendar has ${formatCurrency(calendarBills.total)} of bills. Next: ${nextBillText}.`,
+      body: `You have ${formatCurrency(visibleCash.total)} showing. Calendar has ${formatCurrency(calendarBills.total)} of bills. ${incomeText}Next: ${nextBillText}.`,
       headline: "Freeze non-essential spending today",
-      nextMove: "Food, travel to work and bills only. No takeaways, shopping, gaming or top-ups until money is showing.",
+      nextMove: expectedIncome?.hasExpectedIncome ? "Protect the next income before spending it. Food, travel to work and bills only until money lands." : "Food, travel to work and bills only. No takeaways, shopping, gaming or top-ups until money is showing.",
       buttonLabel: "Make 7-day plan",
-      prompt: `Across the money Money Hub can see, I have ${formatCurrency(visibleCash.total)} showing, ${formatCurrency(calendarBills.total)} of Calendar bills, and my next bill is ${nextBillText}. Give me a simple 7-day emergency plan.`,
+      prompt: `Across the money Money Hub can see, I have ${formatCurrency(visibleCash.total)} showing, ${formatCurrency(calendarBills.total)} of Calendar bills, ${incomeText}and my next bill is ${nextBillText}. Give me a simple 7-day emergency plan.`,
     };
   }
 
@@ -215,11 +236,11 @@ function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFres
       badge: "Short",
       label: "Bills are bigger than balance",
       amount: formatCurrency(visibleCash.total),
-      body: `Calendar bills are ${formatCurrency(calendarBills.total)}. You look ${formatCurrency(Math.abs(moneyLeft))} short before normal spending.`,
+      body: `Calendar bills are ${formatCurrency(calendarBills.total)}. You look ${formatCurrency(Math.abs(moneyLeft))} short before normal spending. ${incomeText}`,
       headline: "Keep spending locked down",
       nextMove: `Next bill: ${nextBillText}. Do not add new spending until this is covered.`,
       buttonLabel: "Make shortfall plan",
-      prompt: `My visible balance is ${formatCurrency(visibleCash.total)}, Calendar bills are ${formatCurrency(calendarBills.total)}, and I look ${formatCurrency(Math.abs(moneyLeft))} short. Make a simple plan.`,
+      prompt: `My visible balance is ${formatCurrency(visibleCash.total)}, Calendar bills are ${formatCurrency(calendarBills.total)}, ${incomeText}and I look ${formatCurrency(Math.abs(moneyLeft))} short. Make a simple plan.`,
     };
   }
 
@@ -229,11 +250,11 @@ function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFres
       badge: "No balance",
       label: "Current cash is missing",
       amount: "Need balance",
-      body: `Money Hub found ${formatCurrency(calendarBills.total)} of Calendar bills. Next: ${nextBillText}. It needs a current balance before saying what you can spend.`,
+      body: `Money Hub found ${formatCurrency(calendarBills.total)} of Calendar bills. ${incomeText}Next: ${nextBillText}. It needs a current balance before saying what you can spend.`,
       headline: "Good pattern, missing today",
-      nextMove: "The app can show bills and warnings, but not real spending room until a balance or latest statement is in.",
+      nextMove: "The app can show bills and expected income, but not real spending room until a balance or latest statement is in.",
       buttonLabel: "Ask what is safe",
-      prompt: `Money Hub found ${formatCurrency(calendarBills.total)} of Calendar bills, next bill ${nextBillText}, but no current balance. Tell me what I can safely assume.`,
+      prompt: `Money Hub found ${formatCurrency(calendarBills.total)} of Calendar bills, ${incomeText}next bill ${nextBillText}, but no current balance. Tell me what I can safely assume.`,
     };
   }
 
@@ -242,11 +263,11 @@ function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFres
     badge: moneyLeft <= 25 ? "Tight" : "OK",
     label: "Money after Calendar bills",
     amount: formatCurrency(Math.max(moneyLeft, 0)),
-    body: `After ${formatCurrency(calendarBills.total)} of Calendar bills, this is the cautious amount left from the visible balance. Next: ${nextBillText}.`,
+    body: `After ${formatCurrency(calendarBills.total)} of Calendar bills, this is the cautious amount left from the visible balance. ${incomeText}Next: ${nextBillText}.`,
     headline: moneyLeft <= 25 ? "Keep it careful" : "You have some room",
     nextMove: moneyLeft <= 25 ? "Treat this as tight. Keep spending boring until more money lands." : "Bills are covered in this read. Still keep some back for surprises.",
     buttonLabel: "Check my week",
-    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${formatCurrency(calendarBills.total)} of Calendar bills. Next bill: ${nextBillText}.`,
+    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${formatCurrency(calendarBills.total)} of Calendar bills. ${incomeText}Next bill: ${nextBillText}.`,
   };
 }
 
