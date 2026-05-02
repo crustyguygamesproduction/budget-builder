@@ -19,6 +19,7 @@ export function getBillBaseName(value) {
     .replace(/£?\d+(\.\d{1,2})?/g, " ")
     .replace(/\bbill\b/g, " ")
     .replace(/\bsubscription\b/g, " ")
+    .replace(/[^a-z0-9\s&]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -52,7 +53,8 @@ export function mergeBillStreams(primary = [], fallback = []) {
         const existingBase = getBillBaseName(existing.name);
         const closeAmount = Math.abs(Number(existing.amount || 0) - Number(normal.amount || 0)) <= Math.max(3, Number(normal.amount || 0) * 0.08);
         const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 4;
-        return existing.key === normal.key || (base && existingBase && base === existingBase && closeAmount && closeDay);
+        const generatedFallbackPair = String(existing.key || "").startsWith("commitment:") || String(normal.key || "").startsWith("commitment:");
+        return existing.key === normal.key || (base && existingBase && base === existingBase && closeAmount && (closeDay || generatedFallbackPair));
       });
       if (matchIndex < 0) return [...list, normal];
       const current = list[matchIndex];

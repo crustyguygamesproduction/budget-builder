@@ -36,12 +36,12 @@ import {
   isShortTimeframe,
 } from "../lib/calendarIntelligence";
 import { getCalendarEventStyle } from "../lib/styleHelpers";
-import { cleanBillName, isAllowedBillStream } from "../lib/moneyUnderstandingGuards";
+import { cleanBillName, getBillBaseName, isAllowedBillStream } from "../lib/moneyUnderstandingGuards";
 
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export default function CalendarPage({ transactions, moneyUnderstanding, onTransactionRulesChange, onRefreshMoneyUnderstanding, screenWidth, styles, helpers }) {
+export default function CalendarPage({ transactions, transactionRules = [], moneyUnderstanding, onTransactionRulesChange, onRefreshMoneyUnderstanding, screenWidth, styles, helpers }) {
   const { getDataFreshness } = helpers;
 
   const [viewDate, setViewDate] = useState(() => new Date());
@@ -55,9 +55,11 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
   const [calendarNotice, setCalendarNotice] = useState("");
   const [showBillsList, setShowBillsList] = useState(false);
   const [showMissingBills, setShowMissingBills] = useState(false);
+  const [hiddenCandidateKeys, setHiddenCandidateKeys] = useState([]);
+  const [confirmedCandidateKeys, setConfirmedCandidateKeys] = useState([]);
 
   const recurringEvents = useMemo(
-    () => (moneyUnderstanding?.recurringEvents || [])
+    () => dedupeEvents((moneyUnderstanding?.recurringEvents || [])
       .filter((event) => isAllowedBillStream({
         ...event,
         name: event.title,
@@ -66,7 +68,7 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
         confidence: event.confidenceLabel,
         note: event.estimateNote,
       }))
-      .map((event) => ({ ...event, title: cleanBillName(event.title) })),
+      .map((event) => ({ ...event, title: cleanBillName(event.title) }))),
     [moneyUnderstanding]
   );
   const allHistoryMonths = useMemo(
@@ -74,7 +76,11 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
     [transactions]
   );
   const availableMonthCount = allHistoryMonths.length;
-  const missingBillCandidates = useMemo(() => getMissingBillCandidates(transactions, recurringEvents), [transactions, recurringEvents]);
+  const missingBillCandidates = useMemo(() => getMissingBillCandidates(transactions, recurringEvents, transactionRules), [transactions, recurringEvents, transactionRules]);
+  const visibleMissingBillCandidates = useMemo(
+    () => missingBillCandidates.filter((candidate) => !hiddenCandidateKeys.includes(candidate.key) && !confirmedCandidateKeys.includes(candidate.key)),
+    [missingBillCandidates, hiddenCandidateKeys, confirmedCandidateKeys]
+  );
   const shortTimeframe = isShortTimeframe(timeframe);
   const usingShortHistoryView = shortTimeframe && calendarMode === "history";
   const shortWindowSize = getTimeframeDayCount(timeframe);
@@ -195,7 +201,8 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
     setCalendarNotice("");
     try {
       await saveCalendarRule({ matchText, amount: event.amount, category: "Ignore for Calendar", isBill: false, isSubscription: false, notes: `User marked ${event.title} as not a bill from Calendar.` });
-      setCalendarNotice(`${event.title} will be hidden from future bills.`);
+      await onRefreshMoneyUnderstanding?.();
+      setCalendarNotice(`${event.title} removed from Calendar. Calendar is refreshing.`);
       setSelectedDayKey("");
     } catch (error) {
       setCalendarNotice(error.message || "Could not save that correction yet.");
@@ -205,29 +212,33 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
   }
 
   async function markCandidateAsBill(candidate, category) {
+    setConfirmedCandidateKeys((keys) => [...new Set([...keys, candidate.key])]);
     setCorrectionBusyKey(candidate.key);
-    setCalendarNotice("");
+    setCalendarNotice(`Saving ${candidate.label} as ${category}...`);
     try {
       const isSubscription = category === "Subscription";
       await saveCalendarRule({ matchText: candidate.matchText, amount: candidate.amount, category, isBill: !isSubscription, isSubscription, notes: `User confirmed missing Calendar item as ${category}. Example: ${candidate.example}` });
-      setCalendarNotice(`${candidate.label} will be treated as ${category.toLowerCase()} now.`);
       await onRefreshMoneyUnderstanding?.();
+      setCalendarNotice(`Added ${candidate.label} as ${category}. Calendar is refreshing.`);
     } catch (error) {
-      setCalendarNotice(error.message || "Could not save that bill yet.");
+      setConfirmedCandidateKeys((keys) => keys.filter((key) => key !== candidate.key));
+      setCalendarNotice(error.message || `Could not save ${candidate.label}. Try again.`);
     } finally {
       setCorrectionBusyKey("");
     }
   }
 
-  async function refreshMissingBills() {
-    setShowMissingBills(true);
-    setCorrectionBusyKey("refresh-missing-bills");
-    setCalendarNotice("Looking again for rent, bills, subscriptions and debts...");
+  async function hideMissingBillCandidate(candidate) {
+    setHiddenCandidateKeys((keys) => [...new Set([...keys, candidate.key])]);
+    setCorrectionBusyKey(candidate.key);
+    setCalendarNotice(`Removing ${candidate.label} from Calendar suggestions...`);
     try {
+      await saveCalendarRule({ matchText: candidate.matchText, amount: candidate.amount, category: "Ignore for Calendar", isBill: false, isSubscription: false, notes: `User marked ${candidate.label} as not a bill from Calendar suggestions. Example: ${candidate.example}` });
       await onRefreshMoneyUnderstanding?.();
-      setCalendarNotice("Calendar refreshed. Review the missing-bill suggestions below if anything is still missing.");
+      setCalendarNotice(`${candidate.label} removed from Calendar suggestions.`);
     } catch (error) {
-      setCalendarNotice(error.message || "Could not refresh Calendar yet.");
+      setHiddenCandidateKeys((keys) => keys.filter((key) => key !== candidate.key));
+      setCalendarNotice(error.message || `Could not remove ${candidate.label}. Try again.`);
     } finally {
       setCorrectionBusyKey("");
     }
@@ -285,10 +296,15 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
         {calendarMode === "recurring" ? (
           <div style={getCalendarSummaryGridStyle(screenWidth)}>
             <MiniCard styles={styles} title="Bills this month" value={formatCurrency(recurringMonthTotal)} />
-            <button type="button" onClick={() => setShowBillsList((open) => !open)} style={summaryButtonStyle()}>
+            <button type="button" onClick={() => setShowBillsList((open) => !open)} style={styles.calendarSummaryAction}>
               <span>Bills found</span>
               <strong>{recurringMonthEvents.length}</strong>
               <small>{showBillsList ? "Tap to hide" : "Tap to manage"}</small>
+            </button>
+            <button type="button" onClick={() => setShowMissingBills((open) => !open)} style={styles.calendarSummaryAction}>
+              <span>Bills missing?</span>
+              <strong>{visibleMissingBillCandidates.length ? `${visibleMissingBillCandidates.length} to review` : "Nothing obvious"}</strong>
+              <small>Check possible missing bills</small>
             </button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
             <MiniCard styles={styles} title="Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />
@@ -307,7 +323,7 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
         ) : null}
 
         {calendarMode === "recurring" && showMissingBills ? (
-          <MissingBillsPanel candidates={missingBillCandidates} styles={styles} busyKey={correctionBusyKey} onConfirm={markCandidateAsBill} onClose={() => setShowMissingBills(false)} />
+          <MissingBillsPanel candidates={visibleMissingBillCandidates} styles={styles} busyKey={correctionBusyKey} onConfirm={markCandidateAsBill} onHide={hideMissingBillCandidate} onClose={() => setShowMissingBills(false)} />
         ) : null}
 
         <div style={{ ...styles.calendarGridViewport, overflowX: allowHorizontalScroll ? "auto" : "hidden" }}>
@@ -340,7 +356,7 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
         ) : null}
       </Section>
 
-      <Section styles={styles} title="What Stands Out" right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><button type="button" style={styles.ghostBtn} onClick={refreshMissingBills} disabled={correctionBusyKey === "refresh-missing-bills"}>{correctionBusyKey === "refresh-missing-bills" ? "Checking..." : "Bills missing?"}</button><button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button></div>}>
+      <Section styles={styles} title="What Stands Out" right={<button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button>}>
         <InsightCard styles={styles} label={calendarAiText ? "AI answer" : "Quick read"} headline={calendarAiText ? `Read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming bill pressure" : patternSummary.headline} body={calendarAiText || (calendarMode === "recurring" ? recurringMonthEvents.length ? `Money Hub expects ${recurringMonthEvents.length} future bill/payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you add more months and answer Checks.` : "No future bills found yet. Add more history or answer Checks when they appear." : patternSummary.body)} />
         {calendarAiError ? <p style={styles.errorNote}>{calendarAiError}</p> : null}
       </Section>
@@ -354,11 +370,63 @@ export default function CalendarPage({ transactions, moneyUnderstanding, onTrans
 
 function CalendarBillsPanel({ events, styles, busyKey, onNotBill }) {
   const uniqueEvents = dedupeEvents(events);
-  return <div style={panelStyle()}><div style={panelHeaderStyle()}><div><strong>Bills Money Hub found</strong><p style={styles.transactionMeta}>Remove anything that is not a real bill, rent, debt or subscription.</p></div></div>{uniqueEvents.length ? uniqueEvents.map((event) => <div key={event.key} style={compactRowStyle()}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>About {formatCurrency(Math.abs(event.amount))} around day {event.day}</p></div><button style={styles.secondaryInlineBtn} type="button" onClick={() => onNotBill(event)} disabled={busyKey === (event.key || getEventMatchText(event))}>{busyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}</button></div>) : <p style={styles.emptyText}>No bills found yet.</p>}</div>;
+  return (
+    <div style={styles.calendarCorrectionPanel}>
+      <div style={styles.calendarCorrectionHeader}>
+        <div>
+          <strong>Bills found</strong>
+          <p style={styles.transactionMeta}>Remove anything that is not a real bill, rent, debt or subscription.</p>
+        </div>
+      </div>
+      {uniqueEvents.length ? uniqueEvents.map((event) => (
+        <div key={event.key || `${getEventMatchText(event)}-${event.amount}-${event.day}`} style={styles.calendarCorrectionRow}>
+          <div>
+            <strong>{event.title}</strong>
+            <p style={styles.transactionMeta}>{formatCurrency(Math.abs(event.amount))} expected around day {event.day}</p>
+          </div>
+          <button style={styles.secondaryInlineBtn} type="button" onClick={() => onNotBill(event)} disabled={busyKey === (event.key || getEventMatchText(event))}>
+            {busyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}
+          </button>
+        </div>
+      )) : <p style={styles.emptyText}>No bills found yet.</p>}
+    </div>
+  );
 }
 
-function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onClose }) {
-  return <div style={panelStyle()}><div style={panelHeaderStyle()}><div><strong>Bills missing?</strong><p style={styles.transactionMeta}>These payments look like they could be bills. Confirm only the ones you actually want in Calendar.</p></div><button style={styles.ghostBtn} type="button" onClick={onClose}>Close</button></div>{candidates.length ? candidates.map((candidate) => <div key={candidate.key} style={compactRowStyle()}><div><strong>{candidate.label}</strong><p style={styles.transactionMeta}>Usually {formatCurrency(candidate.amount)} around day {candidate.day}. Seen {candidate.count} time{candidate.count === 1 ? "" : "s"}. Example: {candidate.example}</p></div><div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, candidate.suggestedCategory || "Major bill")}>{busyKey === candidate.key ? "Saving..." : candidate.suggestedCategory || "Bill"}</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Subscription")}>Sub</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Phone")}>Phone</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Broadband")}>Broadband</button><button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, "Energy")}>Energy</button></div></div>) : <p style={styles.emptyText}>No strong missing bill candidates found. Add more months or use Checks when a payment appears there.</p>}</div>;
+function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onClose }) {
+  const categoryButtons = ["Bill", "Subscription", "Phone", "Broadband", "Energy"];
+  return (
+    <div style={styles.calendarCorrectionPanel}>
+      <div style={styles.calendarCorrectionHeader}>
+        <div>
+          <strong>Check possible missing bills</strong>
+          <p style={styles.transactionMeta}>These payments might be bills. Tap the right type, or remove anything that is not a bill.</p>
+        </div>
+        <button style={styles.ghostBtn} type="button" onClick={onClose}>Close</button>
+      </div>
+      {candidates.length ? candidates.map((candidate) => (
+        <div key={candidate.key} style={styles.calendarCorrectionRow}>
+          <div>
+            <strong>{candidate.label}</strong>
+            <p style={styles.transactionMeta}>
+              Usually {formatCurrency(candidate.amount)} around day {candidate.day}. Seen {candidate.count} time{candidate.count === 1 ? "" : "s"}.
+            </p>
+            <p style={styles.transactionMeta}>Example: {candidate.example}</p>
+          </div>
+          <div style={styles.calendarCorrectionButtons}>
+            {categoryButtons.map((category) => (
+              <button key={category} style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onConfirm(candidate, category)}>
+                {busyKey === candidate.key ? "Saving..." : category}
+              </button>
+            ))}
+            <button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onHide(candidate)}>
+              {busyKey === candidate.key ? "Saving..." : "X Not a bill"}
+            </button>
+          </div>
+        </div>
+      )) : <p style={styles.emptyText}>Nothing obvious right now. If Money Hub is unsure later, it will ask you to check.</p>}
+    </div>
+  );
 }
 
 function TransactionRow({ name, meta, amount, styles }) {
@@ -381,38 +449,61 @@ function getEventMatchText(event) {
     .trim();
 }
 
-function getMissingBillCandidates(transactions = [], events = []) {
-  const existingText = normalizeText(events.map((event) => event.title).join(" "));
-  const groups = new Map();
+function getMissingBillCandidates(transactions = [], events = [], transactionRules = []) {
+  const groups = [];
   (transactions || []).forEach((transaction) => {
     const amount = Math.abs(Number(transaction.amount || 0));
     if (Number(transaction.amount || 0) >= 0 || amount < 2) return;
     if (transaction._smart_internal_transfer || transaction.is_internal_transfer) return;
     const text = normalizeText(`${transaction.description || ""} ${transaction.category || ""} ${transaction._smart_category || ""}`);
+    const providerKey = getProviderKey(transaction.description || text);
+    if (!providerKey) return;
+    if (isSuppressedByCalendarRules({ providerKey, amount }, transactionRules)) return;
     if (!looksLikePossibleBill(text, amount)) return;
-    const matchText = cleanCandidateText(transaction.description);
-    if (!matchText || existingText.includes(normalizeText(matchText))) return;
+    const suggestedCategory = suggestCategory(text);
+    if (candidateMatchesExistingBill({ providerKey, amount, suggestedCategory }, events)) return;
+    const matchText = cleanCandidateText(transaction.description) || providerKey;
+    if (!matchText) return;
     const date = new Date(transaction.transaction_date);
     if (Number.isNaN(date.getTime())) return;
-    const amountBand = amount < 80 ? Math.round(amount / 5) * 5 : Math.round(amount / 10) * 10;
-    const key = `${matchText}:${amountBand}`;
-    const group = groups.get(key) || { key, matchText, label: niceCandidateName(matchText), amounts: [], days: [], examples: [], count: 0, suggestedCategory: suggestCategory(text) };
+    const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
+    const transactionKey = `${monthKey}:${date.getDate()}:${providerKey}:${Math.round(amount * 100)}:${normalizeText(transaction.description)}`;
+    let group = groups.find((item) => item.providerKey === providerKey && item.suggestedCategory === suggestedCategory && !isSeparateAmountBand(amount, usual(item.amounts)));
+    if (!group) {
+      group = { providerKey, matchText, label: niceCandidateName(providerKey), amounts: [], days: [], examples: [], monthKeys: new Set(), seenTransactions: new Set(), count: 0, suggestedCategory };
+      groups.push(group);
+    }
+    if (group.seenTransactions.has(transactionKey)) return;
+    group.seenTransactions.add(transactionKey);
     group.amounts.push(amount);
     group.days.push(date.getDate());
     group.examples.push(transaction.description);
+    group.monthKeys.add(monthKey);
     group.count += 1;
-    groups.set(key, group);
   });
-  return [...groups.values()]
-    .map((group) => ({ ...group, amount: usual(group.amounts), day: mode(group.days), example: group.examples[0] }))
-    .filter((group) => group.count >= 2 || /eon|e\.on|ee|bt|virgin|sky|vodafone|o2|three|octopus|british gas|edf|shell energy|water|council|insurance|premium funding/.test(normalizeText(group.matchText)))
+  return groups
+    .map((group) => {
+      const amount = usual(group.amounts);
+      return {
+        key: `${group.providerKey}:${group.suggestedCategory}:${Math.round(amount * 100)}`,
+        matchText: group.matchText,
+        label: group.label,
+        amount,
+        day: mode(group.days),
+        count: group.count,
+        monthCount: group.monthKeys.size,
+        example: group.examples[0],
+        suggestedCategory: group.suggestedCategory,
+      };
+    })
+    .filter((group) => group.count >= 2 && group.monthCount >= 2)
     .sort((a, b) => b.count - a.count || b.amount - a.amount)
     .slice(0, 12);
 }
 
 function looksLikePossibleBill(text, amount) {
-  if (/mcdonald|takeaway|restaurant|greggs|uber eats|just eat|chickie|odeon|cinema|gaming|lvl up|xsolla|cash withdrawal|atm|tesco|aldi|lidl|sainsbury|asda|morrisons|one stop|premier/.test(text)) return false;
-  if (/eon|e\.on|energy|electric|gas|octopus|british gas|edf|water|ee|vodafone|o2|three|bt|virgin|sky|broadband|phone|mobile|insurance|premium funding|clearpay|klarna|loan|finance|council|tax|rent|landlord|subscription|netflix|apple|google|openai|spotify/.test(text)) return true;
+  if (/mcdonald|takeaway|restaurant|greggs|uber eats|just eat|chickie|gaming|lvl up|xsolla|cash withdrawal|atm|tesco|aldi|lidl|sainsbury|asda|morrisons|one stop|premier|petrol|fuel|parking|vinted|ebay|amazon marketplace|proovia|mynextbike|trading|investment/.test(text)) return false;
+  if (/eon|e\.on|energy|electric|gas|octopus|british gas|edf|water|ee|vodafone|o2|three|bt|virgin|sky|broadband|phone|mobile|insurance|premium funding|clearpay|klarna|loan|finance|council|tax|rent|landlord|subscription|netflix|apple|itunes|icloud|google|openai|spotify|odeon|cinema|cineworld|vue/.test(text)) return true;
   return amount >= 25 && amount <= 500 && /direct debit|dd|standing order|so|payment/.test(text);
 }
 
@@ -420,20 +511,30 @@ function suggestCategory(text) {
   if (/eon|e\.on|energy|electric|gas|octopus|british gas|edf/.test(text)) return "Energy";
   if (/broadband|bt|virgin|sky/.test(text)) return "Broadband";
   if (/phone|mobile|ee|vodafone|o2|three/.test(text)) return "Phone";
-  if (/insurance|premium funding/.test(text)) return "Insurance";
-  if (/rent|landlord/.test(text)) return "Rent";
-  if (/netflix|spotify|apple|google|openai|subscription/.test(text)) return "Subscription";
-  return "Major bill";
+  if (/netflix|spotify|apple|itunes|icloud|google|openai|subscription|odeon|cinema|cineworld|vue/.test(text)) return "Subscription";
+  return "Bill";
 }
 
 function cleanCandidateText(value) {
+  return getProviderKey(value)
+    .split(" ")
+    .slice(0, 5)
+    .join(" ");
+}
+
+function getProviderKey(value) {
   return normalizeText(value)
     .replace(/\b(direct debit|standing order|faster payment|card payment|payment to|payment from|reference|ref|dd|so|pos|visa)\b/g, " ")
+    .replace(/\b(debit card|credit card|contactless|online payment|bank giro credit|bacs|fpi|fpo|fp|cr|dr)\b/g, " ")
     .replace(/\b[a-z]*\d{4,}[a-z0-9]*\b/g, " ")
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/[^a-z0-9&\s]/g, " ")
+    .replace(/\be\s+on\b/g, "eon")
+    .replace(/\b(co uk|com|co|ltd|limited|plc|uk|gb)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
-    .slice(0, 4)
+    .slice(0, 6)
     .join(" ");
 }
 
@@ -453,27 +554,61 @@ function mode(values) {
 }
 
 function dedupeEvents(events = []) {
-  const seen = new Set();
-  return events.filter((event) => {
-    const key = `${getEventMatchText(event)}:${Math.round(Math.abs(Number(event.amount || 0)) * 100)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  return (events || []).reduce((list, event) => {
+    const providerKey = getProviderKey(getBillBaseName(event.title) || event.title);
+    const amount = Math.abs(Number(event.amount || 0));
+    const day = Number(event.day || 0);
+    const matchIndex = list.findIndex((existing) => {
+      const existingProviderKey = getProviderKey(getBillBaseName(existing.title) || existing.title);
+      const existingAmount = Math.abs(Number(existing.amount || 0));
+      const existingDay = Number(existing.day || 0);
+      return providerKey && existingProviderKey && providerKey === existingProviderKey && amountsClose(amount, existingAmount, 0.08, 3) && Math.abs(day - existingDay) <= 4;
+    });
+    if (matchIndex < 0) return [...list, event];
+    const current = list[matchIndex];
+    const better = scoreCalendarEvent(event) > scoreCalendarEvent(current) ? event : current;
+    return list.map((item, index) => (index === matchIndex ? better : item));
+  }, []);
+}
+
+function candidateMatchesExistingBill(candidate, events = []) {
+  return (events || []).some((event) => {
+    const eventProviderKey = getProviderKey(getBillBaseName(event.title) || event.title);
+    const eventAmount = Math.abs(Number(event.amount || 0));
+    return candidate.providerKey && eventProviderKey && candidate.providerKey === eventProviderKey && !isSeparateAmountBand(candidate.amount, eventAmount);
   });
 }
 
-function summaryButtonStyle() {
-  return { border: 0, borderRadius: 18, background: "rgba(255,255,255,0.86)", boxShadow: "0 14px 35px rgba(15, 23, 42, 0.06)", padding: 16, display: "grid", gap: 8, textAlign: "left", color: "#0f172a", cursor: "pointer" };
+function isSuppressedByCalendarRules(candidate, transactionRules = []) {
+  return (transactionRules || []).some((rule) => {
+    const category = normalizeText(rule?.category || "");
+    const saysNotBill = rule?.rule_type === "calendar_suppression" || (!rule?.is_bill && !rule?.is_subscription && ["ignore for calendar", "not a bill", "spending", "personal payment"].includes(category));
+    if (!saysNotBill) return false;
+    const ruleProviderKey = getProviderKey(rule?.match_text || "");
+    if (!ruleProviderKey) return false;
+    const textMatches = candidate.providerKey === ruleProviderKey || candidate.providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(candidate.providerKey);
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.12, 3);
+  });
 }
 
-function panelStyle() {
-  return { border: "1px solid rgba(148,163,184,.22)", borderRadius: 22, padding: 14, margin: "12px 0", background: "rgba(248,250,252,.9)", display: "grid", gap: 10 };
+function isSeparateAmountBand(a, b) {
+  const first = Math.abs(Number(a || 0));
+  const second = Math.abs(Number(b || 0));
+  if (!first || !second) return false;
+  return Math.abs(first - second) > Math.max(5, Math.max(first, second) * 0.25);
 }
 
-function panelHeaderStyle() {
-  return { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" };
+function amountsClose(a, b, percent, floor) {
+  const first = Math.abs(Number(a || 0));
+  const second = Math.abs(Number(b || 0));
+  if (!first || !second) return false;
+  return Math.abs(first - second) <= Math.max(floor, Math.max(first, second) * percent);
 }
 
-function compactRowStyle() {
-  return { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", border: "1px solid rgba(148,163,184,.2)", borderRadius: 16, padding: 12, background: "white" };
+function scoreCalendarEvent(event) {
+  const confidence = normalizeText(event?.confidenceLabel || event?.confidence || "");
+  const confidenceScore = confidence === "high" ? 40 : confidence === "medium" ? 25 : confidence === "estimated" ? 12 : 0;
+  return confidenceScore + Number(event?.sourceMonths || 0) * 6 + Number(event?.sourceCount || 0);
 }

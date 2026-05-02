@@ -15,8 +15,6 @@ export function buildStrongBillFallbackEvents(transactions, existingEvents = [])
     if (!isFixedCommitmentTransaction(transaction)) return;
 
     const merchant = getRealWorldMerchant(transaction);
-    const category = normalizeText(transaction._smart_category || transaction.category || "");
-    const text = normalizeText(`${transaction.description || ""} ${category}`);
     const amount = Math.abs(Number(transaction.amount || 0));
     const date = parseAppDate(transaction.transaction_date);
     if (!date || !amount) return;

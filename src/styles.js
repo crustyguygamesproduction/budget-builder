@@ -780,6 +780,58 @@
     marginBottom: "14px",
   },
 
+  calendarSummaryAction: {
+    border: "1px solid #cfe0ff",
+    background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
+    color: "#0f172a",
+    borderRadius: "18px",
+    padding: "16px",
+    display: "grid",
+    gap: "7px",
+    textAlign: "left",
+    cursor: "pointer",
+    boxShadow: "0 12px 28px rgba(15, 23, 42, 0.05)",
+    minHeight: "104px",
+    fontWeight: "700",
+  },
+
+  calendarCorrectionPanel: {
+    border: "1px solid rgba(148,163,184,.22)",
+    borderRadius: "20px",
+    padding: "14px",
+    margin: "12px 0 16px",
+    background: "rgba(248,250,252,.92)",
+    display: "grid",
+    gap: "10px",
+  },
+
+  calendarCorrectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+  },
+
+  calendarCorrectionRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "12px",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    border: "1px solid rgba(148,163,184,.2)",
+    borderRadius: "16px",
+    padding: "12px",
+    background: "white",
+  },
+
+  calendarCorrectionButtons: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    justifyContent: "flex-end",
+  },
+
   modeChipRow: {
     display: "flex",
     gap: "8px",
