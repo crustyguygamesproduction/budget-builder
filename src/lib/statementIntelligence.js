@@ -1,3 +1,5 @@
+import { buildCoachQueryFocus } from "../../supabase/functions/_shared/coachQueryFocus.js";
+
 export function getStatementIntelligenceContext(transactions, query = "") {
   const settled = transactions.filter((transaction) => !isInternalTransferLike(transaction));
   const spending = settled.filter((transaction) => Number(transaction.amount) < 0);
@@ -75,301 +77,11 @@ export function getStatementIntelligenceContext(transactions, query = "") {
 }
 
 function getQueryFocus(transactions, query) {
-  const terms = getSearchTerms(query);
-  const directionIntent = getQueryDirectionIntent(query);
-  const personalMoneyIntent = hasPersonalMoneyIntent(query);
-  const timeWindow = getQueryTimeWindow(transactions, query);
-  const scopedTransactions = timeWindow.matched
-    ? transactions.filter((transaction) => isTransactionInTimeWindow(transaction, timeWindow))
-    : transactions;
-  const rentBillLikePersonalLabels = getRentBillLikePersonalLabels(scopedTransactions);
+  const rentBillLikePersonalLabels = getRentBillLikePersonalLabels(transactions);
 
-  if (terms.length === 0) {
-    return {
-      original_query: query,
-      search_terms: terms,
-      direction_intent: directionIntent,
-      personal_money_intent: personalMoneyIntent,
-      time_window: timeWindow,
-      direct_match_count: 0,
-      relevant_match_count: 0,
-      direct_money_in: 0,
-      direct_money_out: 0,
-      direct_net: 0,
-      relevant_money_total: 0,
-      relevant_money_label: getRelevantMoneyLabel(directionIntent),
-      grouped_matches: [],
-      relevant_grouped_matches: [],
-      direct_matches: [],
-      relevant_matches: [],
-      direct_match_note:
-        `No specific search terms were found in the question. Use the appropriate ${timeWindow.matched ? `${timeWindow.label} ` : "all-history "}summary groups instead, especially incoming_personal_payment_groups or outgoing_personal_payment_groups for personal money questions.`,
-    };
-  }
-
-  const scoredMatches = scopedTransactions
-    .map((transaction) => ({
-      transaction,
-      score: scoreTransactionForTerms(transaction, terms),
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || String(b.transaction.transaction_date || "").localeCompare(String(a.transaction.transaction_date || "")));
-  const matches = scoredMatches.map((item) => item.transaction);
-  const directionMatches = filterByDirectionIntent(matches, directionIntent);
-  const relevantMatches = personalMoneyIntent
-    ? directionMatches.filter((transaction) => isCleanPersonalPayment(transaction, rentBillLikePersonalLabels))
-    : directionMatches;
-  const moneyIn = matches
-    .filter((transaction) => Number(transaction.amount) > 0)
-    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-  const moneyOut = matches
-    .filter((transaction) => Number(transaction.amount) < 0)
-    .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
-  const relevantMoneyTotal = getRelevantMoneyTotal(relevantMatches, directionIntent);
-
-  return {
-    original_query: query,
-    search_terms: terms,
-    direction_intent: directionIntent,
-    personal_money_intent: personalMoneyIntent,
-    time_window: timeWindow,
-    direct_match_count: matches.length,
-    relevant_match_count: relevantMatches.length,
-    direct_money_in: roundMoney(moneyIn),
-    direct_money_out: roundMoney(moneyOut),
-    direct_net: roundMoney(moneyIn - moneyOut),
-    relevant_money_total: roundMoney(relevantMoneyTotal),
-    relevant_money_label: getRelevantMoneyLabel(directionIntent),
-    grouped_matches: buildTransactionGroups(matches, (transaction) =>
-      cleanEventTitle(transaction.description || "Transaction")
-    ).slice(0, 20),
-    relevant_grouped_matches: buildTransactionGroups(relevantMatches, (transaction) =>
-      cleanEventTitle(transaction.description || "Transaction")
-    ).slice(0, 20),
-    direct_matches: matches.slice(0, 120).map(toCoachTransaction),
-    relevant_matches: relevantMatches.slice(0, 120).map(toCoachTransaction),
-    direct_match_note: buildQueryFocusNote(matches, relevantMatches, directionIntent, personalMoneyIntent, timeWindow),
-  };
-}
-
-function getQueryTimeWindow(transactions, query) {
-  const text = normalizeText(query);
-  const anchor = getLatestTransactionDate(transactions);
-  const emptyWindow = {
-    label: "all uploaded data",
-    start: "",
-    end: anchor ? toIsoDate(anchor) : "",
-    matched: false,
-  };
-
-  if (!anchor) return emptyWindow;
-
-  if (/\b(latest|last)\s+30\s+days?\b/.test(text)) {
-    const start = addDays(anchor, -30);
-    return {
-      label: "latest 30 days of uploaded data",
-      start: toIsoDate(start),
-      end: toIsoDate(anchor),
-      matched: true,
-    };
-  }
-
-  if (/\blatest\s+month\b/.test(text)) {
-    return {
-      label: "latest uploaded month",
-      start: toIsoDate(startOfMonth(anchor)),
-      end: toIsoDate(anchor),
-      matched: true,
-    };
-  }
-
-  if (/\bthis\s+month\b/.test(text)) {
-    return {
-      label: "this month in uploaded data",
-      start: toIsoDate(startOfMonth(anchor)),
-      end: toIsoDate(anchor),
-      matched: true,
-    };
-  }
-
-  if (/\blast\s+month\b/.test(text)) {
-    const previousMonth = new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1);
-    return {
-      label: "last month in uploaded data",
-      start: toIsoDate(startOfMonth(previousMonth)),
-      end: toIsoDate(endOfMonth(previousMonth)),
-      matched: true,
-    };
-  }
-
-  return emptyWindow;
-}
-
-function getLatestTransactionDate(transactions) {
-  return transactions
-    .map((transaction) => parseAppDate(transaction.transaction_date))
-    .filter(Boolean)
-    .sort((a, b) => b - a)[0] || null;
-}
-
-function isTransactionInTimeWindow(transaction, timeWindow) {
-  if (!timeWindow?.matched) return true;
-  const date = parseAppDate(transaction.transaction_date);
-  if (!date) return false;
-  const start = parseAppDate(timeWindow.start);
-  const end = parseAppDate(timeWindow.end);
-  if (start && date < start) return false;
-  if (end && date > end) return false;
-  return true;
-}
-
-function getQueryDirectionIntent(query) {
-  const text = normalizeText(query);
-
-  if (
-    /\b(sent me|sent to me|been sent|received|paid me|pays me|pay me|transferred me|transfer me|money in|income from|from friends|from family|family sent|friends sent|given me|gave me)\b/.test(text)
-  ) {
-    return "incoming";
-  }
-
-  if (
-    /\b(i sent|sent to|sent out|i paid|paid to|pay to|money to|transferred to|transfer to|gave|give money|send people|sent people|send to people|spent|spend|spending|bought|buying|purchased|purchase)\b/.test(text)
-  ) {
-    return "outgoing";
-  }
-
-  if (/\b(net|difference|balance between|in and out|both ways|overall)\b/.test(text)) {
-    return "net";
-  }
-
-  return "unknown";
-}
-
-function hasPersonalMoneyIntent(query) {
-  const text = normalizeText(query);
-  return /\b(friend|friends|family|mum|mother|dad|father|brother|sister|mate|mates|people|person|personal|loaned|lent|borrowed|gift|gifts)\b/.test(text);
-}
-
-function filterByDirectionIntent(transactions, directionIntent) {
-  if (directionIntent === "incoming") {
-    return transactions.filter((transaction) => Number(transaction.amount) > 0);
-  }
-  if (directionIntent === "outgoing") {
-    return transactions.filter((transaction) => Number(transaction.amount) < 0);
-  }
-  return transactions;
-}
-
-function getRelevantMoneyTotal(transactions, directionIntent) {
-  if (directionIntent === "incoming") {
-    return transactions
-      .filter((transaction) => Number(transaction.amount) > 0)
-      .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-  }
-
-  if (directionIntent === "outgoing") {
-    return transactions
-      .filter((transaction) => Number(transaction.amount) < 0)
-      .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
-  }
-
-  if (directionIntent === "net") {
-    return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-  }
-
-  return transactions.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
-}
-
-function getRelevantMoneyLabel(directionIntent) {
-  if (directionIntent === "incoming") return "money_in_only";
-  if (directionIntent === "outgoing") return "money_out_only";
-  if (directionIntent === "net") return "net_money_in_minus_out";
-  return "all_matching_money_absolute";
-}
-
-function buildQueryFocusNote(matches, relevantMatches, directionIntent, personalMoneyIntent, timeWindow) {
-  const directionText =
-    directionIntent === "incoming"
-      ? "incoming money only because the question asks about money sent to/received by the user"
-      : directionIntent === "outgoing"
-        ? "outgoing money only because the question asks about money the user sent or paid out"
-        : directionIntent === "net"
-          ? "net money in minus money out because the question asks for an overall/net view"
-          : "all matching directions because the question direction is unclear";
-  const personalText = personalMoneyIntent
-    ? " Rent, bills, subscriptions, business/work payments, pass-through flows and payees with rent/bill-tagged transactions have been excluded from relevant personal-payment matches."
-    : "";
-  const capText =
-    matches.length > 120 || relevantMatches.length > 120
-      ? ` Showing 120 example transactions, but totals use all direct matches${timeWindow?.matched ? ` inside ${timeWindow.label} (${timeWindow.start} to ${timeWindow.end})` : " across full uploaded history"}.`
-      : ` Showing all direct matches${timeWindow?.matched ? ` inside ${timeWindow.label} (${timeWindow.start} to ${timeWindow.end})` : " across full uploaded history"}.`;
-
-  return `${directionText}.${personalText}${capText}`;
-}
-
-function getSearchTerms(query) {
-  const stopWords = new Set([
-    "about",
-    "all",
-    "and",
-    "any",
-    "been",
-    "brother",
-    "dad",
-    "data",
-    "day",
-    "days",
-    "did",
-    "does",
-    "family",
-    "friend",
-    "friends",
-    "from",
-    "gave",
-    "give",
-    "have",
-    "how",
-    "into",
-    "last",
-    "latest",
-    "money",
-    "month",
-    "much",
-    "mum",
-    "paid",
-    "pay",
-    "payment",
-    "payments",
-    "people",
-    "received",
-    "sent",
-    "send",
-    "sister",
-    "spend",
-    "spending",
-    "spent",
-    "the",
-    "them",
-    "this",
-    "to",
-    "total",
-    "transfer",
-    "transfers",
-    "what",
-    "when",
-    "with",
-    "you",
-    "your",
-  ]);
-
-  return [...new Set(normalizeText(query).split(" "))]
-    .filter((term) => term.length >= 3 && !stopWords.has(term))
-    .slice(0, 8);
-}
-
-function scoreTransactionForTerms(transaction, terms) {
-  const haystack = normalizeText(
-    [
+  return buildCoachQueryFocus(transactions, query, {
+    getDate: (transaction) => transaction.transaction_date || "",
+    getSearchText: (transaction) => [
       transaction.description,
       transaction.merchant,
       transaction.category,
@@ -377,17 +89,13 @@ function scoreTransactionForTerms(transaction, terms) {
       transaction.accounts?.name,
       transaction.account_name,
       transaction.account,
-    ].join(" ")
-  );
-
-  if (!haystack) return 0;
-
-  return terms.reduce((score, term) => {
-    const exactWord = new RegExp(`(^|\\s)${escapeRegExp(term)}(\\s|$)`).test(haystack);
-    if (exactWord) return score + 4;
-    if (haystack.includes(term)) return score + 2;
-    return score;
-  }, 0);
+    ].join(" "),
+    getGroupLabel: (transaction) => cleanEventTitle(transaction.description || "Transaction"),
+    mapTransaction: toCoachTransaction,
+    relevantFilter: (transaction) => isCleanPersonalPayment(transaction, rentBillLikePersonalLabels),
+    emptyNote:
+      "No specific search terms were found in the question. Use the appropriate all-history summary groups instead, especially incoming_personal_payment_groups or outgoing_personal_payment_groups for personal money questions.",
+  });
 }
 
 function buildPersonalPaymentGroups(transactions, direction = "out") {
@@ -729,10 +437,6 @@ function normalizeText(value) {
     .trim();
 }
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function toTitleCase(value) {
   return String(value || "")
     .split(" ")
@@ -784,18 +488,6 @@ function toIsoDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function addDays(date, days) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + Number(days || 0));
-}
-
-function startOfMonth(date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function endOfMonth(date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
 }
 
 function formatDateShort(date) {
