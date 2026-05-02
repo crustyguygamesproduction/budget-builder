@@ -40,7 +40,7 @@ import { cleanBillName, isAllowedBillStream } from "../lib/moneyUnderstandingGua
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export default function CalendarPage({ transactions, moneyUnderstanding, screenWidth, styles, helpers }) {
+export default function CalendarPage({ transactions, moneyUnderstanding, onTransactionRulesChange, onRefreshMoneyUnderstanding, screenWidth, styles, helpers }) {
   const { getDataFreshness } = helpers;
 
   const [viewDate, setViewDate] = useState(() => new Date());
@@ -50,6 +50,8 @@ export default function CalendarPage({ transactions, moneyUnderstanding, screenW
   const [calendarAiBusy, setCalendarAiBusy] = useState(false);
   const [calendarAiText, setCalendarAiText] = useState("");
   const [calendarAiError, setCalendarAiError] = useState("");
+  const [correctionBusyKey, setCorrectionBusyKey] = useState("");
+  const [calendarNotice, setCalendarNotice] = useState("");
 
   const recurringEvents = useMemo(
     () => (moneyUnderstanding?.recurringEvents || [])
@@ -159,6 +161,53 @@ export default function CalendarPage({ transactions, moneyUnderstanding, screenW
     setSelectedDayKey((current) => (current === day.key ? "" : day.key));
   }
 
+  async function markEventNotBill(event) {
+    const matchText = getEventMatchText(event);
+    if (!matchText) return;
+
+    setCorrectionBusyKey(event.key || matchText);
+    setCalendarNotice("");
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from("transaction_rules").upsert(
+        {
+          user_id: user.id,
+          rule_type: "calendar_suppression",
+          match_text: matchText,
+          match_amount: Math.abs(Number(event.amount || 0)),
+          category: "Ignore for Calendar",
+          is_bill: false,
+          is_subscription: false,
+          is_internal_transfer: false,
+          notes: `User marked ${event.title} as not a bill from Calendar.`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,rule_type,match_text,match_amount" }
+      );
+      if (error) throw error;
+      setCalendarNotice(`${event.title} will be hidden from future bills.`);
+      setSelectedDayKey("");
+      await onTransactionRulesChange?.();
+    } catch (error) {
+      setCalendarNotice(error.message || "Could not save that correction yet.");
+    } finally {
+      setCorrectionBusyKey("");
+    }
+  }
+
+  async function refreshMissingBills() {
+    setCorrectionBusyKey("refresh-missing-bills");
+    setCalendarNotice("Looking again for rent, bills, subscriptions and debts...");
+    try {
+      await onRefreshMoneyUnderstanding?.();
+      setCalendarNotice("Calendar refreshed. If something is still missing, check the Checks page or add more recent history.");
+    } catch (error) {
+      setCalendarNotice(error.message || "Could not refresh Calendar yet.");
+    } finally {
+      setCorrectionBusyKey("");
+    }
+  }
+
   async function runCalendarAiAnalysis() {
     setCalendarAiBusy(true);
     setCalendarAiError("");
@@ -205,6 +254,7 @@ export default function CalendarPage({ transactions, moneyUnderstanding, screenW
           <div style={styles.modeChipRow}>{timeframeOptions.map(([key, label]) => { const needsMonths = getTimeframeMonthCount(key); const unavailable = needsMonths > 0 && key !== "all" && availableMonthCount < needsMonths; return (<button key={key} type="button" aria-pressed={timeframe === key} onClick={(event) => { event.currentTarget.blur(); handleTimeframeChange(key); }} disabled={calendarMode === "recurring" ? true : unavailable} style={{ ...styles.calendarTimeframeChip, ...(timeframe === key ? styles.calendarTimeframeChipActive : null), ...((calendarMode === "recurring" || unavailable) ? styles.timeframeChipDisabled : null) }}>{label}</button>); })}</div>
         </div>
 
+        {calendarNotice ? <p style={{ ...styles.calendarRangeHint, color: calendarNotice.toLowerCase().includes("could not") ? "#dc2626" : "#2563eb" }}>{calendarNotice}</p> : null}
         {availableMonthCount <= 1 && !shortTimeframe && calendarMode === "history" ? <p style={styles.calendarRangeHint}>You have one month of history so far. Add more statements to make patterns smarter.</p> : null}
 
         {calendarMode === "recurring" ? (
@@ -248,12 +298,12 @@ export default function CalendarPage({ transactions, moneyUnderstanding, screenW
         {selectedDay ? (
           <div style={styles.calendarInlinePanel}>
             <div style={styles.calendarInlinePanelTop}><strong>{calendarMode === "history" ? formatDateLong(selectedDay.date) : `${formatDateLong(selectedDay.date)} estimate`}</strong><button style={styles.ghostBtn} type="button" onClick={() => setSelectedDayKey("")}>Close</button></div>
-            {calendarMode === "history" ? (selectedDay.transactions.length === 0 ? <p style={styles.emptyText}>{selectedDay.isFutureDay ? "This day has not happened yet." : "Nothing landed on this day."}</p> : <><p style={styles.transactionMeta}>{selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"}. In {formatCurrency(selectedDay.earned)}. Out {formatCurrency(selectedDay.spent)}. Left {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}</p>{selectedDay.transactions.map((transaction) => <TransactionRow styles={styles} key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`} name={transaction.description || "Transaction"} meta={getMeaningfulCategory(transaction) || "Uncategorised"} amount={Number(transaction.amount || 0)} />)}</>) : !selectedDay.events.length ? <p style={styles.emptyText}>Nothing is expected on this date.</p> : selectedDay.events.map((event) => <div key={event.key} style={styles.signalCard}><div style={styles.signalHeader}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>Expected around day {event.day} - {event.kindLabel} - {getPlainMatchLabel(event.confidenceLabel)}</p>{event.estimateNote ? <p style={styles.transactionMeta}>{event.estimateNote}</p> : null}</div><strong>{event.amount > 0 ? "+" : "-"}{formatCurrency(Math.abs(event.amount))}</strong></div><div style={styles.inlineBtnRow}><button style={styles.primaryInlineBtn} onClick={() => downloadCalendarEvent(event)}>Add to Google / Apple Calendar</button></div></div>)}
+            {calendarMode === "history" ? (selectedDay.transactions.length === 0 ? <p style={styles.emptyText}>{selectedDay.isFutureDay ? "This day has not happened yet." : "Nothing landed on this day."}</p> : <><p style={styles.transactionMeta}>{selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"}. In {formatCurrency(selectedDay.earned)}. Out {formatCurrency(selectedDay.spent)}. Left {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}</p>{selectedDay.transactions.map((transaction) => <TransactionRow styles={styles} key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`} name={transaction.description || "Transaction"} meta={getMeaningfulCategory(transaction) || "Uncategorised"} amount={Number(transaction.amount || 0)} />)}</>) : !selectedDay.events.length ? <p style={styles.emptyText}>Nothing is expected on this date.</p> : selectedDay.events.map((event) => <div key={event.key} style={styles.signalCard}><div style={styles.signalHeader}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>Expected around day {event.day} - {event.kindLabel} - {getPlainMatchLabel(event.confidenceLabel)}</p>{event.estimateNote ? <p style={styles.transactionMeta}>{event.estimateNote}</p> : null}</div><strong>{event.amount > 0 ? "+" : "-"}{formatCurrency(Math.abs(event.amount))}</strong></div><div style={styles.inlineBtnRow}><button style={styles.primaryInlineBtn} onClick={() => downloadCalendarEvent(event)}>Add to Google / Apple Calendar</button><button style={styles.secondaryInlineBtn} type="button" onClick={() => markEventNotBill(event)} disabled={correctionBusyKey === (event.key || getEventMatchText(event))}>{correctionBusyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}</button></div></div>)}
           </div>
         ) : null}
       </Section>
 
-      <Section styles={styles} title="What Stands Out" right={<button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button>}>
+      <Section styles={styles} title="What Stands Out" right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}><button type="button" style={styles.ghostBtn} onClick={refreshMissingBills} disabled={correctionBusyKey === "refresh-missing-bills"}>{correctionBusyKey === "refresh-missing-bills" ? "Checking..." : "Find missing bills"}</button><button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button></div>}>
         <InsightCard styles={styles} label={calendarAiText ? "AI answer" : "Quick read"} headline={calendarAiText ? `Read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming bill pressure" : patternSummary.headline} body={calendarAiText || (calendarMode === "recurring" ? recurringMonthEvents.length ? `Money Hub expects ${recurringMonthEvents.length} future bill/payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you add more months and answer Checks.` : "No future bills found yet. Add more history or answer Checks when they appear." : patternSummary.body)} />
         {calendarAiError ? <p style={styles.errorNote}>{calendarAiError}</p> : null}
       </Section>
@@ -271,4 +321,16 @@ function TransactionRow({ name, meta, amount, styles }) {
 
 function getPlainMatchLabel(confidenceLabel) {
   return confidenceLabel === "high" ? "strong match" : "good match";
+}
+
+function getEventMatchText(event) {
+  return cleanBillName(event?.title || "")
+    .toLowerCase()
+    .replace(/\bbill around\b/g, " ")
+    .replace(/\baround\b/g, " ")
+    .replace(/£?\d+(\.\d{1,2})?/g, " ")
+    .replace(/\bbill\b/g, " ")
+    .replace(/\bsubscription\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
