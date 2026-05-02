@@ -1,17 +1,14 @@
+import { createClient } from "@supabase/supabase-js";
+
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
-  const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "").split(",").map((item) => item.trim()).filter(Boolean);
   const allowOrigin = allowedOrigins.length === 0 || allowedOrigins.includes(origin) ? origin || "*" : allowedOrigins[0];
-
   return {
-  "Access-Control-Allow-Origin": allowOrigin,
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
 }
 
 function cleanReply(text: string) {
@@ -30,502 +27,225 @@ function parseJsonReply(text: string) {
   } catch {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    if (start !== -1 && end !== -1 && end > start) {
-      return JSON.parse(text.slice(start, end + 1));
-    }
+    if (start >= 0 && end > start) return JSON.parse(text.slice(start, end + 1));
     throw new Error("Could not parse AI JSON response.");
   }
+}
+
+async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(JSON.stringify(data));
+  return data;
+}
+
+async function getYahooPrice(symbol: string) {
+  const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`);
+  if (!response.ok) throw new Error(`Could not fetch market price for ${symbol}`);
+  const data = await response.json();
+  const result = data?.chart?.result?.[0];
+  const meta = result?.meta || {};
+  const price = meta.regularMarketPrice ?? meta.previousClose ?? result?.indicators?.quote?.[0]?.close?.find((value: number | null) => value != null);
+  if (price == null) throw new Error(`No price returned for ${symbol}`);
+  return { price: Number(price), currency: meta.currency || "USD", symbol: meta.symbol || symbol, source: "Yahoo Finance" };
 }
 
 function isImageUrl(url: string) {
   return /\.(png|jpg|jpeg|webp|gif)(\?|$)/i.test(url || "");
 }
 
-function isCompactLookup(message: string) {
-  const text = String(message || "").toLowerCase();
-  const asksForDetail = /\b(break ?down|detail|detailed|explain|why|analysis|analyse|analyze|plan|review|full|list all|every|step|compare)\b/.test(text);
-  const factualLookup = /\b(how much|total|totals|who sent|sent me|been sent|received|paid me|what did i spend|spent on|paid to|income from|sum|add up)\b/.test(text);
-  return factualLookup && !asksForDetail;
-}
-
-function getCoachMaxOutputTokens(message: string) {
-  return isCompactLookup(message) ? 140 : 520;
-}
-
-function getCoachLengthInstruction(message: string) {
-  if (!isCompactLookup(message)) {
-    return "This is not a compact lookup unless the user's wording is purely factual. Answer naturally, but stay concise.";
-  }
-
-  return [
-    "COMPACT LOOKUP MODE IS ON.",
-    "Return at most 2 short lines.",
-    "First line must answer the exact number or result, starting with Total: when suitable.",
-    "Second line may contain one short caveat or one short follow-up offer.",
-    "Do not give paragraphs, sender-by-sender explanations, or method notes unless the user asked for a breakdown.",
-  ].join("\n");
-}
-
-function enforceCompactReply(reply: string, message: string) {
-  const cleaned = cleanReply(reply);
-
-  if (!isCompactLookup(message) || cleaned.length <= 360) {
-    return cleaned;
-  }
-
-  const paragraphs = cleaned
-    .split(/\n+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  const firstUseful = paragraphs.find((item) => /£|total|sent|received|paid|spent/i.test(item)) || paragraphs[0] || cleaned;
-  const compact = firstUseful.length > 240 ? `${firstUseful.slice(0, 237).trim()}...` : firstUseful;
-  const hasFollowUp = /want me|shall i|do you want/i.test(compact);
-
-  return hasFollowUp ? compact : `${compact}\nWant me to break that down?`;
-}
-
-async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(JSON.stringify(data));
-  }
-
-  return data;
-}
-
-async function getYahooPrice(symbol: string) {
-  const response = await fetch(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`
-  );
-
-  if (!response.ok) {
-    throw new Error(`Could not fetch market price for ${symbol}`);
-  }
-
-  const data = await response.json();
-  const result = data?.chart?.result?.[0];
-  const meta = result?.meta || {};
-  const price =
-    meta.regularMarketPrice ??
-    meta.previousClose ??
-    result?.indicators?.quote?.[0]?.close?.find((value: number | null) => value != null);
-
-  if (price == null) {
-    throw new Error(`No price returned for ${symbol}`);
-  }
-
-  return {
-    price: Number(price),
-    currency: meta.currency || "USD",
-    symbol: meta.symbol || symbol,
-    source: "Yahoo Finance",
-  };
-}
-
 function buildDocumentExtractionInput(systemPrompt: string, message: string, context: any) {
-  const textParts = [
-    { type: "input_text", text: `${systemPrompt}
-
-User note:
-${message || "No extra note."}` },
-  ] as Array<Record<string, string>>;
-
+  const textParts = [{ type: "input_text", text: `${systemPrompt}\n\nUser note:\n${message || "No extra note."}` }] as Array<Record<string, string>>;
   if (context?.document_data_url && String(context.document_data_url).startsWith("data:image/")) {
     textParts.push({ type: "input_image", image_url: context.document_data_url });
   } else if (context?.document_url && isImageUrl(context.document_url)) {
     textParts.push({ type: "input_image", image_url: context.document_url });
   } else if (context?.document_name) {
-    textParts.push({
-      type: "input_text",
-      text: `Document name: ${context.document_name}. If this is not an image, extract only what can be inferred and leave the rest null.`,
-    });
+    textParts.push({ type: "input_text", text: `Document name: ${context.document_name}. If this is not an image, extract only what can be inferred and leave the rest null.` });
   }
-
   return [{ role: "user", content: textParts }];
 }
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: buildCorsHeaders(req) });
+function roundMoney(value: number) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanLabel(value: unknown, fallback = "Transaction") {
+  const cleaned = String(value || fallback).replace(/\s+/g, " ").trim();
+  return cleaned.split(" ").slice(0, 5).join(" ") || fallback;
+}
+
+function isInternalTransfer(transaction: any) {
+  return Boolean(transaction?.is_internal_transfer || /\b(internal transfer|transfer between|savings transfer)\b/i.test(String(transaction?.description || "")));
+}
+
+function toCoachTransaction(transaction: any) {
+  const amount = Number(transaction.amount || 0);
+  return {
+    date: transaction.transaction_date || "",
+    description: transaction.description || "",
+    merchant: cleanLabel(transaction.merchant || transaction.description),
+    amount,
+    direction: amount > 0 ? "in" : amount < 0 ? "out" : "zero",
+    category: transaction.category || (amount > 0 ? "Income" : "Spending"),
+    account: transaction.accounts?.name || "",
+    is_bill: Boolean(transaction.is_bill),
+    is_subscription: Boolean(transaction.is_subscription),
+    is_internal_transfer: isInternalTransfer(transaction),
+  };
+}
+
+function getTotals(transactions: any[]) {
+  const real = transactions.filter((transaction) => !isInternalTransfer(transaction));
+  const income = real.filter((transaction) => Number(transaction.amount) > 0).reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const spending = real.filter((transaction) => Number(transaction.amount) < 0).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  const bills = real.filter((transaction) => transaction.is_bill || transaction.is_subscription).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  return { income: roundMoney(income), spending: roundMoney(spending), bills: roundMoney(bills), net: roundMoney(income - spending) };
+}
+
+function groupTransactions(transactions: any[], labelFor: (transaction: any) => string, limit: number) {
+  const groups = new Map<string, any>();
+  for (const transaction of transactions) {
+    const label = labelFor(transaction) || "Unknown";
+    const key = normalizeText(label) || "unknown";
+    const amount = Number(transaction.amount || 0);
+    if (!groups.has(key)) groups.set(key, { label, count: 0, total: 0, money_in: 0, money_out: 0, example: transaction.description || "" });
+    const group = groups.get(key);
+    group.count += 1;
+    group.total += Math.abs(amount);
+    if (amount > 0) group.money_in += amount;
+    if (amount < 0) group.money_out += Math.abs(amount);
   }
+  return [...groups.values()].map((group) => ({ ...group, total: roundMoney(group.total), money_in: roundMoney(group.money_in), money_out: roundMoney(group.money_out) })).sort((a, b) => b.total - a.total).slice(0, limit);
+}
+
+function buildQueryFocus(transactions: any[], message: string) {
+  const stopWords = new Set(["about", "all", "and", "from", "have", "how", "money", "much", "paid", "payment", "received", "sent", "send", "the", "this", "to", "total", "what", "when", "with"]);
+  const terms = [...new Set(normalizeText(message).split(" "))].filter((term) => term.length >= 3 && !stopWords.has(term)).slice(0, 8);
+  const matches = terms.length ? transactions.filter((transaction) => terms.some((term) => normalizeText([transaction.description, transaction.merchant, transaction.category, transaction.accounts?.name].join(" ")).includes(term))) : [];
+  const moneyIn = matches.filter((transaction) => Number(transaction.amount) > 0).reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const moneyOut = matches.filter((transaction) => Number(transaction.amount) < 0).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  return { original_query: message, search_terms: terms, direct_match_count: matches.length, direct_money_in: roundMoney(moneyIn), direct_money_out: roundMoney(moneyOut), direct_net: roundMoney(moneyIn - moneyOut), grouped_matches: groupTransactions(matches, (transaction) => cleanLabel(transaction.description), 20), direct_matches: matches.slice(0, 120).map(toCoachTransaction) };
+}
+
+async function selectUserRows(adminClient: any, table: string, userId: string, columns = "*", limit = 200) {
+  const { data, error } = await adminClient.from(table).select(columns).eq("user_id", userId).limit(limit);
+  if (error) return [];
+  return data || [];
+}
+
+async function buildServerCoachContext(req: Request, message: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) throw new Error("AI data service is not configured.");
+
+  const authHeader = req.headers.get("Authorization") || "";
+  const userClient = createClient(supabaseUrl, serviceKey, { global: { headers: { Authorization: authHeader } } });
+  const adminClient = createClient(supabaseUrl, serviceKey);
+  const { data: userData, error: userError } = await userClient.auth.getUser();
+  if (userError || !userData?.user?.id) throw new Error("Not signed in.");
+  const userId = userData.user.id;
+
+  const [{ data: transactions }, aiMessages, debts, investments, goals, snapshots] = await Promise.all([
+    adminClient.from("transactions").select("id, transaction_date, description, merchant, amount, direction, category, is_bill, is_subscription, is_internal_transfer, is_income, accounts(name, institution)").eq("user_id", userId).order("transaction_date", { ascending: false }),
+    selectUserRows(adminClient, "ai_messages", userId, "role, content, created_at", 8),
+    selectUserRows(adminClient, "debts", userId, "*", 20),
+    selectUserRows(adminClient, "investments", userId, "*", 20),
+    selectUserRows(adminClient, "money_goals", userId, "*", 20),
+    selectUserRows(adminClient, "money_understanding_snapshots", userId, "summary, bill_streams, checks, ai_context, interpreted_at, latest_transaction_date", 3),
+  ]);
+
+  const rows = transactions || [];
+  const realRows = rows.filter((transaction: any) => !isInternalTransfer(transaction));
+  const spending = realRows.filter((transaction: any) => Number(transaction.amount) < 0);
+  const income = realRows.filter((transaction: any) => Number(transaction.amount) > 0);
+  const dates = rows.map((transaction: any) => String(transaction.transaction_date || "")).filter(Boolean).sort();
+  const totals = getTotals(rows);
+  const snapshot = snapshots[0] || null;
+
+  return {
+    server_built: true,
+    totals: { ...totals, basis: "server_calculated_from_authenticated_user_rows" },
+    transaction_count: rows.length,
+    recent_transactions: rows.slice(0, 30).map(toCoachTransaction),
+    searchable_transactions: rows.slice(0, 350).map(toCoachTransaction),
+    searchable_transaction_count: Math.min(rows.length, 350),
+    searchable_transaction_note: rows.length > 350 ? `Most recent 350 transactions are included individually. Summaries use all ${rows.length} transactions.` : `All ${rows.length} transactions are included individually.`,
+    query_focus: buildQueryFocus(rows, message),
+    statement_intelligence: {
+      date_range: { start: dates[0] || "", end: dates.at(-1) || "", total_transactions: rows.length },
+      totals,
+      category_totals: groupTransactions(spending, (transaction) => transaction.category || "Spending", 20),
+      merchant_totals: groupTransactions(spending, (transaction) => cleanLabel(transaction.merchant || transaction.description), 30),
+      income_streams: groupTransactions(income, (transaction) => cleanLabel(transaction.merchant || transaction.description || "Income"), 20),
+    },
+    debts: debts.slice(0, 6),
+    investments: investments.slice(0, 6),
+    goals: goals.slice(0, 6),
+    money_understanding: snapshot?.ai_context || {},
+    bills_found: snapshot?.bill_streams || [],
+    checks_waiting: snapshot?.checks || [],
+    data_freshness: { latest_transaction_date: dates.at(-1) || null, latest_ai_interpretation: snapshot?.interpreted_at || null, latest_ai_transaction_date: snapshot?.latest_transaction_date || null },
+    recent_messages: aiMessages.slice(-6).map((msg: any) => ({ role: msg.role, content: msg.content })),
+    safety_note: "Context was rebuilt inside the Edge Function from rows owned by the authenticated Supabase user. Client-supplied financial context is ignored for coach mode.",
+  };
+}
+
+function buildCoachSystemPrompt(message: string) {
+  const compact = /\b(how much|total|totals|who sent|sent me|received|paid me|spent on|paid to|income from|sum|add up)\b/i.test(message);
+  return `You are Money Hub AI. Give concise, practical personal finance guidance using only the supplied server-built context. Never invent money figures. Distinguish historical statement flow from current cash. Use GBP. Plain text only, no markdown. ${compact ? "For factual lookups, answer in at most two short lines and put the number first." : "For advice, answer naturally but keep it short."}`;
+}
+
+function buildExtractionPrompt(kind: "debt" | "investment") {
+  if (kind === "debt") return `Extract debt setup information. Return JSON only with: name, lender, starting_balance, current_balance, minimum_payment, due_day, interest_rate, notes. Use null when unknown. Do not invent precise numbers.`;
+  return `Extract investment setup information. Return JSON only with: name, platform, asset_type, current_value, monthly_contribution, risk_level, ticker_symbol, units_owned, total_contributed, cost_basis, notes. Use null when unknown. Do not invent precise numbers.`;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: buildCorsHeaders(req) });
   const corsHeaders = buildCorsHeaders(req);
 
   try {
-    const { mode = "coach", message, context } = await req.json();
+    const { mode = "coach", message, context = {} } = await req.json();
     const apiKey = Deno.env.get("OPENAI_API_KEY");
-
-    if (!apiKey) {
-          return new Response(JSON.stringify({ error: "AI service is not configured." }), {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      });
-    }
-
-    const recentMessages = Array.isArray(context?.recent_messages)
-      ? context.recent_messages.slice(-8)
-      : [];
+    if (!apiKey) return new Response(JSON.stringify({ error: "AI service is not configured." }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     if (mode === "market_price") {
       const assetType = String(context?.asset_type || "").toLowerCase();
       const rawSymbol = String(context?.ticker_symbol || message || "").trim();
-      if (!rawSymbol) {
-        throw new Error("Missing ticker symbol.");
-      }
-
-      const symbol = assetType === "crypto" && !rawSymbol.includes("-")
-        ? `${rawSymbol.toUpperCase()}-USD`
-        : rawSymbol;
+      if (!rawSymbol) throw new Error("Missing ticker symbol.");
+      const symbol = assetType === "crypto" && !rawSymbol.includes("-") ? `${rawSymbol.toUpperCase()}-USD` : rawSymbol;
       const quote = await getYahooPrice(symbol);
-
-      return new Response(
-        JSON.stringify({
-          ...quote,
-          mode,
-        }),
-        {
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      return new Response(JSON.stringify({ ...quote, mode }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    let systemPrompt = "";
-    let userPrompt = "";
-    let responseBody: Record<string, unknown> | null = null;
-
-    if (mode === "extract_debt" || mode === "extract_debt_document") {
-      systemPrompt = `
-You extract debt setup information for a money app.
-
-Rules:
-- Return JSON only.
-- No markdown.
-- No explanation outside JSON.
-- If a field is unknown, use null.
-- If there is not enough to infer a clean debt name, still try a sensible short label.
-- Use GBP assumptions.
-- Do not invent precise numbers if none were given.
-- Keep notes short.
-
-Return exactly this shape:
-{
-  "name": string | null,
-  "lender": string | null,
-  "starting_balance": number | null,
-  "current_balance": number | null,
-  "minimum_payment": number | null,
-  "due_day": number | null,
-  "interest_rate": number | null,
-  "notes": string | null
-}
-`;
-
-      if (mode === "extract_debt_document") {
-        responseBody = {
-          model: "gpt-5.1",
-          input: buildDocumentExtractionInput(systemPrompt, message, context),
-        };
-      } else {
-        userPrompt = `
-User debt description:
-${message}
-
-Possible statement-based debt signals:
-${JSON.stringify(context?.debt_signals || [], null, 2)}
-`;
-      }
-    } else if (mode === "extract_investment" || mode === "extract_investment_document") {
-      systemPrompt = `
-You extract investment setup information for a money app.
-
-Rules:
-- Return JSON only.
-- No markdown.
-- No explanation outside JSON.
-- If a field is unknown, use null.
-- Use GBP assumptions where money values are not labelled.
-- Do not invent precise numbers if none were given.
-- Keep notes short.
-- Infer a sensible risk_level when possible from the wording, platform, or asset type.
-- risk_level should be one of:
-  "low", "medium", "high", or null
-- asset_type should be one of:
-  "general", "isa", "pension", "crypto", "shares", "funds"
-
-Return exactly this shape:
-{
-  "name": string | null,
-  "platform": string | null,
-  "asset_type": string | null,
-  "current_value": number | null,
-  "monthly_contribution": number | null,
-  "risk_level": "low" | "medium" | "high" | null,
-  "ticker_symbol": string | null,
-  "units_owned": number | null,
-  "total_contributed": number | null,
-  "cost_basis": number | null,
-  "notes": string | null
-}
-`;
-
-      if (mode === "extract_investment_document") {
-        responseBody = {
-          model: "gpt-5.1",
-          input: buildDocumentExtractionInput(systemPrompt, message, context),
-        };
-      } else {
-        userPrompt = `
-User investment description:
-${message}
-
-Possible statement-based investment signals:
-${JSON.stringify(context?.investment_signals || [], null, 2)}
-`;
-      }
-    } else {
-      systemPrompt = `
-You are Money Hub AI.
-
-Core job:
-Help people who want to be better with money, but are inconsistent, overwhelmed, or not very organised.
-This app is supposed to reduce effort, not create more admin.
-
-Voice:
-- sharp
-- calm
-- concise
-- practical
-- honest
-- intelligent
-- direct, but not rude
-- lightly like a good money auditor
-- never preachy
-- never fluffy
-- never patronising
-- never hypey
-
-Output rules:
-- Plain text only.
-- Do not use markdown.
-- Do not use bold, asterisks, bullet symbols like * or -, or code formatting.
-- Keep replies mobile-friendly.
-- Answer the exact question first.
-- Default length is very short: usually 1 to 4 sentences.
-- Do not use the Verdict / The read / The risk / Next move format for simple questions.
-- Only use labelled sections when the user asks for advice, a plan, a review, a breakdown, or a decision.
-- Do not explain how you calculated something unless the user asks, or unless the answer would otherwise be unclear.
-- End with at most one useful follow-up offer when it helps. Keep it short, for example: "Want me to break that down by person?"
-- Do not add a follow-up offer if the answer is already complete and obvious.
-
-Maths and trust rules:
-- The maths is the product. It must be treated as safety-critical.
-- Never improvise totals, surplus, rent, bills, pass-throughs, reimbursements, debt balances, investment values, or safe-to-spend numbers.
-- Use deterministic app-calculated fields as the source of truth. Prefer statement_intelligence.totals and statement_intelligence.pass_through_analysis over your own arithmetic from examples or snippets.
-- If pass_through_analysis is present, use its standard_view and known_pass_through_view exactly. Do not recalculate those numbers in prose.
-- Do not say the user is "ahead", "up", "in surplus", or "fine" unless that exact claim is supported by an app-calculated net/surplus field.
-- Always distinguish historical net over a statement period from current cash available today. A historical surplus does not mean the user currently has that money.
-- If the user says their accounts are at £0, do not argue with them using historical net. Explain that the historical flow and current balance are different, and that the surplus may already have been spent, moved, or be in accounts not included.
-- If current balances are not supplied in context, say you cannot verify current cash exactly from statements alone.
-- If a previous answer gave a contradictory number, acknowledge it and switch back to the deterministic app-calculated figures. Do not defend the old number.
-- For pass-throughs like Proovia, exclude both sides only through the app's pass_through_analysis. Do not manually guess matching income/outgoings.
-- Possible pass-through candidates are not confirmed exclusions. Tell the user they need confirming before being removed from personal spending.
-- Rent, bills and subscriptions must stay included in real spending unless the app context explicitly says otherwise.
-
-Lifestyle audit rules:
-- If the user asks why they are broke, where their money is going, why they cannot save, or what lifestyle changes would help, act like a smart but fair money auditor.
-- Find the highest controllable leaks in the supplied data before giving generic advice.
-- Look for patterns such as food delivery, takeaways, McDonald's, Uber Eats, Deliveroo, Just Eat, restaurants, coffee shops, taxis, Uber/Bolt, petrol, parking, shopping, subscriptions, gambling, alcohol, convenience stores, and repeated small card payments.
-- Be willing to say the obvious: if the data shows lots of takeaway/fast food/taxis, tell them that is probably why money feels tight.
-- Keep it human: do not shame them, but do not soften the truth so much that it becomes useless.
-- Suggest realistic swaps, for example batch cook, supermarket meal deals, packed lunch, walk, cycle, public transport, combine journeys, or consider a cheap moped/scooter only if transport spend is clearly a major leak and it fits the context.
-- Do not tell them to stop everything. Give one or two high-impact lifestyle changes first.
-- Use their goals and bills as the reason for the change where possible.
-- Good style: "The boring answer is: food delivery and taxis are eating your spare money. Cut those first, not tiny £2 things."
-- Bad style: vague advice like "make a budget" when the data clearly shows the leak.
-
-Hard length override:
-${getCoachLengthInstruction(message)}
-
-Answer sizing rules:
-- If the user asks "how much", "total", "who sent", "what did I spend", or another factual lookup, give the number first and keep it compact.
-- For total questions, use this shape when possible: "Total: £X." Then add one short sentence of context if useful.
-- For grouped totals, show only the top few groups unless the user asks for all of them.
-- If the user asks for a breakdown, comparison, plan, or decision, give more structure, but still keep it concise.
-- If the user asks something broad like "how am I doing?", use short sections: Quick read, Why, Next move.
-- If the user asks a yes/no spending question, answer yes/no/close first, then the reason.
-- If the user asks "why am I broke?" or similar, use this short shape: "Main reason:", "What to change:", "First move:".
-
-Examples:
-User: "How much total have I been sent by friends and family?"
-Good answer: "Total: £1,240 from transactions that look like friends or family payments. Want me to break that down by person?"
-Bad answer: four paragraphs explaining every sender unless asked.
-
-User: "Who sent me the most?"
-Good answer: "Sarah sent the most: £420. Next were Ben at £180 and Mum at £150. Want the full list?"
-
-User: "Can I afford a £60 meal tonight?"
-Good answer: "Probably, but only if no extra bills land before payday. Your safer move is to cap tonight at about £35 and keep the rest protected."
-
-User: "Why am I so broke?"
-Good answer: "Main reason: your flexible money is leaking into takeaway/fast food and short trips, not one big disaster. What to change: stop delivery food first, switch to supermarket food/packed lunches, and walk/cycle/public transport for short journeys. First move: set a 7-day no-delivery rule and keep that money for bills or your goal."
-
-User: "How can I be ahead if I have £0?"
-Good answer: "You may not be ahead today. A statement-period net is historical flow, not current cash. If your current balance is £0, the right read is: any surplus from the period has already been spent, moved, or is outside the accounts I can see."
-Bad answer: claiming the user is still £2.4k ahead without a current balance calculation.
-
-Money rules:
-- Use only the supplied financial context.
-- Never invent numbers.
-- Always include the £ symbol when referring to money.
-- Assume the user's currency is GBP.
-- Prefer practical actions over abstract advice.
-- Give easy, realistic next moves.
-
-Statement intelligence rules:
-- The client may provide statement_intelligence, searchable_transactions, and monthly_breakdown_all.
-- statement_intelligence summaries are built from the full uploaded statement history.
-- searchable_transactions is the transaction-level ledger the model can inspect directly. If it is capped, use the supplied note and say when more source rows may be needed.
-- query_focus is built from the user's exact message against the full uploaded statement history. For questions like "how much did I send Ben?", use query_focus first because it can include older/smaller direct matches that are not in recent_transactions.
-- When the user asks about a merchant, category, income stream, subscription, debt, investment, account, transfer, or pattern, first use the relevant all-history summary, then inspect searchable_transactions for examples.
-- For people/payee questions, use query_focus.direct_matches and query_focus.grouped_matches for the total. If query_focus has only partial direct matches, say that the app can only count transactions where the statement text contains that name/reference; do not pretend unlabelled transfers belong to that person.
-- Distinguish real spending/income from internal transfers whenever that flag is provided.
-- Do not treat broker deposits as current investment value. They are cash flows unless an investment record or document provides a value.
-`;
-
-      userPrompt = `
-User message:
-${message}
-
-Response mode:
-${isCompactLookup(message) ? "compact_lookup" : "normal_coach"}
-
-Financial context:
-${JSON.stringify(
-  {
-    totals: context?.totals || {},
-    transaction_count: context?.transaction_count || 0,
-    recent_transactions: context?.recent_transactions || [],
-    searchable_transaction_note: context?.searchable_transaction_note || null,
-    searchable_transaction_count: context?.searchable_transaction_count || 0,
-    searchable_transactions: context?.searchable_transactions || [],
-    query_focus: context?.query_focus || null,
-    statement_intelligence: context?.statement_intelligence || null,
-    top_categories: context?.top_categories || [],
-    subscription_summary: context?.subscription_summary || null,
-    debts: context?.debts || [],
-    investments: context?.investments || [],
-    debt_signals: context?.debt_signals || [],
-    investment_signals: context?.investment_signals || [],
-    calendar_mode: context?.calendar_mode || null,
-    timeframe: context?.timeframe || null,
-    timeframe_label: context?.timeframe_label || null,
-    visible_window_label: context?.visible_window_label || null,
-    calendar_summary: context?.calendar_summary || null,
-    data_freshness: context?.data_freshness || null,
-    monthly_breakdown: context?.monthly_breakdown || [],
-    monthly_breakdown_all: context?.monthly_breakdown_all || [],
-    visible_transactions: context?.visible_transactions || [],
-    visible_transaction_count: context?.visible_transaction_count || 0,
-    selected_day: context?.selected_day || null,
-    recent_messages: recentMessages,
-  },
-  null,
-  2
-)}
-`;
+    if (mode === "extract_debt" || mode === "extract_investment" || mode === "extract_debt_document" || mode === "extract_investment_document") {
+      const kind = mode === "extract_debt" || mode === "extract_debt_document" ? "debt" : "investment";
+      const systemPrompt = buildExtractionPrompt(kind);
+      const input = mode.endsWith("_document")
+        ? buildDocumentExtractionInput(systemPrompt, String(message || ""), context)
+        : [{ role: "user", content: `${systemPrompt}\n\nUser description:\n${message}\n\nSignals:\n${JSON.stringify(kind === "debt" ? context?.debt_signals || [] : context?.investment_signals || [], null, 2)}` }];
+      const data = await callResponsesApi(apiKey, { model: "gpt-5.1", input });
+      const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "{}";
+      return new Response(JSON.stringify({ extracted: parseJsonReply(rawReply), message: mode.endsWith("_document") ? "AI filled the form from the uploaded document. Check it before saving." : "AI filled the form. Check it before saving.", mode }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    if (!responseBody) {
-      responseBody = {
-        model: "gpt-5.1",
-        max_output_tokens: getCoachMaxOutputTokens(message),
-        input: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content: userPrompt,
-          },
-        ],
-      };
-    }
-
-    const data = await callResponsesApi(apiKey, responseBody);
-    const rawReply =
-      data.output_text ||
-      data.output?.[0]?.content?.[0]?.text ||
-      (mode === "coach" ? "How can I help?" : "{}");
-
-    if (
-      mode === "extract_debt" ||
-      mode === "extract_investment" ||
-      mode === "extract_debt_document" ||
-      mode === "extract_investment_document"
-    ) {
-      const extracted = parseJsonReply(rawReply);
-
-      return new Response(
-        JSON.stringify({
-          extracted,
-          message:
-            mode === "extract_debt_document" || mode === "extract_investment_document"
-              ? "AI filled the form from the uploaded document. Check it before saving."
-              : "AI filled the form. Check it before saving.",
-          mode,
-        }),
-        {
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-
-    const reply = enforceCompactReply(rawReply, message);
-
-    return new Response(
-      JSON.stringify({
-        reply,
-        model: "gpt-5.1",
-        mode: "premium",
-      }),
-      {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (error) {
-    return new Response(
-      JSON.stringify({
-        error: "AI request could not be completed right now." }),
-      {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const safeMessage = String(message || "").trim();
+    if (!safeMessage) return new Response(JSON.stringify({ error: "Message is required." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const serverContext = await buildServerCoachContext(req, safeMessage);
+    const compact = /\b(how much|total|totals|who sent|sent me|received|paid me|spent on|paid to|income from|sum|add up)\b/i.test(safeMessage);
+    const data = await callResponsesApi(apiKey, { model: "gpt-5.1", max_output_tokens: compact ? 140 : 520, input: [{ role: "system", content: buildCoachSystemPrompt(safeMessage) }, { role: "user", content: `User message:\n${safeMessage}\n\nFinancial context rebuilt server-side from authenticated Supabase data:\n${JSON.stringify(serverContext, null, 2)}` }] });
+    const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "How can I help?";
+    return new Response(JSON.stringify({ reply: cleanReply(rawReply), model: "gpt-5.1", mode: "premium", context_source: "server" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (_error) {
+    return new Response(JSON.stringify({ error: "AI request could not be completed right now." }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
