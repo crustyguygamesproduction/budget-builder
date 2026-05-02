@@ -114,6 +114,7 @@ export default function App() {
   const [subscriptionProfile, setSubscriptionProfile] = useState(null);
   const [bankConnections, setBankConnections] = useState([]);
   const [transactionRules, setTransactionRules] = useState([]);
+  const [moneySnapshot, setMoneySnapshot] = useState(null);
   const [viewerMode, setViewerMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("moneyhub-viewer-preview") === "true";
@@ -146,7 +147,6 @@ export default function App() {
 
   useEffect(() => {
     if (session) loadAllData();
-    // loadAllData intentionally fans out to the current page loaders whenever auth changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
@@ -180,7 +180,38 @@ export default function App() {
       loadSubscriptionProfile(),
       loadBankConnections(),
       loadTransactionRules(),
+      loadMoneySnapshot(),
     ]);
+  }
+
+  async function refreshMoneyOrganiser(options = {}) {
+    try {
+      const { data, error } = await supabase.functions.invoke("money-organiser", {
+        body: { force: Boolean(options.force) },
+      });
+      if (error) throw error;
+      if (data?.snapshot) setMoneySnapshot(data.snapshot);
+      return data?.snapshot || null;
+    } catch (error) {
+      console.warn("Money organiser could not run", error);
+      return null;
+    }
+  }
+
+  async function loadMoneySnapshot() {
+    const { data, error } = await supabase
+      .from("money_understanding_snapshots")
+      .select("*")
+      .eq("model_version", "money-organiser-ai-v1")
+      .order("interpreted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      setMoneySnapshot(null);
+      return;
+    }
+    setMoneySnapshot(data || null);
   }
 
   async function loadTransactions() {
@@ -202,144 +233,72 @@ export default function App() {
   }
 
   async function loadGoals() {
-    const { data, error } = await supabase
-      .from("money_goals")
-      .select("*")
-      .order("priority", { ascending: true });
-
+    const { data, error } = await supabase.from("money_goals").select("*").order("priority", { ascending: true });
     if (!error) setGoals(data || []);
   }
 
   async function loadReceipts() {
-    const { data, error } = await supabase
-      .from("receipts")
-      .select("*")
-      .order("created_at", { ascending: false });
-
+    const { data, error } = await supabase.from("receipts").select("*").order("created_at", { ascending: false });
     if (!error) setReceipts(data || []);
   }
 
   async function loadAiMessages() {
-    const { data, error } = await supabase
-      .from("ai_messages")
-      .select("*")
-      .order("created_at", { ascending: true });
-
+    const { data, error } = await supabase.from("ai_messages").select("*").order("created_at", { ascending: true });
     if (!error) setAiMessages(data || []);
   }
 
   async function loadDebts() {
-    const { data, error } = await supabase
-      .from("debts")
-      .select("*")
-      .order("created_at", { ascending: false });
-
+    const { data, error } = await supabase.from("debts").select("*").order("created_at", { ascending: false });
     if (!error) setDebts(data || []);
   }
 
   async function loadInvestments() {
-    const { data, error } = await supabase
-      .from("investments")
-      .select("*")
-      .order("created_at", { ascending: false });
-
+    const { data, error } = await supabase.from("investments").select("*").order("created_at", { ascending: false });
     if (!error) setInvestments(data || []);
   }
 
   async function loadStatementImports() {
-    const { data, error } = await supabase
-      .from("statement_imports")
-      .select("*")
-      .order("created_at", { ascending: false });
-
+    const { data, error } = await supabase.from("statement_imports").select("*").order("created_at", { ascending: false });
     if (!error) setStatementImports(data || []);
   }
 
   async function loadViewerAccess() {
-    const { data, error } = await supabase
-      .from("viewer_access")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setViewerAccess([]);
-      return;
-    }
-
-    setViewerAccess(data || []);
+    const { data, error } = await supabase.from("viewer_access").select("*").order("created_at", { ascending: false });
+    setViewerAccess(error ? [] : data || []);
   }
 
   async function loadFinancialDocuments() {
-    const { data, error } = await supabase
-      .from("financial_documents")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setFinancialDocuments([]);
-      return;
-    }
-
-    setFinancialDocuments(data || []);
+    const { data, error } = await supabase.from("financial_documents").select("*").order("created_at", { ascending: false });
+    setFinancialDocuments(error ? [] : data || []);
   }
 
   async function loadSubscriptionProfile() {
-    const { data, error } = await supabase
-      .from("subscription_profiles")
-      .select("*")
-      .maybeSingle();
-
-    if (error) {
-      setSubscriptionProfile(null);
-      return;
-    }
-
-    setSubscriptionProfile(data || null);
+    const { data, error } = await supabase.from("subscription_profiles").select("*").maybeSingle();
+    setSubscriptionProfile(error ? null : data || null);
   }
 
   async function loadBankConnections() {
-    const { data, error } = await supabase
-      .from("bank_connections")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setBankConnections([]);
-      return;
-    }
-
-    setBankConnections(data || []);
+    const { data, error } = await supabase.from("bank_connections").select("*").order("created_at", { ascending: false });
+    setBankConnections(error ? [] : data || []);
   }
 
   async function loadTransactionRules() {
-    const { data, error } = await supabase
-      .from("transaction_rules")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setTransactionRules([]);
-      return;
-    }
-
-    setTransactionRules(data || []);
+    const { data, error } = await supabase.from("transaction_rules").select("*").order("created_at", { ascending: false });
+    setTransactionRules(error ? [] : data || []);
   }
 
   function openCoachWithPrompt(prompt, options = {}) {
     if (typeof window !== "undefined") {
       localStorage.setItem(COACH_DRAFT_KEY, prompt);
-      if (options.autoSend) {
-        localStorage.setItem(COACH_AUTOSEND_KEY, "true");
-      } else {
-        localStorage.removeItem(COACH_AUTOSEND_KEY);
-      }
+      if (options.autoSend) localStorage.setItem(COACH_AUTOSEND_KEY, "true");
+      else localStorage.removeItem(COACH_AUTOSEND_KEY);
     }
     setPage("coach");
   }
 
   const moneyUnderstanding = useMemo(
-    () => buildMoneyUnderstanding({ transactions, transactionRules }),
-    [transactions, transactionRules]
+    () => buildMoneyUnderstanding({ transactions, transactionRules, snapshot: moneySnapshot }),
+    [transactions, transactionRules, moneySnapshot]
   );
   const smartTransactions = moneyUnderstanding.transactions;
 
@@ -352,271 +311,31 @@ export default function App() {
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
   if (!session) {
     return page === "privacy" ? (
-      <div style={styles.app}>
-        <main style={getMainStyle(screenWidth, "privacy")}>
-          <Suspense fallback={<div style={styles.loading}>Opening Privacy...</div>}>
-            <PrivacyPage onBack={() => setPage("today")} styles={styles} />
-          </Suspense>
-        </main>
-      </div>
-    ) : (
-      <AuthPage screenWidth={screenWidth} styles={styles} onShowPrivacy={() => setPage("privacy")} />
-    );
+      <div style={styles.app}><main style={getMainStyle(screenWidth, "privacy")}><Suspense fallback={<div style={styles.loading}>Opening Privacy...</div>}><PrivacyPage onBack={() => setPage("today")} styles={styles} /></Suspense></main></div>
+    ) : <AuthPage screenWidth={screenWidth} styles={styles} onShowPrivacy={() => setPage("privacy")} />;
   }
 
   return (
     <div style={styles.app}>
-      <TopBar
-        email={session.user.email}
-        title={PAGE_TITLES[page] || "Money Hub"}
-        page={page}
-        screenWidth={screenWidth}
-        styles={styles}
-      />
-
+      <TopBar email={session.user.email} title={PAGE_TITLES[page] || "Money Hub"} page={page} screenWidth={screenWidth} styles={styles} />
       <main style={getMainStyle(screenWidth, page)}>
         <Suspense fallback={<div style={styles.loading}>Opening {PAGE_TITLES[page] || "Money Hub"}...</div>}>
-        {page === "today" && (
-          <TodayPage
-            transactions={smartTransactions}
-            transactionRules={transactionRules}
-            moneyUnderstanding={moneyUnderstanding}
-            accounts={accounts}
-            goals={goals}
-            debts={debts}
-            investments={investments}
-            debtSignals={debtSignals}
-            investmentSignals={investmentSignals}
-            trendSummary={trendSummary}
-            statementImports={statementImports}
-            subscriptionStatus={subscriptionStatus}
-            bankFeedReadiness={bankFeedReadiness}
-            onGoToCoach={openCoachWithPrompt}
-            onNavigate={setPage}
-            screenWidth={screenWidth}
-            styles={styles}
-            helpers={{
-              buildDailyBrief,
-              buildSubscriptionCoachPrompt,
-              getCashSummary,
-              getCoachPromptIdeas,
-              getDataFreshness,
-              getDebtStatusSummary,
-              getDisplayedMonthSnapshot,
-              getHomeStatusPillStyle,
-              getInvestmentStatusSummary,
-              getMoneyIntelligenceSummary,
-              getRecurringSummary,
-              getStatementCoverageSummary,
-              getSubscriptionSummary,
-              getTopCategories,
-              getTransferSummary,
-              hasMatchingDebt,
-              hasMatchingInvestment,
-            }}
-          />
-        )}
-
-        {page === "upload" && (
-          <UploadPage
-            accounts={accounts}
-            statementImports={statementImports}
-            existingTransactions={smartTransactions}
-            transactionRules={transactionRules}
-            onImportDone={loadAllData}
-            onTransactionRulesChange={loadTransactionRules}
-            onGoToCoach={openCoachWithPrompt}
-            screenWidth={screenWidth}
-            styles={styles}
-            helpers={{
-              enhanceTransactions,
-              getGridStyle,
-              getHistorySummary,
-              getRecurringSummary,
-              getStatusPillStyle,
-              getTransferSummary,
-            }}
-          />
-        )}
-
-        {page === "confidence" && (
-          <ConfidencePage
-            transactions={smartTransactions}
-            transactionRules={transactionRules}
-            moneyUnderstanding={moneyUnderstanding}
-            onTransactionRulesChange={loadTransactionRules}
-            screenWidth={screenWidth}
-            styles={styles}
-          />
-        )}
-
-        {page === "debts" && (
-          <DebtsPage
-            debts={debts}
-            debtSignals={debtSignals}
-            transactions={smartTransactions}
-            documents={financialDocuments.filter((doc) => doc.record_type === "debt")}
-            onChange={loadDebts}
-            onDocumentsChange={loadFinancialDocuments}
-            trendSummary={trendSummary}
-            viewerMode={viewerMode}
-            subscriptionStatus={subscriptionStatus}
-            bankFeedReadiness={bankFeedReadiness}
-            styles={styles}
-            helpers={{
-              buildDebtDedupeKey,
-              buildKeywords,
-              fileToDataUrl,
-              getDebtMatchSummary,
-              getDebtMonthlyStatus,
-              getDebtPortfolioSnapshot,
-              getDebtProgressSummary,
-              getStatusPillStyle,
-              hasMatchingDebt,
-              hasMeaningfulExtraction,
-            }}
-          />
-        )}
-
-        {page === "investments" && (
-          <InvestmentsPage
-            investments={investments}
-            investmentSignals={investmentSignals}
-            transactions={smartTransactions}
-            documents={financialDocuments.filter((doc) => doc.record_type === "investment")}
-            onChange={loadInvestments}
-            onDocumentsChange={loadFinancialDocuments}
-            viewerMode={viewerMode}
-            styles={styles}
-            helpers={{
-              buildInvestmentDedupeKey,
-              buildKeywords,
-              fileToDataUrl,
-              formatInvestmentSignalMeta,
-              formatInvestmentSignalNet,
-              getInvestmentMatchSummary,
-              getInvestmentMonthlyStatus,
-              getInvestmentPerformanceSummary,
-              getInvestmentPortfolioSnapshot,
-              getInvestmentSignalNote,
-              getStatusPillStyle,
-              hasMatchingInvestment,
-              hasMeaningfulExtraction,
-            }}
-          />
-        )}
-
-        {page === "accounts" && (
-          <AccountsPage accounts={accounts} transactions={smartTransactions} styles={styles} />
-        )}
-
-        {page === "calendar" && (
-          <CalendarPage
-            transactions={smartTransactions}
-            moneyUnderstanding={moneyUnderstanding}
-            screenWidth={screenWidth}
-            styles={styles}
-            helpers={{ getDataFreshness }}
-          />
-        )}
-
-        {page === "goals" && (
-          <GoalsPage
-            goals={goals}
-            accounts={accounts}
-            transactions={smartTransactions}
-            transactionRules={transactionRules}
-            onGoToCoach={openCoachWithPrompt}
-            onNavigate={setPage}
-            onChange={loadGoals}
-            onAccountsChange={loadAccounts}
-            onTransactionRulesChange={loadTransactionRules}
-            styles={styles}
-            helpers={{
-              getDataFreshness,
-              getDisplayedMonthSnapshot,
-              getSubscriptionSummary,
-              isInternalTransferLike,
-              isTransactionInMonth,
-              formatCurrency,
-              numberOrNull,
-            }}
-          />
-        )}
-
-        {page === "receipts" && (
-          <ReceiptsPage
-            receipts={receipts}
-            transactions={smartTransactions}
-            onChange={loadReceipts}
-            onGoToCoach={openCoachWithPrompt}
-            styles={styles}
-          />
-        )}
-
-        {page === "coach" && (
-          <CoachPage
-            transactions={smartTransactions}
-            transactionRules={transactionRules}
-            moneyUnderstanding={moneyUnderstanding}
-            goals={goals}
-            debts={debts}
-            investments={investments}
-            debtSignals={debtSignals}
-            investmentSignals={investmentSignals}
-            aiMessages={aiMessages}
-            subscriptionStatus={subscriptionStatus}
-            bankFeedReadiness={bankFeedReadiness}
-            onChange={loadAiMessages}
-            onTransactionRulesChange={loadTransactionRules}
-            screenWidth={screenWidth}
-            viewportHeight={viewportHeight}
-            styles={styles}
-            helpers={{
-              getTopCategories,
-              getSubscriptionSummary,
-              getDataFreshness,
-              getCoachPromptIdeas,
-              getDebtMonthlyStatus,
-              getInvestmentMonthlyStatus,
-              getMonthlyBreakdown,
-              getCalendarPatternSummary,
-              getTransferSummary,
-            }}
-          />
-        )}
-
-        {page === "settings" && (
-          <SettingsPage
-            userId={session.user.id}
-            viewerAccess={viewerAccess}
-            onViewerChange={loadViewerAccess}
-            viewerMode={viewerMode}
-            setViewerMode={setViewerMode}
-            financialDocuments={financialDocuments}
-            subscriptionStatus={subscriptionStatus}
-            bankFeedReadiness={bankFeedReadiness}
-            bankConnections={bankConnections}
-            onShowPrivacy={() => setPage("privacy")}
-            styles={styles}
-          />
-        )}
-        {page === "privacy" && (
-          <PrivacyPage onBack={() => setPage("settings")} styles={styles} />
-        )}
+        {page === "today" && <TodayPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} accounts={accounts} goals={goals} debts={debts} investments={investments} debtSignals={debtSignals} investmentSignals={investmentSignals} trendSummary={trendSummary} statementImports={statementImports} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} screenWidth={screenWidth} styles={styles} helpers={{ buildDailyBrief, buildSubscriptionCoachPrompt, getCashSummary, getCoachPromptIdeas, getDataFreshness, getDebtStatusSummary, getDisplayedMonthSnapshot, getHomeStatusPillStyle, getInvestmentStatusSummary, getMoneyIntelligenceSummary, getRecurringSummary, getStatementCoverageSummary, getSubscriptionSummary, getTopCategories, getTransferSummary, hasMatchingDebt, hasMatchingInvestment }} />}
+        {page === "upload" && <UploadPage accounts={accounts} statementImports={statementImports} existingTransactions={smartTransactions} transactionRules={transactionRules} onImportDone={async () => { await loadAllData(); await refreshMoneyOrganiser({ force: true }); await loadAllData(); }} onTransactionRulesChange={loadTransactionRules} onGoToCoach={openCoachWithPrompt} screenWidth={screenWidth} styles={styles} helpers={{ enhanceTransactions, getGridStyle, getHistorySummary, getRecurringSummary, getStatusPillStyle, getTransferSummary }} />}
+        {page === "confidence" && <ConfidencePage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={loadTransactionRules} screenWidth={screenWidth} styles={styles} />}
+        {page === "debts" && <DebtsPage debts={debts} debtSignals={debtSignals} transactions={smartTransactions} documents={financialDocuments.filter((doc) => doc.record_type === "debt")} onChange={loadDebts} onDocumentsChange={loadFinancialDocuments} trendSummary={trendSummary} viewerMode={viewerMode} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} styles={styles} helpers={{ buildDebtDedupeKey, buildKeywords, fileToDataUrl, getDebtMatchSummary, getDebtMonthlyStatus, getDebtPortfolioSnapshot, getDebtProgressSummary, getStatusPillStyle, hasMatchingDebt, hasMeaningfulExtraction }} />}
+        {page === "investments" && <InvestmentsPage investments={investments} investmentSignals={investmentSignals} transactions={smartTransactions} documents={financialDocuments.filter((doc) => doc.record_type === "investment")} onChange={loadInvestments} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} styles={styles} helpers={{ buildInvestmentDedupeKey, buildKeywords, fileToDataUrl, formatInvestmentSignalMeta, formatInvestmentSignalNet, getInvestmentMatchSummary, getInvestmentMonthlyStatus, getInvestmentPerformanceSummary, getInvestmentPortfolioSnapshot, getInvestmentSignalNote, getStatusPillStyle, hasMatchingInvestment, hasMeaningfulExtraction }} />}
+        {page === "accounts" && <AccountsPage accounts={accounts} transactions={smartTransactions} styles={styles} />}
+        {page === "calendar" && <CalendarPage transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} screenWidth={screenWidth} styles={styles} helpers={{ getDataFreshness }} />}
+        {page === "goals" && <GoalsPage goals={goals} accounts={accounts} transactions={smartTransactions} transactionRules={transactionRules} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} onChange={loadGoals} onAccountsChange={loadAccounts} onTransactionRulesChange={loadTransactionRules} styles={styles} helpers={{ getDataFreshness, getDisplayedMonthSnapshot, getSubscriptionSummary, isInternalTransferLike, isTransactionInMonth, formatCurrency, numberOrNull }} />}
+        {page === "receipts" && <ReceiptsPage receipts={receipts} transactions={smartTransactions} onChange={loadReceipts} onGoToCoach={openCoachWithPrompt} styles={styles} />}
+        {page === "coach" && <CoachPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} goals={goals} debts={debts} investments={investments} debtSignals={debtSignals} investmentSignals={investmentSignals} aiMessages={aiMessages} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onChange={loadAiMessages} onTransactionRulesChange={loadTransactionRules} screenWidth={screenWidth} viewportHeight={viewportHeight} styles={styles} helpers={{ getTopCategories, getSubscriptionSummary, getDataFreshness, getCoachPromptIdeas, getDebtMonthlyStatus, getInvestmentMonthlyStatus, getMonthlyBreakdown, getCalendarPatternSummary, getTransferSummary }} />}
+        {page === "settings" && <SettingsPage userId={session.user.id} viewerAccess={viewerAccess} onViewerChange={loadViewerAccess} viewerMode={viewerMode} setViewerMode={setViewerMode} financialDocuments={financialDocuments} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} bankConnections={bankConnections} onShowPrivacy={() => setPage("privacy")} styles={styles} />}
+        {page === "privacy" && <PrivacyPage onBack={() => setPage("settings")} styles={styles} />}
         </Suspense>
       </main>
-      <Suspense fallback={null}>
-        <OnboardingTutorial
-          setPage={setPage}
-          userId={session.user.id}
-          screenWidth={screenWidth}
-          transactionCount={transactions.length}
-          accountCount={accounts.length}
-        />
-      </Suspense>
+      <Suspense fallback={null}><OnboardingTutorial setPage={setPage} userId={session.user.id} screenWidth={screenWidth} transactionCount={transactions.length} accountCount={accounts.length} /></Suspense>
       <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
     </div>
   );
 }
-
