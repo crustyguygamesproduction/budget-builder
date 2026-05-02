@@ -311,15 +311,14 @@ export default function DebtsPage({
     <>
       <Section styles={styles} title="Debt Tracker">
         <p style={styles.sectionIntro}>
-          This handles AI-detected payment streams, plain-English setup, document extraction,
-          and real monthly progress checks instead of just static debt records.
+          Money Hub looks for loan, finance, card and overdraft payments, then keeps extra repayments behind bills and normal spending.
         </p>
       </Section>
 
       <div style={styles.grid}>
         <MiniCard styles={styles} title="Debts" value={`${debts.length}`} />
-        <MiniCard styles={styles} title="Signals" value={`${unlinkedSignals.length}`} />
-        <MiniCard styles={styles} title="Detected Paid Out" value={formatCurrency(totalDetectedPayments)} />
+        <MiniCard styles={styles} title="Possible debts" value={`${unlinkedSignals.length}`} />
+        <MiniCard styles={styles} title="Paid out" value={formatCurrency(totalDetectedPayments)} />
         <MiniCard styles={styles} title="Trend" value={trendSummary.label} />
       </div>
 
@@ -400,11 +399,10 @@ export default function DebtsPage({
         </button>
       </Section>
 
-      <Section styles={styles} title="AI Detected Debt Streams">
+      <Section styles={styles} title="Debt Payments Money Hub Found">
         {unlinkedSignals.length === 0 ? (
           <p style={styles.emptyText}>
-            No unconfirmed debt signals right now. Either nothing obvious has been
-            detected yet, or you have already converted them into debt records.
+            No possible debt payments need checking right now. If you do have a loan or card, upload more history or add it above.
           </p>
         ) : (
           unlinkedSignals.map((signal) => (

@@ -277,7 +277,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     await onTransactionRulesChange?.();
     await onRefreshMoneyUnderstanding?.();
 
-    setCalendarNotice(`${niceName} restored. Check Bills missing again.`);
+    setCalendarNotice(`${niceName} restored. Check possible bills again.`);
     setShowHiddenSuggestions(false);
     setShowMissingBills(true);
   } catch (error) {
@@ -352,7 +352,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
             <button type="button" onClick={() => setShowHiddenSuggestions((open) => !open)} style={styles.calendarSummaryAction}>
   <span>Hidden</span>
   <strong>{hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "None"}</strong>
-  <small>Restore removed suggestions</small>
+  <small>Bring back things you removed</small>
 </button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
             <MiniCard styles={styles} title="Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />

@@ -101,7 +101,7 @@ export default function GoalsPage({
           right={<button type="button" style={styles.ghostBtn} onClick={() => setShowGoalForm(true)}>Add goal</button>}
         >
           <div style={getGoalHeroStyle()}>
-            <p style={styles.insightLabel}>{activePlan.status.label}</p>
+            <p style={styles.insightLabel}>Saved by you - {activePlan.status.label}</p>
             <h3 style={getGoalTitleStyle()}>{activeGoal.name || "Goal"}</h3>
             <p style={styles.goalStat}>{formatCurrency(activePlan.current)} / {formatCurrency(activePlan.target)}</p>
             <div style={styles.progressOuter}>
@@ -127,7 +127,7 @@ export default function GoalsPage({
                 label={goal.label}
                 headline={`${goal.name} - ${formatCurrency(goal.target)}`}
                 body={goal.body}
-                ctaLabel="Use this goal"
+                ctaLabel="Save this goal"
                 onClick={() => applyRecommendation(goal)}
               />
             ))}
@@ -272,7 +272,7 @@ function getGoalTitleStyle() {
   return {
     margin: 0,
     fontSize: 24,
-    letterSpacing: "-0.02em",
+    letterSpacing: 0,
   };
 }
 

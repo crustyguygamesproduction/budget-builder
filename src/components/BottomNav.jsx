@@ -9,11 +9,11 @@ const PRIMARY_ITEMS = [
 ];
 
 const MORE_ITEMS = [
-  { key: "confidence", label: "Checks", hint: "Fix guesses" },
+  { key: "confidence", label: "Checks", hint: "Things to confirm" },
   { key: "debts", label: "Debts", hint: "Cards and loans" },
-  { key: "investments", label: "Invest", hint: "Contributions" },
-  { key: "receipts", label: "Receipts", hint: "Proof and returns" },
-  { key: "settings", label: "Settings", hint: "Privacy and access" },
+  { key: "investments", label: "Invest", hint: "Keep bills safe first" },
+  { key: "receipts", label: "Receipts", hint: "Proof and refunds" },
+  { key: "settings", label: "Settings", hint: "Setup and privacy" },
 ];
 
 export default function BottomNav({ page, setPage, screenWidth, styles }) {

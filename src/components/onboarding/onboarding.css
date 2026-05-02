@@ -12,10 +12,7 @@
 .mh-ob-veil {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 20% 12%, rgba(34, 211, 238, 0.12), transparent 40%),
-    radial-gradient(circle at 80% 10%, rgba(99, 102, 241, 0.14), transparent 38%),
-    rgba(8, 13, 28, 0.55);
+  background: rgba(8, 13, 28, 0.58);
   backdrop-filter: blur(10px);
   animation: mh-ob-fade 180ms ease-out both;
 }
@@ -130,9 +127,9 @@
   margin: 0;
   max-width: 650px;
   color: #07111f;
-  font-size: clamp(38px, 6vw, 68px);
-  line-height: .92;
-  letter-spacing: -.07em;
+  font-size: 54px;
+  line-height: .96;
+  letter-spacing: 0;
 }
 
 .mh-ob-body {
@@ -240,7 +237,7 @@
   font-size: 25px;
 }
 
-.mh-ob-option strong { font-size: 18px; letter-spacing: -.02em; }
+.mh-ob-option strong { font-size: 18px; letter-spacing: 0; }
 .mh-ob-option em { color: #64748b; font-size: 14px; font-style: normal; line-height: 1.45; }
 .mh-ob-option small {
   position: absolute;
@@ -277,24 +274,10 @@
   min-height: 430px;
   padding: 22px;
   border-radius: 34px;
-  background:
-    radial-gradient(circle at 24% 18%, rgba(255,255,255,.86), transparent 26%),
-    linear-gradient(160deg, #08111f, #172554 48%, #155e75);
+  background: linear-gradient(160deg, #08111f, #172554 52%, #155e75);
   color: white;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14), 0 22px 60px rgba(15,23,42,0.32);
   overflow: hidden;
-}
-
-.mh-ob-phone::after {
-  content: "";
-  position: absolute;
-  width: 230px;
-  height: 230px;
-  right: -80px;
-  bottom: -80px;
-  border-radius: 999px;
-  background: rgba(34,211,238,0.22);
-  filter: blur(8px);
 }
 
 .mh-ob-phone-top {
@@ -315,7 +298,7 @@
 }
 
 .mh-ob-balance-card p { margin: 0 0 8px; color: rgba(255,255,255,.72); font-size: 13px; font-weight: 800; }
-.mh-ob-balance-card strong { display: block; font-size: 34px; line-height: 1; letter-spacing: -.05em; }
+.mh-ob-balance-card strong { display: block; font-size: 34px; line-height: 1; letter-spacing: 0; }
 .mh-ob-sparkline { width: 100%; margin: 34px 0 18px; filter: drop-shadow(0 12px 24px rgba(14,165,233,.25)); }
 
 .mh-ob-mini-list {
@@ -350,7 +333,7 @@
 @media (max-width: 760px) {
   .mh-ob-root { padding: 12px; align-items: end; }
   .mh-ob-dialog { grid-template-columns: 1fr; min-height: auto; padding: 22px; border-radius: 32px; }
-  .mh-ob-copy h2 { font-size: 39px; }
+  .mh-ob-copy h2 { font-size: 36px; }
   .mh-ob-phone { display: none; }
   .mh-ob-options { grid-template-columns: 1fr; }
   .mh-ob-option { min-height: 124px; }

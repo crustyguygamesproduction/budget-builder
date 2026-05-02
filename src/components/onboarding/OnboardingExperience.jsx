@@ -123,9 +123,9 @@ export default function OnboardingExperience({
   const content = useMemo(() => ({
     [PHASES.WELCOME]: {
       eyebrow: "First setup",
-      title: hasData ? "Let’s make your money easier to read." : "Install it, sign in, dump in statements.",
-      body: "Money Hub is for people who want help, not homework. Use it like an app, upload CSVs, let it sort the mess, then only check the important stuff.",
-      bullets: ["Install from your browser if you want it on your phone", "No spreadsheets to maintain", "Bulk uploads are fine"],
+      title: hasData ? "Let's make your money easier to read." : "Install it, sign in, dump in statements.",
+      body: "Money Hub is for people who want help, not homework. Add it to your phone if you want, upload CSVs, and let it sort the mess before asking you to check anything.",
+      bullets: ["Add to phone from your browser", "No spreadsheets to maintain", "Bulk uploads are fine"],
       primary: "Show me the flow",
       secondary: "Skip for now",
     },
@@ -169,7 +169,7 @@ export default function OnboardingExperience({
       page: "coach",
     },
     [PHASES.DONE]: {
-      eyebrow: "You’re ready",
+      eyebrow: "You're ready",
       title: "Money Hub now has a simple rhythm.",
       body: "Upload statements, check Calendar, set one goal, then ask AI. In the paid future, live bank feeds can replace the upload chore.",
       bullets: ["Redo this from More", "Delete your data anytime", "Delete single months if an upload was wrong"],

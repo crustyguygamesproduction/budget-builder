@@ -30,11 +30,12 @@ export default function HomePage({
 
   const dataFreshness = useMemo(() => getDataFreshness(transactions), [getDataFreshness, transactions]);
   const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
-  const visibleCash = useMemo(() => getVisibleCash(accounts), [accounts]);
+  const visibleCash = useMemo(() => getVisibleCash(appMoneyModel, accounts), [appMoneyModel, accounts]);
   const calendarBills = useMemo(() => getCalendarBillRead(appMoneyModel), [appMoneyModel]);
   const nextBill = calendarBills.nextBill;
   const moneyLeft = visibleCash.hasBalance ? visibleCash.total - calendarBills.total : null;
   const homeRead = getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFreshness });
+  const checksWaitingCount = appMoneyModel?.checksWaiting?.length || 0;
   const primaryGoal = getPrimaryGoal(goals);
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const unlinkedInvestmentSignals = investmentSignals.filter((signal) => !hasMatchingInvestment(signal, investments));
@@ -94,7 +95,7 @@ export default function HomePage({
       <Section title="What Money Hub Found" styles={styles}>
         <div style={styles.inlineInfoBlock}>
           <Row name="Calendar bills" value={`${formatCurrency(calendarBills.total)} across ${calendarBills.count}`} styles={styles} />
-          <Row name="Checks waiting" value={`${appMoneyModel?.checksWaiting?.length || 0}`} styles={styles} />
+          <Row name="Checks waiting" value={checksWaitingCount ? `${checksWaitingCount} to answer` : "Nothing urgent"} styles={styles} />
           <Row name="Income" value={appMoneyModel?.income?.label || "Not clear yet"} styles={styles} />
           <Row name="Usual spending" value={appMoneyModel?.flexibleSpending?.label || "Needs checking"} styles={styles} />
         </div>
@@ -104,7 +105,7 @@ export default function HomePage({
         <div style={getShortcutGridStyle()}>
           <Shortcut title="Calendar" body={nextBill ? `Next: ${nextBill.name}` : "Bills and dates"} onClick={() => onNavigate("calendar")} />
           <Shortcut title="Goals" body={primaryGoal ? primaryGoal.name : "Safety first"} onClick={() => onNavigate("goals")} />
-          {(appMoneyModel?.checksWaiting?.length || 0) > 0 ? (
+          {checksWaitingCount > 0 ? (
             <Shortcut title="Checks" body={`${appMoneyModel.checksWaiting.length} to answer`} onClick={() => onNavigate("confidence")} />
           ) : (
             <Shortcut title="Upload" body={dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
@@ -137,7 +138,13 @@ export default function HomePage({
   );
 }
 
-function getVisibleCash(accounts) {
+function getVisibleCash(appMoneyModel, accounts) {
+  const sharedCash = appMoneyModel?.cashPosition;
+  if (sharedCash?.hasKnownBalance || sharedCash?.hasBalance) {
+    const total = Number(sharedCash.amount ?? sharedCash.total ?? 0);
+    return { hasBalance: true, total: Number.isFinite(total) ? total : 0 };
+  }
+
   const values = (accounts || [])
     .map((account) => [account.available_balance, account.current_balance, account.balance].map(Number).find((value) => Number.isFinite(value)))
     .filter((value) => Number.isFinite(value));
@@ -284,7 +291,7 @@ function getBigMoneyStyle(screenWidth) {
     fontSize: screenWidth <= 390 ? 40 : screenWidth <= 520 ? 48 : 58,
     lineHeight: 0.98,
     margin: "6px 0 10px",
-    letterSpacing: "-0.04em",
+    letterSpacing: 0,
   };
 }
 

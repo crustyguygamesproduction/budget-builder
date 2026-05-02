@@ -12,13 +12,17 @@ export default function TopBar({ email, title, page, screenWidth, styles }) {
         <h2 style={getTopTitleStyle(screenWidth, styles)}>{title}</h2>
         <p style={styles.topEmail}>
           {page === "coach"
-            ? "Ask, sanity-check, plan and reset"
+            ? "Ask for a plain-English money plan"
+            : page === "confidence"
+            ? "Quick checks that make the app smarter"
             : page === "debts"
-            ? "Debt tracking from imported statements"
+            ? "Repay safely after bills"
             : page === "investments"
-            ? "Investing activity detected automatically"
+            ? "Grow money only when bills are safe"
             : page === "calendar"
-            ? "Recurring money events, properly visualised"
+            ? "Bills, rent, subscriptions and spending"
+            : page === "settings"
+            ? "Setup, privacy and your data"
             : email}
         </p>
       </div>

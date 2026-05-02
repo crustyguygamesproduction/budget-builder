@@ -61,7 +61,7 @@
     fontSize: "40px",
     lineHeight: 1,
     margin: "0 0 12px",
-    letterSpacing: "-0.04em",
+    letterSpacing: 0,
   },
 
   kicker: {
@@ -102,7 +102,7 @@
     margin: 0,
     fontSize: "30px",
     lineHeight: 1,
-    letterSpacing: "-0.04em",
+    letterSpacing: 0,
   },
 
   topEmail: {
@@ -165,7 +165,7 @@
     fontSize: "46px",
     margin: "0 0 8px",
     lineHeight: 0.98,
-    letterSpacing: "-0.05em",
+    letterSpacing: 0,
   },
 
   balanceSubcopy: {
@@ -229,7 +229,7 @@
   cardValue: {
     margin: "8px 0 0",
     fontSize: "22px",
-    letterSpacing: "-0.03em",
+    letterSpacing: 0,
   },
 
   section: {
@@ -254,7 +254,7 @@
   sectionTitle: {
     margin: 0,
     fontSize: "18px",
-    letterSpacing: "-0.02em",
+    letterSpacing: 0,
   },
 
   sectionActions: {
@@ -403,7 +403,7 @@
   goalStat: {
     fontSize: "24px",
     fontWeight: "800",
-    letterSpacing: "-0.03em",
+    letterSpacing: 0,
   },
 
   nav: {
@@ -490,7 +490,7 @@
   coachStatusTitle: {
     margin: "0 0 6px",
     fontSize: "16px",
-    letterSpacing: "-0.02em",
+    letterSpacing: 0,
   },
 
   quickPromptRow: {
@@ -668,7 +668,7 @@
   insightHeadline: {
     margin: "0 0 6px",
     fontSize: "15px",
-    letterSpacing: "-0.02em",
+    letterSpacing: 0,
   },
 
   insightBody: {

@@ -312,11 +312,14 @@ function getVisibleCash(accounts) {
     })
     .filter((value) => value !== null);
   const amount = balances.reduce((sum, value) => sum + Number(value || 0), 0);
+  const hasKnownBalance = balances.length > 0;
 
   return {
-    hasKnownBalance: balances.length > 0 && Math.abs(amount) > 0.01,
+    hasKnownBalance,
+    hasBalance: hasKnownBalance,
     amount: roundMoney(amount),
-    label: balances.length > 0 ? formatCurrency(amount) : "No current balance yet",
+    total: roundMoney(amount),
+    label: hasKnownBalance ? formatCurrency(amount) : "No current balance yet",
   };
 }
 
@@ -362,7 +365,7 @@ function getAffordabilityTone({ visibleCash, monthlyIncome, monthlyBillTotal, mo
       body: "Your Calendar bills are higher than clear income, so the plan needs checking before saving more.",
     };
   }
-  if (visibleCash.hasKnownBalance && visibleCash.amount <= monthlyBillTotal * 0.5) {
+  if (monthlyBillTotal > 0 && visibleCash.hasKnownBalance && visibleCash.amount <= monthlyBillTotal * 0.5) {
     return {
       status: "tight",
       label: "Tight",

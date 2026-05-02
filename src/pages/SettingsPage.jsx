@@ -115,7 +115,7 @@ export default function SettingsPage({
 
   async function deleteSelectedMonths() {
     if (!selectedMonths.length) return;
-    const confirmed = window.confirm(`Delete transactions for ${selectedMonths.length} selected month${selectedMonths.length === 1 ? "" : "s"}? This also clears AI money snapshots so the app can rebuild its read.`);
+    const confirmed = window.confirm(`Delete ${selectedMonths.length} selected month${selectedMonths.length === 1 ? "" : "s"} of uploaded bank history? Money Hub will rebuild its read afterwards.`);
     if (!confirmed) return;
 
     setMonthDeleteBusy(true);
@@ -158,89 +158,13 @@ export default function SettingsPage({
 
   return (
     <>
-      <Section title="Plan And Premium" styles={styles}>
-        <p style={styles.sectionIntro}>{getPremiumFeatureSummary(subscriptionStatus).body}</p>
-        <Row name="Current plan" value={subscriptionStatus?.label || "Free"} styles={styles} />
-        <Row name="Paid hook" value="Automatic bank sync and smarter warnings" styles={styles} />
-        <Row name="Payment path" value="Stripe subscription table ready" styles={styles} />
-        <div style={styles.compactInsightGrid}>
-          <FeatureList title="Free" features={FREE_FEATURES} styles={styles} />
-          <FeatureList title="Premium" features={PREMIUM_FEATURES} styles={styles} />
-        </div>
-      </Section>
-
-      <Section title="Live Bank Feed Prep" styles={styles}>
-        <p style={styles.sectionIntro}>{bankFeedReadiness.body}</p>
-        <Row name="Recommended provider" value={BANK_FEED_PROVIDER.name} styles={styles} />
-        <Row name="Why this first" value="Lowest-cost UK AIS path" styles={styles} />
-        <Row name="Connected banks" value={`${bankConnections.length}`} styles={styles} />
-        <Row name="Active feeds" value={`${bankFeedReadiness.activeCount || 0}`} styles={styles} />
-        <Row name="Fallbacks" value={BANK_FEED_PROVIDER.fallbackProviders.join(", ")} styles={styles} />
-        <button style={styles.primaryBtn} type="button" disabled>
-          Bank connection coming in Premium
-        </button>
-      </Section>
-
-      <Section title="Family / Viewer Mode" styles={styles}>
+      <Section title="Setup Guide" styles={styles}>
         <p style={styles.sectionIntro}>
-          Shared viewer mode is now wired in as a read-only access layer.
-          Use it for parents, partner, or anyone who should see progress without editing anything.
+          Use this if you want Money Hub to walk you through the simple rhythm again: upload statements, check Calendar, set one goal, then ask AI.
         </p>
-
-        <label style={styles.checkRow}>
-          <input
-            type="checkbox"
-            checked={viewerMode}
-            onChange={(e) => setViewerMode(e.target.checked)}
-          />
-          <span>Preview the app in viewer mode</span>
-        </label>
-
-        <input
-          style={styles.input}
-          placeholder="Viewer email"
-          value={viewerEmail}
-          onChange={(e) => setViewerEmail(e.target.value)}
-        />
-        <input
-          style={styles.input}
-          placeholder="Label, e.g. Mum or Partner"
-          value={viewerLabel}
-          onChange={(e) => setViewerLabel(e.target.value)}
-        />
-        <button style={styles.primaryBtn} onClick={addViewer} disabled={sharing}>
-          {sharing ? "Adding..." : "Add Viewer"}
-        </button>
-      </Section>
-
-      <Section title="Current Viewer Access" styles={styles}>
-        {viewerAccess.length === 0 ? (
-          <p style={styles.emptyText}>No viewers added yet.</p>
-        ) : (
-          viewerAccess.map((item) => (
-            <Row
-              key={item.id}
-              name={`${item.label || item.viewer_email} (${item.role || "viewer"})`}
-              value={item.invite_status || "pending"}
-              styles={styles}
-            />
-          ))
-        )}
-      </Section>
-
-      <Section title="Documents And Extraction" styles={styles}>
-        <Row name="Saved finance documents" value={`${financialDocuments.length}`} styles={styles} />
-        <Row name="Image extraction" value="Live" styles={styles} />
-        <Row name="PDF storage" value="Live" styles={styles} />
-      </Section>
-
-      <Section title="Help And Tips" styles={styles}>
-        <p style={styles.sectionIntro}>
-          Run setup again if you want the guided flow: upload statements, check Calendar, set a goal, then ask AI.
-        </p>
-        <Row name="Best first upload" value="Any CSV statements. Multiple files are fine." styles={styles} />
-        <Row name="Main check" value="Calendar finds bills, rent, subscriptions and debt payments." styles={styles} />
-        <Row name="Final step" value="Ask AI for a simple money overview." styles={styles} />
+        <Row name="Best first upload" value="CSV bank statements. Multiple files are fine." styles={styles} />
+        <Row name="Main check" value="Calendar checks bills, rent, subscriptions and debt payments." styles={styles} />
+        <Row name="Then" value="Goals picks a safety target, AI explains the plan." styles={styles} />
         <button style={styles.ghostBtn} type="button" onClick={() => replayOnboarding(userId)}>
           Replay guided setup
         </button>
@@ -249,9 +173,9 @@ export default function SettingsPage({
         </button>
       </Section>
 
-      <Section title="Reset Or Delete Data" styles={styles}>
+      <Section title="Your Data" styles={styles}>
         <p style={styles.sectionIntro}>
-          Use this if an upload went wrong or you want to start again. Money Hub keeps this manual and obvious on purpose.
+          Use this if an upload went wrong or you want to start again. Deleting data is deliberately manual so it cannot happen by accident.
         </p>
         {monthOptions.length > 0 ? (
           <>
@@ -286,14 +210,72 @@ export default function SettingsPage({
         </button>
       </Section>
 
-      <Section title="Product Direction" styles={styles}>
-        <Row name="Statement-first setup" value="Core" styles={styles} />
-        <Row name="Bulk multi-statement upload" value="Live" styles={styles} />
-        <Row name="Recurring payment inference" value="Live" styles={styles} />
-        <Row name="Debt/investment smart tracking" value="Premium" styles={styles} />
-        <Row name="Live market pricing" value="Premium" styles={styles} />
-        <Row name="Viewer mode" value="Premium" styles={styles} />
-        <Row name="Live bank feeds" value="Premium prep" styles={styles} />
+      <Section title="Plan" styles={styles}>
+        <p style={styles.sectionIntro}>{getPremiumFeatureSummary(subscriptionStatus).body}</p>
+        <Row name="Current plan" value={subscriptionStatus?.label || "Free"} styles={styles} />
+        <Row name="Today" value="Upload CSV statements whenever you want a fresh read." styles={styles} />
+        <Row name="Later" value="Premium will add automatic bank sync." styles={styles} />
+        <Row name="Connected banks" value={`${bankConnections.length}`} styles={styles} />
+        {BANK_FEED_PROVIDER?.name ? (
+          <Row name="Bank sync prep" value={bankFeedReadiness?.activeCount ? `${bankFeedReadiness.activeCount} active` : "Not connected yet"} styles={styles} />
+        ) : null}
+        <div style={styles.compactInsightGrid}>
+          <FeatureList title="Free" features={FREE_FEATURES} styles={styles} />
+          <FeatureList title="Premium" features={PREMIUM_FEATURES} styles={styles} />
+        </div>
+      </Section>
+
+      <Section title="Privacy And Sharing" styles={styles}>
+        <p style={styles.sectionIntro}>
+          Add a read-only viewer if a partner, parent or helper should see progress without changing anything.
+        </p>
+
+        <label style={styles.checkRow}>
+          <input
+            type="checkbox"
+            checked={viewerMode}
+            onChange={(e) => setViewerMode(e.target.checked)}
+          />
+          <span>Preview the app in viewer mode</span>
+        </label>
+
+        <input
+          style={styles.input}
+          placeholder="Viewer email"
+          value={viewerEmail}
+          onChange={(e) => setViewerEmail(e.target.value)}
+        />
+        <input
+          style={styles.input}
+          placeholder="Label, e.g. Mum or Partner"
+          value={viewerLabel}
+          onChange={(e) => setViewerLabel(e.target.value)}
+        />
+        <button style={styles.primaryBtn} onClick={addViewer} disabled={sharing}>
+          {sharing ? "Adding..." : "Add Viewer"}
+        </button>
+      </Section>
+
+      <Section title="People Who Can View" styles={styles}>
+        {viewerAccess.length === 0 ? (
+          <p style={styles.emptyText}>No viewers added yet.</p>
+        ) : (
+          viewerAccess.map((item) => (
+            <Row
+              key={item.id}
+              name={item.label || item.viewer_email}
+              value={item.invite_status || "pending"}
+              styles={styles}
+            />
+          ))
+        )}
+      </Section>
+
+      <Section title="Receipts And Documents" styles={styles}>
+        <p style={styles.sectionIntro}>
+          Saved receipts and finance documents stay attached to your account so AI can use them when needed.
+        </p>
+        <Row name="Saved documents" value={`${financialDocuments.length}`} styles={styles} />
       </Section>
     </>
   );

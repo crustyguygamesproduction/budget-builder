@@ -381,14 +381,13 @@ export default function InvestmentsPage({
     <>
       <Section styles={styles} title="Investment Tracker">
         <p style={styles.sectionIntro}>
-          This now handles AI setup, document extraction, contribution tracking,
-          and live market price refreshes where you add a symbol.
+          Money Hub separates investing from normal spending and only encourages more when bills and usual spending look safe.
         </p>
       </Section>
 
       <div style={styles.grid}>
         <MiniCard styles={styles} title="Investments" value={`${investments.length}`} />
-        <MiniCard styles={styles} title="Signals" value={`${unlinkedSignals.length}`} />
+        <MiniCard styles={styles} title="Possible matches" value={`${unlinkedSignals.length}`} />
         <MiniCard styles={styles} title="Net Put In" value={formatCurrency(totalDetectedInvesting)} />
         <MiniCard styles={styles} title="Status" value={investments.length ? "Tracking" : "Building"} />
       </div>
@@ -398,7 +397,7 @@ export default function InvestmentsPage({
           <MiniCard styles={styles} title="Value" value={formatCurrency(investmentSnapshot.marketValue)} />
           <MiniCard styles={styles} title="Contributed" value={formatCurrency(investmentSnapshot.totalContributed)} />
           <MiniCard styles={styles} title="Gain/Loss" value={`${investmentSnapshot.gainLoss >= 0 ? "+" : "-"}${formatCurrency(Math.abs(investmentSnapshot.gainLoss))}`} />
-          <MiniCard styles={styles} title="Live Priced" value={`${investmentSnapshot.pricedCount}`} />
+          <MiniCard styles={styles} title="Prices added" value={`${investmentSnapshot.pricedCount}`} />
         </div>
         <p style={styles.sectionIntro}>
           {billsFirstWarning

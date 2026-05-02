@@ -64,7 +64,7 @@ function getHeadlineStyle() {
     margin: "4px 0 8px",
     fontSize: 22,
     lineHeight: 1.12,
-    letterSpacing: "-0.03em",
+    letterSpacing: 0,
   };
 }
 

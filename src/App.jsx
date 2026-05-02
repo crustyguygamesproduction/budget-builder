@@ -82,7 +82,7 @@ const UploadPage = lazy(() => import("./pages/UploadPage"));
 const PAGE_TITLES = {
   today: "Today",
   upload: "Upload",
-  confidence: "Confidence Checks",
+  confidence: "Checks",
   debts: "Debts",
   investments: "Investments",
   calendar: "Calendar",
