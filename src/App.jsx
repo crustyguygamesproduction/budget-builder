@@ -66,7 +66,6 @@ import { getSubscriptionStatus } from "./lib/productPlan";
 import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
 import { buildAppMoneyModel } from "./lib/appMoneyModel";
 
-const AccountsPage = lazy(() => import("./pages/AccountsPage"));
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const CoachPage = lazy(() => import("./pages/CoachPage"));
 const ConfidencePage = lazy(() => import("./pages/ConfidencePage"));
@@ -86,7 +85,6 @@ const PAGE_TITLES = {
   confidence: "Confidence Checks",
   debts: "Debts",
   investments: "Investments",
-  accounts: "Accounts",
   calendar: "Calendar",
   goals: "Goals",
   receipts: "Receipts",
@@ -337,7 +335,6 @@ export default function App() {
         {page === "confidence" && <ConfidencePage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={loadTransactionRules} screenWidth={screenWidth} styles={styles} />}
         {page === "debts" && <DebtsPage debts={debts} debtSignals={debtSignals} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={financialDocuments.filter((doc) => doc.record_type === "debt")} onChange={loadDebts} onDocumentsChange={loadFinancialDocuments} trendSummary={trendSummary} viewerMode={viewerMode} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} styles={styles} helpers={{ buildDebtDedupeKey, buildKeywords, fileToDataUrl, getDebtMatchSummary, getDebtMonthlyStatus, getDebtPortfolioSnapshot, getDebtProgressSummary, getStatusPillStyle, hasMatchingDebt, hasMeaningfulExtraction }} />}
         {page === "investments" && <InvestmentsPage investments={investments} investmentSignals={investmentSignals} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={financialDocuments.filter((doc) => doc.record_type === "investment")} onChange={loadInvestments} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} styles={styles} helpers={{ buildInvestmentDedupeKey, buildKeywords, fileToDataUrl, formatInvestmentSignalMeta, formatInvestmentSignalNet, getInvestmentMatchSummary, getInvestmentMonthlyStatus, getInvestmentPerformanceSummary, getInvestmentPortfolioSnapshot, getInvestmentSignalNote, getStatusPillStyle, hasMatchingInvestment, hasMeaningfulExtraction }} />}
-        {page === "accounts" && <AccountsPage accounts={accounts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} styles={styles} />}
         {page === "calendar" && <CalendarPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={loadTransactionRules} onRefreshMoneyUnderstanding={refreshMoneyUnderstandingAfterCorrection} screenWidth={screenWidth} styles={styles} helpers={{ getDataFreshness }} />}
         {page === "goals" && <GoalsPage goals={goals} accounts={accounts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} onChange={loadGoals} onAccountsChange={loadAccounts} onTransactionRulesChange={loadTransactionRules} styles={styles} helpers={{ getDataFreshness, getDisplayedMonthSnapshot, getSubscriptionSummary, isInternalTransferLike, isTransactionInMonth, formatCurrency, numberOrNull }} />}
         {page === "receipts" && <ReceiptsPage receipts={receipts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} onChange={loadReceipts} onGoToCoach={openCoachWithPrompt} styles={styles} />}

@@ -191,13 +191,13 @@ function getHomeRead({ visibleCash, calendarBills, nextBill, moneyLeft, dataFres
     return {
       tone: "bad",
       badge: "Urgent",
-      label: "Do not spend from this account",
+      label: "Do not spend money",
       amount: formatCurrency(visibleCash.total),
       body: `You have ${formatCurrency(visibleCash.total)} showing. Calendar has ${formatCurrency(calendarBills.total)} of bills. Next: ${nextBillText}.`,
       headline: "Freeze non-essential spending today",
       nextMove: "Food, travel to work and bills only. No takeaways, shopping, gaming or top-ups until money is showing.",
       buttonLabel: "Make 7-day plan",
-      prompt: `I have ${formatCurrency(visibleCash.total)} showing, ${formatCurrency(calendarBills.total)} of Calendar bills, and my next bill is ${nextBillText}. Give me a simple 7-day emergency plan.`,
+      prompt: `Across the money Money Hub can see, I have ${formatCurrency(visibleCash.total)} showing, ${formatCurrency(calendarBills.total)} of Calendar bills, and my next bill is ${nextBillText}. Give me a simple 7-day emergency plan.`,
     };
   }
 
