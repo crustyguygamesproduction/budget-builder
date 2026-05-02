@@ -35,6 +35,7 @@ export function buildAppMoneyModel({
   const incomeTotal = sumAmounts(incomeTransactions);
   const monthlyIncome = incomeTransactions.length ? incomeTotal / monthCount : 0;
   const incomeConfidence = getIncomeConfidence(incomeTransactions, monthWindow.monthKeys);
+  const upcomingIncome = getUpcomingIncome(incomeTransactions, incomeConfidence);
 
   const monthlyBillTotal = calendarBills.reduce(
     (sum, stream) => sum + Math.abs(Number(stream.amount || 0)),
@@ -92,7 +93,9 @@ export function buildAppMoneyModel({
       monthlyEstimate: roundMoney(monthlyIncome),
       confidence: incomeConfidence,
       label: incomeConfidence === "low" ? "Income is not clear yet" : formatCurrency(monthlyIncome),
+      upcoming30Days: upcomingIncome,
     },
+    upcomingIncome,
     flexibleSpending: {
       transactions: flexibleTransactions,
       monthlyEstimate: roundMoney(monthlyFlexibleSpending),
@@ -124,6 +127,7 @@ export function buildAppMoneyModel({
     aiContext: {
       monthly_income_estimate: roundMoney(monthlyIncome),
       income_confidence: incomeConfidence,
+      expected_income_next_30_days: upcomingIncome,
       monthly_bills_from_calendar: roundMoney(monthlyBillTotal),
       monthly_flexible_spending_estimate: roundMoney(monthlyFlexibleSpending),
       flexible_spending_confidence: flexibleSpendingConfidence,
@@ -222,6 +226,101 @@ function getIncomeTransactions(transactions) {
 
     return amount >= 300 && recurringIncomeKeys.has(transactionKey(transaction));
   });
+}
+
+function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
+  if (incomeConfidence === "low" || !incomeTransactions.length) {
+    return {
+      amount: 0,
+      count: 0,
+      items: [],
+      confidence: "low",
+      label: "Income not clear yet",
+      helper: "Upload more history or confirm income before Money Hub predicts money coming in.",
+    };
+  }
+
+  const groups = incomeTransactions.reduce((map, transaction) => {
+    const amount = Math.abs(Number(transaction.amount || 0));
+    const date = parseAppDate(transaction.transaction_date);
+    if (!amount || !date) return map;
+    const key = transactionKey(transaction);
+    if (!key) return map;
+    if (!map.has(key)) {
+      map.set(key, { key, name: cleanIncomeName(transaction), amounts: [], dates: [], monthKeys: new Set() });
+    }
+    const group = map.get(key);
+    group.amounts.push(amount);
+    group.dates.push(date);
+    group.monthKeys.add(monthKey(date));
+    return map;
+  }, new Map());
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const items = [...groups.values()]
+    .filter((group) => group.monthKeys.size >= 2 || incomeConfidence === "high")
+    .map((group) => {
+      const day = likelyDay(group.dates);
+      const date = nextDateForDay(day, today);
+      return {
+        key: group.key,
+        name: group.name,
+        amount: roundMoney(usualAmount(group.amounts)),
+        day,
+        date: toIsoDate(date),
+        daysAway: Math.max(Math.round((date - today) / 86400000), 0),
+        confidence: group.monthKeys.size >= 2 ? "high" : "medium",
+      };
+    })
+    .filter((item) => item.amount > 0 && item.daysAway <= 30)
+    .sort((a, b) => a.daysAway - b.daysAway || b.amount - a.amount);
+
+  const amount = roundMoney(items.reduce((sum, item) => sum + item.amount, 0));
+  return {
+    amount,
+    count: items.length,
+    items,
+    confidence: items.length ? incomeConfidence : "low",
+    label: items.length ? formatCurrency(amount) : "No expected income found",
+    helper: items.length ? "Based on repeated income in your uploaded statements." : "Income history exists, but the next date is not clear yet.",
+  };
+}
+
+function cleanIncomeName(transaction) {
+  const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "Income");
+  return provider ? provider.split(" ").slice(0, 4).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Income";
+}
+
+function nextDateForDay(day, today) {
+  const safeDay = Math.max(1, Math.min(Number(day || 1), 28));
+  let date = new Date(today.getFullYear(), today.getMonth(), safeDay);
+  if (date < today) date = new Date(today.getFullYear(), today.getMonth() + 1, safeDay);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function likelyDay(dates = []) {
+  const days = dates.map((date) => date.getDate()).filter(Boolean);
+  if (!days.length) return 1;
+  const counts = days.reduce((map, day) => map.set(day, (map.get(day) || 0) + 1), new Map());
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
+}
+
+function usualAmount(values = []) {
+  const safe = values.map(Number).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (!safe.length) return 0;
+  const clusters = [];
+  safe.forEach((amount) => {
+    const cluster = clusters.find((item) => Math.abs(item.average - amount) <= Math.max(10, item.average * 0.12));
+    if (cluster) {
+      cluster.values.push(amount);
+      cluster.average = cluster.values.reduce((sum, value) => sum + value, 0) / cluster.values.length;
+    } else {
+      clusters.push({ values: [amount], average: amount });
+    }
+  });
+  return clusters.sort((a, b) => b.values.length - a.values.length || b.average - a.average)[0]?.average || safe[Math.floor(safe.length / 2)];
 }
 
 function getFlexibleTransactions(transactions, billStreams, billMatchKeys) {
