@@ -13,15 +13,30 @@ export function cleanBillName(value) {
 }
 
 export function getBillBaseName(value) {
-  return normalizeText(cleanBillName(value))
-    .replace(/\bbill around\b/g, " ")
-    .replace(/\baround\b/g, " ")
+  return normalizeProviderName(value);
+}
+
+function normalizeProviderName(value) {
+  const original = normalizeText(cleanBillName(value));
+
+  const withoutMoney = original
     .replace(/£?\d+(\.\d{1,2})?/g, " ")
-    .replace(/\bbill\b/g, " ")
-    .replace(/\bsubscription\b/g, " ")
-    .replace(/[^a-z0-9\s&]/g, " ")
+    .replace(/\b\d{4,}\b/g, " ");
+
+  const withoutNoise = withoutMoney
+    .replace(/\b(bill around|around|bill|subscription|spending|payment|payments|direct debit|debit|dd|standing order|so|regular|monthly|estimated|estimate|expected|usual|amount|from|to|card|visa|mastercard|faster|bank|transfer|reference|ref)\b/g, " ")
+    .replace(/\b(energy|electric|electricity|gas|broadband|internet|wifi|phone|mobile|insurance|rent|mortgage|water|council|tax|loan|finance|credit)\b/g, " ")
+    .replace(/[^a-z0-9\s.&-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  const tokens = withoutNoise
+    .split(" ")
+    .filter(Boolean)
+    .filter((token) => token.length > 1)
+    .filter((token) => !/^\d+$/.test(token));
+
+  return tokens.slice(0, 3).join(" ") || withoutNoise || original;
 }
 
 export function isAllowedBillStream(stream) {
@@ -50,12 +65,18 @@ export function mergeBillStreams(primary = [], fallback = []) {
       };
       const base = getBillBaseName(normal.name);
       const matchIndex = list.findIndex((existing) => {
-        const existingBase = getBillBaseName(existing.name);
-        const closeAmount = Math.abs(Number(existing.amount || 0) - Number(normal.amount || 0)) <= Math.max(3, Number(normal.amount || 0) * 0.08);
-        const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 4;
-        const generatedFallbackPair = String(existing.key || "").startsWith("commitment:") || String(normal.key || "").startsWith("commitment:");
-        return existing.key === normal.key || (base && existingBase && base === existingBase && closeAmount && (closeDay || generatedFallbackPair));
-      });
+  const existingBase = getBillBaseName(existing.name);
+  const closeAmount =
+    Math.abs(Number(existing.amount || 0) - Number(normal.amount || 0)) <=
+    Math.max(3, Number(normal.amount || 0) * 0.12);
+
+  const closeDay =
+    Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 5;
+
+  const sameProvider = base && existingBase && base === existingBase;
+
+  return existing.key === normal.key || (sameProvider && closeAmount && closeDay);
+});
       if (matchIndex < 0) return [...list, normal];
       const current = list[matchIndex];
       const better = scoreStream(normal) > scoreStream(current) ? normal : current;
@@ -86,5 +107,16 @@ function collapseDependentRentStreams(streams) {
 
 function scoreStream(stream) {
   const confidence = normalizeText(stream.confidence || stream.confidenceLabel || "");
-  return (confidence === "high" ? 4 : confidence === "medium" ? 3 : confidence === "estimated" ? 2 : 1) + Number(stream.sourceMonths || 0) + Number(stream.sourceCount || 0) / 10;
+  const name = normalizeText(stream.name || stream.title || "");
+  const sourceScore =
+    (confidence === "high" ? 4 : confidence === "medium" ? 3 : confidence === "estimated" ? 2 : 1) +
+    Number(stream.sourceMonths || 0) +
+    Number(stream.sourceCount || 0) / 10;
+
+  const cleanNameBonus =
+    name.includes("spending") || name.includes("around") || /£?\\d+(\\.\\d{1,2})?/.test(name)
+      ? -2
+      : 0;
+
+  return sourceScore + cleanNameBonus;
 }
