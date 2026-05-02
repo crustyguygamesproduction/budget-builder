@@ -15,3 +15,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/swift-worker/deno.json"
 entrypoint = "./functions/swift-worker/index.ts"
+
+[functions.money-organiser]
+enabled = true
+verify_jwt = true
+import_map = "./functions/money-organiser/deno.json"
+entrypoint = "./functions/money-organiser/index.ts"
