@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { buildCoachContext } from "../lib/coachContext";
