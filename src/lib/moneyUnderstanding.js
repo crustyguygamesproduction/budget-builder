@@ -423,28 +423,41 @@ function usualAmount(values = []) {
 function isSuppressedByTransactionRules(stream, transactionRules = []) {
   const streamText = normalizeText(`${stream?.name || ""} ${stream?.key || ""}`);
   const streamAmount = Math.abs(Number(stream?.amount || 0));
+  const streamProvider = getBillBaseName(stream?.name || streamText);
 
-  const hasConfirmedRule = (transactionRules || []).some((rule) => {
-    const type = normalizeText(rule?.rule_type || "");
-    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
-    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
-    const sameAmount = !ruleAmount || !streamAmount || Math.abs(ruleAmount - streamAmount) <= Math.max(2, streamAmount * 0.18);
-    const sameProvider = getBillBaseName(rule?.match_text || "") && getBillBaseName(stream?.name || "") && getBillBaseName(rule?.match_text || "") === getBillBaseName(stream?.name || "");
-    return sameAmount && sameProvider;
-  });
-  if (hasConfirmedRule) return false;
-
-  return (transactionRules || []).some((rule) => {
+  const matchingSuppressionRules = (transactionRules || []).filter((rule) => {
     const matchText = normalizeText(rule?.match_text || "");
     if (!matchText) return false;
     const category = normalizeText(rule?.category || "");
     const saysNotBill = !rule?.is_bill && !rule?.is_subscription && ["spending", "not a bill", "personal payment", "ignore for calendar"].includes(category);
     if (!saysNotBill) return false;
-    const textMatches = streamText.includes(matchText) || matchText.includes(streamText.split(" ")[0] || "") || getBillBaseName(streamText) === getBillBaseName(matchText);
+    const ruleProvider = getBillBaseName(matchText);
+    const sameProvider = streamProvider && ruleProvider && (streamProvider === ruleProvider || streamProvider.includes(ruleProvider) || ruleProvider.includes(streamProvider));
+    const textMatches = streamText.includes(matchText) || matchText.includes(streamText.split(" ")[0] || "") || sameProvider;
     if (!textMatches) return false;
     const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
     return !ruleAmount || !streamAmount || Math.abs(ruleAmount - streamAmount) <= Math.max(3, streamAmount * 0.12);
   });
+
+  if (!matchingSuppressionRules.length) return false;
+
+  const latestSuppressionTime = latestRuleTime(matchingSuppressionRules);
+  const matchingConfirmedRules = (transactionRules || []).filter((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    const sameAmount = !ruleAmount || !streamAmount || Math.abs(ruleAmount - streamAmount) <= Math.max(2, streamAmount * 0.18);
+    const ruleProvider = getBillBaseName(rule?.match_text || "");
+    const sameProvider = streamProvider && ruleProvider && (streamProvider === ruleProvider || streamProvider.includes(ruleProvider) || ruleProvider.includes(streamProvider));
+    return sameAmount && sameProvider;
+  });
+
+  const latestConfirmedTime = latestRuleTime(matchingConfirmedRules);
+  return latestSuppressionTime >= latestConfirmedTime;
+}
+
+function latestRuleTime(rules = []) {
+  return Math.max(0, ...rules.map((rule) => new Date(rule?.updated_at || rule?.created_at || 0).getTime()).filter((value) => Number.isFinite(value)));
 }
 
 function billStreamsToRecurringEvents(billStreams = []) {
