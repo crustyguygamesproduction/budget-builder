@@ -198,6 +198,13 @@ export default function App() {
     }
   }
 
+  async function refreshMoneyUnderstandingAfterCorrection() {
+    await loadTransactionRules();
+    await loadTransactions();
+    await refreshMoneyOrganiser({ force: true });
+    await loadMoneySnapshot();
+  }
+
   async function loadMoneySnapshot() {
     const { data, error } = await supabase
       .from("money_understanding_snapshots")
@@ -326,7 +333,7 @@ export default function App() {
         {page === "debts" && <DebtsPage debts={debts} debtSignals={debtSignals} transactions={smartTransactions} documents={financialDocuments.filter((doc) => doc.record_type === "debt")} onChange={loadDebts} onDocumentsChange={loadFinancialDocuments} trendSummary={trendSummary} viewerMode={viewerMode} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} styles={styles} helpers={{ buildDebtDedupeKey, buildKeywords, fileToDataUrl, getDebtMatchSummary, getDebtMonthlyStatus, getDebtPortfolioSnapshot, getDebtProgressSummary, getStatusPillStyle, hasMatchingDebt, hasMeaningfulExtraction }} />}
         {page === "investments" && <InvestmentsPage investments={investments} investmentSignals={investmentSignals} transactions={smartTransactions} documents={financialDocuments.filter((doc) => doc.record_type === "investment")} onChange={loadInvestments} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} styles={styles} helpers={{ buildInvestmentDedupeKey, buildKeywords, fileToDataUrl, formatInvestmentSignalMeta, formatInvestmentSignalNet, getInvestmentMatchSummary, getInvestmentMonthlyStatus, getInvestmentPerformanceSummary, getInvestmentPortfolioSnapshot, getInvestmentSignalNote, getStatusPillStyle, hasMatchingInvestment, hasMeaningfulExtraction }} />}
         {page === "accounts" && <AccountsPage accounts={accounts} transactions={smartTransactions} styles={styles} />}
-        {page === "calendar" && <CalendarPage transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} screenWidth={screenWidth} styles={styles} helpers={{ getDataFreshness }} />}
+        {page === "calendar" && <CalendarPage transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={refreshMoneyUnderstandingAfterCorrection} onRefreshMoneyUnderstanding={refreshMoneyUnderstandingAfterCorrection} screenWidth={screenWidth} styles={styles} helpers={{ getDataFreshness }} />}
         {page === "goals" && <GoalsPage goals={goals} accounts={accounts} transactions={smartTransactions} transactionRules={transactionRules} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} onChange={loadGoals} onAccountsChange={loadAccounts} onTransactionRulesChange={loadTransactionRules} styles={styles} helpers={{ getDataFreshness, getDisplayedMonthSnapshot, getSubscriptionSummary, isInternalTransferLike, isTransactionInMonth, formatCurrency, numberOrNull }} />}
         {page === "receipts" && <ReceiptsPage receipts={receipts} transactions={smartTransactions} onChange={loadReceipts} onGoToCoach={openCoachWithPrompt} styles={styles} />}
         {page === "coach" && <CoachPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} goals={goals} debts={debts} investments={investments} debtSignals={debtSignals} investmentSignals={investmentSignals} aiMessages={aiMessages} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onChange={loadAiMessages} onTransactionRulesChange={loadTransactionRules} screenWidth={screenWidth} viewportHeight={viewportHeight} styles={styles} helpers={{ getTopCategories, getSubscriptionSummary, getDataFreshness, getCoachPromptIdeas, getDebtMonthlyStatus, getInvestmentMonthlyStatus, getMonthlyBreakdown, getCalendarPatternSummary, getTransferSummary }} />}
