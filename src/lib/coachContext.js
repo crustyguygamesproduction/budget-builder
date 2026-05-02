@@ -38,6 +38,7 @@ export function buildCoachContext({
     status: getInvestmentMonthlyStatus(investment, transactions).label,
   }));
 
+  const coachTotals = buildCoachTotalsForUserShare(totals, appMoneyModel);
   const statementIntelligence = getStatementIntelligenceContext(transactions, userMessage);
   const interpretedRecentTransactions =
     moneyUnderstanding?.aiContext?.recent_transactions ||
@@ -52,7 +53,7 @@ export function buildCoachContext({
     }));
 
   return {
-    totals,
+    totals: coachTotals,
     transaction_count: transactions.length,
     recent_transactions: interpretedRecentTransactions,
     searchable_transactions: statementIntelligence.searchableTransactions,
@@ -106,5 +107,36 @@ export function buildCoachContext({
       role: msg.role,
       content: msg.content,
     })),
+  };
+}
+
+function buildCoachTotalsForUserShare(totals = {}, appMoneyModel = null) {
+  const income = Number(totals?.income ?? appMoneyModel?.income?.monthlyEstimate ?? 0) || 0;
+  const spending = Number(totals?.spending ?? appMoneyModel?.flexibleSpending?.monthlyEstimate ?? 0) || 0;
+  const userBillBurden = Number(
+    appMoneyModel?.monthlyScheduledOutgoingsTotal ??
+    appMoneyModel?.monthlyBillBurdenTotal ??
+    totals?.bills ??
+    appMoneyModel?.monthlyBillTotal ??
+    0
+  ) || 0;
+  const grossBills = Number(appMoneyModel?.grossMonthlyBillTotal ?? appMoneyModel?.monthlyBillTotal ?? totals?.bills ?? 0) || 0;
+  const sharedContributions = Number(appMoneyModel?.monthlySharedContributionTotal ?? 0) || 0;
+
+  return {
+    ...totals,
+    income,
+    spending,
+    bills: userBillBurden,
+    grossBills,
+    sharedBillContributions: sharedContributions,
+    userBillsToCover: userBillBurden,
+    net: income - userBillBurden - spending,
+    basis: sharedContributions > 0
+      ? "user_share_after_shared_bill_contributions"
+      : totals?.basis || "shared_money_model_monthly_estimate",
+    note: sharedContributions > 0
+      ? "Bills are the user's scheduled outgoings to cover after confirmed shared bill contributions. Do not compare income against the gross household bill figure."
+      : totals?.note,
   };
 }
