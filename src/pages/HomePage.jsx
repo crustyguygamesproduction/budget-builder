@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { formatCurrency, getMeaningfulCategory } from "../lib/finance";
 import { Row, Section } from "../components/ui";
-import { cleanBillName, isAllowedBillStream } from "../lib/moneyUnderstandingGuards";
+import { cleanBillName, getBillBaseName, isAllowedBillStream } from "../lib/moneyUnderstandingGuards";
 
 export default function HomePage({
   transactions,
@@ -97,10 +97,10 @@ export default function HomePage({
       </CollapsiblePanel>
 
       <CollapsiblePanel title="Regular payments found" summary={regularPayments.summary} defaultOpen={false} styles={styles} right={<button style={styles.ghostBtn} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onNavigate("calendar"); }}>Calendar</button>}>
-        <p style={styles.sectionIntro}>These are monthly estimates from your uploaded history, not the total across every statement.</p>
+        <p style={styles.sectionIntro}>These are the same monthly bill estimates Calendar uses, so Home and Calendar should stay in sync.</p>
         {regularPayments.items.length > 0 ? (
           regularPayments.items.slice(0, 5).map((item) => (
-            <Row key={item.name} name={item.name} value={`${formatCurrency(item.monthlyEstimate)} / month · seen ${item.count} time${item.count === 1 ? "" : "s"}`} styles={styles} />
+            <Row key={item.key || item.name} name={item.name} value={`${formatCurrency(item.monthlyEstimate)} / month · ${item.day ? `around day ${item.day}` : "date learning"}`} styles={styles} />
           ))
         ) : (
           <p style={styles.emptyText}>No regular payments found yet. Add more history or check Calendar.</p>
@@ -136,36 +136,29 @@ function getVisibleCash(accounts) {
   return { hasBalance: values.length > 0, total: values.reduce((sum, value) => sum + value, 0) };
 }
 
+function getSharedCalendarBillItems(moneyUnderstanding) {
+  return dedupeBillItems((moneyUnderstanding?.billStreams || []).filter(isAllowedBillStream));
+}
+
 function estimateBillMoney(moneyUnderstanding) {
   const summary = moneyUnderstanding?.summary || {};
-  const source = [
-    ...(moneyUnderstanding?.recurringEvents || []).map((event) => ({
-      key: event.key,
-      name: event.title,
-      amount: Math.abs(Number(event.amount || 0)),
-      day: event.day,
-      kind: event.kind === "subscription" ? "subscription" : "bill",
-      confidence: event.confidenceLabel,
-      note: event.estimateNote,
-      sourceCount: event.sourceCount || 0,
-      sourceMonths: event.sourceMonths || 0,
-    })),
-    ...(moneyUnderstanding?.billStreams || []),
-  ].filter(isAllowedBillStream);
-  const deduped = dedupeBillItems(source);
+  const deduped = getSharedCalendarBillItems(moneyUnderstanding);
   const total = deduped.reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0);
   return {
     count: deduped.length,
     total,
     includesRent: deduped.some((item) => /rent|landlord|letting|mortgage/i.test(`${item.name} ${item.kind}`)) || Boolean(summary.includesRent && total > 0),
-    timeframeLabel: deduped.length ? "Bills due soon" : "Bills found",
+    timeframeLabel: deduped.length ? "Calendar bills" : "Bills found",
     nextBill: deduped[0] || null,
+    items: deduped,
   };
 }
 
 function estimateRegularMonthlyPayments(moneyUnderstanding) {
-  const items = dedupeBillItems((moneyUnderstanding?.billStreams || []).filter(isAllowedBillStream)).map((item) => ({
+  const items = getSharedCalendarBillItems(moneyUnderstanding).map((item) => ({
+    key: item.key,
     name: cleanBillName(item.name),
+    day: item.day,
     count: item.sourceCount || item.sourceMonths || 0,
     monthlyEstimate: Number(item.amount || 0),
   })).sort((a, b) => b.monthlyEstimate - a.monthlyEstimate);
@@ -173,7 +166,7 @@ function estimateRegularMonthlyPayments(moneyUnderstanding) {
   return {
     items,
     monthlyTotal,
-    summary: items.length ? `About ${formatCurrency(monthlyTotal)} / month from ${items.length} bill${items.length === 1 ? "" : "s"}` : "No regular bills found yet",
+    summary: items.length ? `About ${formatCurrency(monthlyTotal)} / month from ${items.length} Calendar bill${items.length === 1 ? "" : "s"}` : "No regular bills found yet",
   };
 }
 
@@ -186,12 +179,13 @@ function dedupeBillItems(items = []) {
       day: Number(item.day || item.usual_day || 1) || 1,
     };
     if (!normal.amount) return merged;
-    const base = normal.name.toLowerCase().replace(/bill around|around|£?\d+(\.\d{1,2})?|bill|subscription/g, "").replace(/\s+/g, " ").trim();
+    const base = getBillBaseName(normal.name);
     const matchIndex = merged.findIndex((existing) => {
-      const existingBase = existing.name.toLowerCase().replace(/bill around|around|£?\d+(\.\d{1,2})?|bill|subscription/g, "").replace(/\s+/g, " ").trim();
-      const closeAmount = Math.abs(existing.amount - normal.amount) <= Math.max(3, normal.amount * 0.08);
-      const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 4;
-      return (base && existingBase && base === existingBase && closeAmount && closeDay) || existing.key === normal.key;
+      const existingBase = getBillBaseName(existing.name);
+      const closeAmount = Math.abs(existing.amount - normal.amount) <= Math.max(3, normal.amount * 0.12);
+      const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 5;
+      const sameProvider = base && existingBase && base === existingBase;
+      return (sameProvider && closeAmount && closeDay) || existing.key === normal.key;
     });
     if (matchIndex < 0) return [...merged, normal];
     return merged;
@@ -211,10 +205,10 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       badge: "Urgent",
       heroLabel: "No money showing",
       heroAmount: "£0.00",
-      heroCopy: `${formatCurrency(billMoney.total)} of bills and subscriptions have been found from your uploaded history, but your visible balance is £0.00. Do not spend from this account today. First check what bill is due next, then ask AI for a 7-day plan.`,
+      heroCopy: `${formatCurrency(billMoney.total)} of Calendar bills and subscriptions have been found, but your visible balance is £0.00. Do not spend from this account today. First check Calendar, then ask AI for a 7-day plan.`,
       mainHeadline: "You look broke right now",
       mainBody: "Stop spending from this account today, check upcoming bills, avoid non-essentials like takeaways, taxis and gaming, then update your bank history when the urgent checks are done.",
-      shortReason: `£0 showing and ${formatCurrency(billMoney.total)} of bills found`,
+      shortReason: `£0 showing and ${formatCurrency(billMoney.total)} of Calendar bills found`,
       primaryAction: "coach",
       primaryActionLabel: "Get 7-day plan",
     };
@@ -227,10 +221,10 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
       badge: "Short",
       heroLabel: "Bills may be bigger than your balance",
       heroAmount: formatCurrency(moneyLeft),
-      heroCopy: `Your visible balance is ${formatCurrency(balance)}, but Money Hub has found ${formatCurrency(billMoney.total)} that may be needed for bills. Keep spending locked down until this is checked.`,
+      heroCopy: `Your visible balance is ${formatCurrency(balance)}, but Calendar has ${formatCurrency(billMoney.total)} of bills and subscriptions. Keep spending locked down until this is checked.`,
       mainHeadline: "Your balance looks short",
       mainBody: "Your bills and subscriptions look bigger than the money currently showing. Check Calendar before spending.",
-      shortReason: `${formatCurrency(balance)} showing versus ${formatCurrency(billMoney.total)} bills found`,
+      shortReason: `${formatCurrency(balance)} showing versus ${formatCurrency(billMoney.total)} Calendar bills`,
       primaryAction: "calendar",
       primaryActionLabel: "Check Calendar",
     };
@@ -274,10 +268,10 @@ function getMoneyPressure({ visibleCash, billMoney, dataFreshness, moneyLeft }) 
     badge: moneyLeft <= 0 ? "Tight" : "OK",
     heroLabel: "Left after bills",
     heroAmount: formatCurrency(moneyLeft),
-    heroCopy: `Current visible balance minus ${billMoney.timeframeLabel.toLowerCase()} found by Money Hub. ${billMoney.includesRent ? "Rent is included where Money Hub can see it." : "Rent is only included if Money Hub can see it."}`,
+    heroCopy: `Current visible balance minus Calendar bills found by Money Hub. ${billMoney.includesRent ? "Rent is included where Money Hub can see it." : "Rent is only included if Money Hub can see it."}`,
     mainHeadline: moneyLeft <= 0 ? "No clear spare money" : `${formatCurrency(moneyLeft)} left after bills`,
     mainBody: moneyLeft <= 0 ? "Your visible balance is already used up by bills Money Hub can see. Spend carefully until the data is fresh." : "This is a cautious estimate, not permission to spend everything.",
-    shortReason: `${formatCurrency(moneyLeft)} left after bills found`,
+    shortReason: `${formatCurrency(moneyLeft)} left after Calendar bills`,
     primaryAction: "coach",
     primaryActionLabel: "Ask AI why",
   };
