@@ -13,6 +13,7 @@ const REFUND_WORDS = /\b(refund|reversal|cashback|repayment|reimburse|reimbursem
 const PASS_THROUGH_WORDS = /\b(work.?pass|pass.?through|expenses?|resale|client money|float)\b/;
 const SAVINGS_INVESTMENT_WORDS = /\b(savings?|isa|investment|investing|vanguard|trading 212|freetrade|pension|crypto|coinbase|binance|chip|moneybox)\b/;
 const FLEXIBLE_CATEGORY_WORDS = /\b(grocer|food|takeaway|restaurant|shopping|entertainment|transport|fuel|petrol|cash|gaming|clothes|personal|spending|travel|coffee|pub|bar)\b/;
+const SHARED_BILL_WORDS = /\b(rent|house|flat|bills?|electric|electricity|gas|energy|water|council|tax|broadband|internet|wifi|phone|share|half|split|contribution)\b/;
 
 export function buildAppMoneyModel({
   moneyUnderstanding,
@@ -31,16 +32,32 @@ export function buildAppMoneyModel({
     transactionInWindow(transaction, monthWindow)
   );
 
-  const incomeTransactions = getIncomeTransactions(windowTransactions);
+  const grossMonthlyBillTotal = calendarBills.reduce(
+    (sum, stream) => sum + Math.abs(Number(stream.amount || 0)),
+    0
+  );
+  const preliminaryIncomeTransactions = getIncomeTransactions(windowTransactions);
+  const sharedBillContributions = getSharedBillContributions({
+    transactions: windowTransactions,
+    calendarBills,
+    monthWindow,
+  });
+  const contributionSourceIds = new Set(
+    sharedBillContributions.confirmed.flatMap((contribution) => contribution.sourceIds || [])
+  );
+  const incomeTransactions = preliminaryIncomeTransactions.filter(
+    (transaction) => !contributionSourceIds.has(getTransactionSourceId(transaction))
+  );
   const incomeTotal = sumAmounts(incomeTransactions);
   const monthlyIncome = incomeTransactions.length ? incomeTotal / monthCount : 0;
   const incomeConfidence = getIncomeConfidence(incomeTransactions, monthWindow.monthKeys);
   const upcomingIncome = getUpcomingIncome(incomeTransactions, incomeConfidence);
 
-  const monthlyBillTotal = calendarBills.reduce(
-    (sum, stream) => sum + Math.abs(Number(stream.amount || 0)),
+  const monthlySharedContributionTotal = sharedBillContributions.confirmed.reduce(
+    (sum, contribution) => sum + Math.abs(Number(contribution.monthlyAmount || 0)),
     0
   );
+  const monthlyBillBurdenTotal = Math.max(grossMonthlyBillTotal - monthlySharedContributionTotal, 0);
   const billMatchKeys = getBillMatchKeys(billStreams);
   const flexibleTransactions = getFlexibleTransactions(windowTransactions, billStreams, billMatchKeys);
   const flexibleSpendingTotal = flexibleTransactions.reduce(
@@ -53,16 +70,18 @@ export function buildAppMoneyModel({
   const safeMonthlySaving =
     incomeConfidence === "low"
       ? 0
-      : Math.max(monthlyIncome - monthlyBillTotal - monthlyFlexibleSpending * 1.05, 0);
+      : Math.max(monthlyIncome - monthlyBillBurdenTotal - monthlyFlexibleSpending * 1.05, 0);
   const stretchMonthlySaving =
     incomeConfidence === "low"
       ? 0
-      : Math.max(monthlyIncome - monthlyBillTotal - monthlyFlexibleSpending * 0.85, 0);
+      : Math.max(monthlyIncome - monthlyBillBurdenTotal - monthlyFlexibleSpending * 0.85, 0);
   const visibleCash = getVisibleCash(accounts);
   const affordabilityTone = getAffordabilityTone({
     visibleCash,
     monthlyIncome,
-    monthlyBillTotal,
+    monthlyBillTotal: monthlyBillBurdenTotal,
+    grossMonthlyBillTotal,
+    monthlySharedContributionTotal,
     monthlyFlexibleSpending,
     safeMonthlySaving,
     incomeConfidence,
@@ -76,6 +95,7 @@ export function buildAppMoneyModel({
     incomeConfidence,
     flexibleSpendingConfidence,
     visibleCash,
+    sharedBillContributions,
   });
 
   return {
@@ -86,14 +106,19 @@ export function buildAppMoneyModel({
     billStreams,
     recurringEvents: moneyUnderstanding?.recurringEvents || [],
     upcomingBills,
-    monthlyBillTotal,
+    monthlyBillTotal: roundMoney(grossMonthlyBillTotal),
+    grossMonthlyBillTotal: roundMoney(grossMonthlyBillTotal),
+    monthlyBillBurdenTotal: roundMoney(monthlyBillBurdenTotal),
+    monthlySharedContributionTotal: roundMoney(monthlySharedContributionTotal),
     fixedCommitments: billStreams,
+    sharedBillContributions,
     income: {
       transactions: incomeTransactions,
       monthlyEstimate: roundMoney(monthlyIncome),
       confidence: incomeConfidence,
       label: incomeConfidence === "low" ? "Income is not clear yet" : formatCurrency(monthlyIncome),
       upcoming30Days: upcomingIncome,
+      excludedSharedContributions: sharedBillContributions.confirmed,
     },
     upcomingIncome,
     flexibleSpending: {
@@ -123,12 +148,17 @@ export function buildAppMoneyModel({
       incomeConfidence,
       billStreams,
       safeMonthlySaving,
+      sharedBillContributions,
     }),
     aiContext: {
       monthly_income_estimate: roundMoney(monthlyIncome),
       income_confidence: incomeConfidence,
       expected_income_next_30_days: upcomingIncome,
-      monthly_bills_from_calendar: roundMoney(monthlyBillTotal),
+      monthly_bills_from_calendar: roundMoney(grossMonthlyBillTotal),
+      monthly_shared_bill_contributions: roundMoney(monthlySharedContributionTotal),
+      monthly_bill_burden_after_contributions: roundMoney(monthlyBillBurdenTotal),
+      shared_bill_contributions: sharedBillContributions.confirmed,
+      possible_shared_bill_contributions_to_check: sharedBillContributions.needsChecking,
       monthly_flexible_spending_estimate: roundMoney(monthlyFlexibleSpending),
       flexible_spending_confidence: flexibleSpendingConfidence,
       safe_monthly_saving_amount: roundMoney(safeMonthlySaving),
@@ -226,6 +256,143 @@ function getIncomeTransactions(transactions) {
 
     return amount >= 300 && recurringIncomeKeys.has(transactionKey(transaction));
   });
+}
+
+function getSharedBillContributions({ transactions = [], calendarBills = [], monthWindow }) {
+  const recurringContributionKeys = recurringKeys(
+    transactions.filter((transaction) => Number(transaction.amount || 0) > 0 && Math.abs(Number(transaction.amount || 0)) >= 100)
+  );
+  const groups = transactions.reduce((map, transaction) => {
+    if (!isPossibleSharedBillContribution(transaction, recurringContributionKeys)) return map;
+    const key = transactionKey(transaction);
+    const date = parseAppDate(transaction.transaction_date);
+    if (!key || !date) return map;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        name: cleanContributionName(transaction),
+        amounts: [],
+        dates: [],
+        monthKeys: new Set(),
+        sourceIds: [],
+        examples: [],
+      });
+    }
+    const group = map.get(key);
+    group.amounts.push(Math.abs(Number(transaction.amount || 0)));
+    group.dates.push(date);
+    group.monthKeys.add(monthKey(date));
+    group.sourceIds.push(getTransactionSourceId(transaction));
+    if (group.examples.length < 3) group.examples.push(transaction.description || group.name);
+    return map;
+  }, new Map());
+
+  const candidates = [...groups.values()].map((group) => {
+    const monthlyAmount = usualAmount(group.amounts);
+    const day = likelyDay(group.dates);
+    const match = getBestContributionBillMatch({ monthlyAmount, day, calendarBills });
+    const confidence = getContributionConfidence({ group, match, monthWindow });
+    return {
+      key: `shared-contribution:${group.key}`,
+      name: group.name,
+      monthlyAmount: roundMoney(monthlyAmount),
+      day,
+      sourceIds: [...new Set(group.sourceIds)],
+      sourceMonths: group.monthKeys.size,
+      examples: group.examples,
+      matchedBillKey: match?.bill?.key || null,
+      matchedBillName: match?.bill?.name || null,
+      matchedBillAmount: match?.bill?.amount || null,
+      ratioToBill: match?.ratio || null,
+      dayDistance: match?.dayDistance ?? null,
+      confidence,
+      label: match?.bill?.name
+        ? `${group.name} towards ${match.bill.name}`
+        : `${group.name} contribution`,
+      helper: match?.bill?.name
+        ? `${formatCurrency(monthlyAmount)} looks like a regular contribution towards ${match.bill.name}.`
+        : `${formatCurrency(monthlyAmount)} looks like a regular contribution, but the matching bill is not clear yet.`,
+    };
+  }).filter((candidate) => candidate.monthlyAmount > 0);
+
+  const confirmed = candidates
+    .filter((candidate) => ["high", "medium"].includes(candidate.confidence) && candidate.matchedBillName)
+    .sort((a, b) => b.monthlyAmount - a.monthlyAmount);
+  const needsChecking = candidates
+    .filter((candidate) => !confirmed.some((item) => item.key === candidate.key))
+    .filter((candidate) => candidate.confidence !== "low")
+    .slice(0, 5);
+
+  return {
+    confirmed,
+    needsChecking,
+    monthlyTotal: roundMoney(confirmed.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0)),
+    label: confirmed.length
+      ? `${formatCurrency(confirmed.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} shared bill contribution${confirmed.length === 1 ? "" : "s"}`
+      : "No shared bill contributions found",
+  };
+}
+
+function isPossibleSharedBillContribution(transaction, recurringContributionKeys) {
+  const amount = Number(transaction.amount || 0);
+  if (amount <= 0 || amount < 100) return false;
+  if (isInternalTransferLike(transaction)) return false;
+  const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
+  if (INCOME_WORDS.test(text) || REFUND_WORDS.test(text) || PASS_THROUGH_WORDS.test(text)) return false;
+  if (SAVINGS_INVESTMENT_WORDS.test(text)) return false;
+  if (amount > 1800 && !SHARED_BILL_WORDS.test(text)) return false;
+  return recurringContributionKeys.has(transactionKey(transaction)) || SHARED_BILL_WORDS.test(text);
+}
+
+function getBestContributionBillMatch({ monthlyAmount, day, calendarBills }) {
+  const matches = (calendarBills || [])
+    .map((bill) => {
+      const billAmount = Math.abs(Number(bill.amount || 0));
+      if (!billAmount || monthlyAmount >= billAmount * 0.95) return null;
+      const ratio = monthlyAmount / billAmount;
+      const ratioScore = Math.max(0, 1 - Math.abs(ratio - 0.5) / 0.35);
+      const distance = dayDistance(day, Number(bill.day || 1));
+      const dateScore = Math.max(0, 1 - distance / 14);
+      const billText = normalizeText(`${bill.name || ""} ${bill.kind || ""}`);
+      const billTypeScore = /rent|mortgage|energy|water|broadband|phone|council|insurance|bill/.test(billText) ? 0.25 : 0;
+      const score = ratioScore * 0.55 + dateScore * 0.25 + billTypeScore;
+      return {
+        bill,
+        ratio: roundMoney(ratio),
+        dayDistance: distance,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .filter((match) => match.ratio >= 0.25 && match.ratio <= 0.8)
+    .sort((a, b) => b.score - a.score);
+
+  return matches[0] || null;
+}
+
+function getContributionConfidence({ group, match, monthWindow }) {
+  if (!match) return group.monthKeys.size >= 2 ? "needs_checking" : "low";
+  const enoughHistory = group.monthKeys.size >= Math.min(2, Math.max(monthWindow?.monthKeys?.length || 1, 1));
+  const closeHalf = Math.abs((match.ratio || 0) - 0.5) <= 0.12;
+  const nearBillDay = Number(match.dayDistance || 99) <= 10;
+  if (enoughHistory && closeHalf && nearBillDay) return "high";
+  if (enoughHistory && (closeHalf || nearBillDay || match.score >= 0.55)) return "medium";
+  if (enoughHistory && match.score >= 0.4) return "needs_checking";
+  return "low";
+}
+
+function dayDistance(a, b) {
+  const direct = Math.abs(Number(a || 1) - Number(b || 1));
+  return Math.min(direct, 31 - direct);
+}
+
+function cleanContributionName(transaction) {
+  const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "Contribution");
+  return provider ? provider.split(" ").slice(0, 4).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Shared bill contribution";
+}
+
+function getTransactionSourceId(transaction) {
+  return String(transaction.id || `${transaction.transaction_date || ""}:${transaction.description || ""}:${transaction.amount || ""}`);
 }
 
 function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
@@ -438,18 +605,19 @@ function getModelFreshness(transactions) {
   };
 }
 
-function getConfidenceWarnings({ dataFreshness, checksWaiting, incomeConfidence, flexibleSpendingConfidence, visibleCash }) {
+function getConfidenceWarnings({ dataFreshness, checksWaiting, incomeConfidence, flexibleSpendingConfidence, visibleCash, sharedBillContributions }) {
   const warnings = [];
   if (!dataFreshness.hasData) warnings.push("Upload a statement so Money Hub can build your plan.");
   if (dataFreshness.needsUpload && dataFreshness.hasData) warnings.push("Add your latest statement before trusting today's spending room.");
   if (checksWaiting.length > 0) warnings.push("Answer Checks so bills, transfers and spending do not get mixed up.");
+  if (sharedBillContributions?.needsChecking?.length > 0) warnings.push("Check possible shared bill contributions so your real bill share is right.");
   if (incomeConfidence === "low") warnings.push("Income is not clear yet.");
   if (flexibleSpendingConfidence === "low") warnings.push("Usual spending needs more history.");
   if (!visibleCash.hasKnownBalance) warnings.push("Current cash is not supplied, so safe-to-spend stays conservative.");
   return warnings;
 }
 
-function getAffordabilityTone({ visibleCash, monthlyIncome, monthlyBillTotal, monthlyFlexibleSpending, safeMonthlySaving, incomeConfidence }) {
+function getAffordabilityTone({ visibleCash, monthlyIncome, monthlyBillTotal, grossMonthlyBillTotal, monthlySharedContributionTotal, monthlyFlexibleSpending, safeMonthlySaving, incomeConfidence }) {
   if (incomeConfidence === "low") {
     return {
       status: "needs_data",
@@ -461,14 +629,18 @@ function getAffordabilityTone({ visibleCash, monthlyIncome, monthlyBillTotal, mo
     return {
       status: "not_safe",
       label: "Not safe yet",
-      body: "Your Calendar bills are higher than clear income, so the plan needs checking before saving more.",
+      body: monthlySharedContributionTotal > 0
+        ? `Your bills are ${formatCurrency(grossMonthlyBillTotal)}, with ${formatCurrency(monthlySharedContributionTotal)} regular contributions reducing your share. The remaining share still needs checking against income.`
+        : "Your Calendar bills are higher than clear income, so the plan needs checking before saving more.",
     };
   }
   if (monthlyBillTotal > 0 && visibleCash.hasKnownBalance && visibleCash.amount <= monthlyBillTotal * 0.5) {
     return {
       status: "tight",
       label: "Tight",
-      body: "Your visible cash looks tight against bills due, so keep saving conservative.",
+      body: monthlySharedContributionTotal > 0
+        ? `Your share after regular contributions is about ${formatCurrency(monthlyBillTotal)}, but visible cash still looks tight.`
+        : "Your visible cash looks tight against bills due, so keep saving conservative.",
     };
   }
   if (safeMonthlySaving <= 0 && monthlyFlexibleSpending > 0) {
@@ -481,7 +653,9 @@ function getAffordabilityTone({ visibleCash, monthlyIncome, monthlyBillTotal, mo
   return {
     status: "ok",
     label: safeMonthlySaving > 0 ? `${formatCurrency(safeMonthlySaving)} safe amount` : "No safe amount yet",
-    body: safeMonthlySaving > 0
+    body: monthlySharedContributionTotal > 0
+      ? `This protects your share of Calendar bills after ${formatCurrency(monthlySharedContributionTotal)} of regular shared bill contributions.`
+      : safeMonthlySaving > 0
       ? "This protects Calendar bills before treating anything as saveable."
       : "There may be room later, but this data does not show a safe automatic amount yet.",
   };
@@ -552,9 +726,10 @@ function getCalendarBillItems(recurringEvents = [], billStreams = []) {
   }, []);
 }
 
-function getNextBestActions({ goals, debts, investments, checksWaiting, dataFreshness, incomeConfidence, billStreams, safeMonthlySaving }) {
+function getNextBestActions({ goals, debts, investments, checksWaiting, dataFreshness, incomeConfidence, billStreams, safeMonthlySaving, sharedBillContributions }) {
   const actions = [];
   if (checksWaiting.length > 0) actions.push({ key: "checks", label: "Answer Checks", target: "confidence" });
+  if (sharedBillContributions?.needsChecking?.length > 0) actions.push({ key: "shared-bills", label: "Check shared bill money", target: "coach" });
   if (billStreams.length === 0 && dataFreshness.hasData) actions.push({ key: "calendar", label: "Check Calendar bills", target: "calendar" });
   if (dataFreshness.needsUpload) actions.push({ key: "upload", label: "Add latest statement", target: "upload" });
   if (!goals.length) actions.push({ key: "goal", label: "Add a simple goal", target: "goals" });
