@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
-import { InsightCard, Row, Section } from "../components/ui";
+import { Row, Section } from "../components/ui";
 import { buildGoalPlanFromMoneyModel } from "../lib/appMoneyModel";
 import { formatCurrency, numberOrNull } from "../lib/finance";
 
@@ -23,6 +23,7 @@ export default function GoalsPage({
   });
 
   const recommendedGoals = getRecommendedGoals(appMoneyModel);
+  const goalReality = getGoalReality(appMoneyModel);
   const activeGoal =
     goals.find((goal) => goal.id === activeGoalId) ||
     goals[0] ||
@@ -112,23 +113,21 @@ export default function GoalsPage({
       ) : (
         <Section
           styles={styles}
-          title="Recommended Goals"
+          title="Smart Goals"
           right={<button type="button" style={styles.ghostBtn} onClick={() => setShowGoalForm(true)}>Add your own</button>}
         >
           <p style={styles.sectionIntro}>
-            Money Hub starts with safety, then growth. These are suggestions, not saved goals yet.
+            Pick one. Money Hub has worked these out from your income, outgoings and spending.
           </p>
           <div style={getRecommendationGridStyle()}>
             {recommendedGoals.map((goal) => (
-              <InsightCard
-                key={goal.key}
-                styles={styles}
-                label={goal.label}
-                headline={`${goal.name} - ${formatCurrency(goal.target)}`}
-                body={goal.body}
-                ctaLabel="Save this goal"
-                onClick={() => applyRecommendation(goal)}
-              />
+              <button key={goal.key} type="button" style={getSmartGoalStyle(goal.tone)} onClick={() => applyRecommendation(goal)}>
+                <span>{goal.label}</span>
+                <strong>{goal.name}</strong>
+                <b>{formatCurrency(goal.target)}</b>
+                <small>{goal.body}</small>
+                <em>{goal.reason}</em>
+              </button>
             ))}
           </div>
         </Section>
@@ -173,13 +172,13 @@ export default function GoalsPage({
       <Section styles={styles} title="Goal Money">
         <div style={getSafetyReadStyle(appMoneyModel?.savingsCapacity?.status)}>
           <strong>{appMoneyModel?.savingsCapacity?.label || "Needs better data"}</strong>
-          <span>{appMoneyModel?.savingsCapacity?.body || "Upload statements so Money Hub can make this useful."}</span>
+          <span>{goalReality.mainAdvice}</span>
         </div>
         <div style={styles.inlineInfoBlock}>
           <Row styles={styles} name="Regular income" value={appMoneyModel?.income?.label || "Not clear yet"} />
           <Row styles={styles} name="Scheduled outgoings" value={formatCurrency(getMonthlyOutgoingsToCover(appMoneyModel))} />
           <Row styles={styles} name="Everyday spending" value={appMoneyModel?.flexibleSpending?.planningLabel || "Spending needs checking"} />
-          <Row styles={styles} name="Checks waiting" value={`${appMoneyModel?.checksWaiting?.length || 0}`} />
+          <Row styles={styles} name="Best first move" value={goalReality.nextMove} />
         </div>
       </Section>
 
@@ -224,27 +223,82 @@ function getRecommendedGoals(appMoneyModel) {
   const usualSpending = appMoneyModel?.flexibleSpending?.isUsefulForPlanning
     ? Number(appMoneyModel?.flexibleSpending?.monthlyEstimate || 0)
     : 0;
+  const income = Number(appMoneyModel?.income?.monthlyEstimate || 0);
+  const safeSave = Number(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0);
+  const checks = appMoneyModel?.checksWaiting?.length || 0;
+  const starterTarget = Math.max(100, roundToNearest(Math.min(monthlyBills || 300, Math.max(income * 0.1, 100)), 25));
   const safetyTarget = Math.max(500, roundToNearest(monthlyBills + usualSpending, 50));
+  const chaosTarget = Math.max(250, roundToNearest((usualSpending || monthlyBills || 500) * 0.35, 25));
   const growthTarget = Math.max(1000, roundToNearest(safetyTarget * 3, 100));
+  const goals = [];
 
-  return [
-    {
-      key: "safety",
-      label: "Start here",
-      name: "Safety buffer",
-      target: safetyTarget,
-      body: usualSpending > 0
-        ? "One month of outgoings and normal spending. This is the boring buffer that stops small problems becoming disasters."
-        : "Start with one month of scheduled outgoings. Once spending is clearer, Money Hub can tune this up.",
-    },
-    {
-      key: "growth",
-      label: "After safety",
-      name: "Growth fund",
-      target: growthTarget,
-      body: "Once the safety buffer exists, this becomes the money for bigger progress: debt freedom, investing, a move, or a house.",
-    },
-  ];
+  if (checks > 0 || safeSave <= 0) {
+    goals.push({
+      key: "starter",
+      label: "Quick win",
+      name: "Don't go backwards pot",
+      target: starterTarget,
+      tone: "urgent",
+      body: "A small buffer first. This stops one awkward bill turning into panic.",
+      reason: checks > 0 ? "Some money still needs checking, so start small." : "Safe saving is not clear yet.",
+    });
+  }
+
+  goals.push({
+    key: "safety",
+    label: safeSave > 0 ? "Best first goal" : "Next goal",
+    name: "Safety buffer",
+    target: safetyTarget,
+    tone: "safe",
+    body: usualSpending > 0
+      ? "One month of outgoings and normal spending. Boring, but powerful."
+      : "One month of scheduled outgoings while spending is still being learned.",
+    reason: monthlyBills > 0 ? `Covers about one month of your real outgoings.` : "A sensible first safety net.",
+  });
+
+  if (usualSpending > 250) {
+    goals.push({
+      key: "spending-reset",
+      label: "Real life",
+      name: "Oops money",
+      target: chaosTarget,
+      tone: "warm",
+      body: "For takeaways, taxis, forgotten stuff and life being annoying.",
+      reason: "This keeps normal messy spending away from bill money.",
+    });
+  }
+
+  goals.push({
+    key: "growth",
+    label: "After safety",
+    name: "Growth fund",
+    target: growthTarget,
+    tone: "growth",
+    body: "For debt freedom, investing, moving, a house, or finally feeling ahead.",
+    reason: "Only push this once the safety buffer exists.",
+  });
+
+  return goals.slice(0, 3);
+}
+
+function getGoalReality(appMoneyModel) {
+  const income = Number(appMoneyModel?.income?.monthlyEstimate || 0);
+  const outgoings = getMonthlyOutgoingsToCover(appMoneyModel);
+  const safeSave = Number(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0);
+  const checks = appMoneyModel?.checksWaiting?.length || 0;
+  if (!income) {
+    return { mainAdvice: "I need clearer income before I can suggest a confident saving amount.", nextMove: "Upload more wages history" };
+  }
+  if (checks > 0) {
+    return { mainAdvice: "Answer the checks first so bills and spending do not get mixed up.", nextMove: "Clear Checks" };
+  }
+  if (safeSave <= 0) {
+    return { mainAdvice: "Do not set an automatic goal yet. Keep bill money safe first.", nextMove: "Protect bills" };
+  }
+  return {
+    mainAdvice: `${formatCurrency(safeSave)} a month looks like the sensible goal amount right now.`,
+    nextMove: outgoings > income ? "Fix shortfall" : "Save safely",
+  };
 }
 
 function buildGoalCoachPrompt({ goal, appMoneyModel, formatCurrency }) {
@@ -292,6 +346,27 @@ function getRecommendationGridStyle() {
   return {
     display: "grid",
     gap: 10,
+  };
+}
+
+function getSmartGoalStyle(tone) {
+  const palettes = {
+    urgent: ["#fff7ed", "#fed7aa", "#9a3412"],
+    safe: ["#ecfdf5", "#bbf7d0", "#166534"],
+    warm: ["#fefce8", "#fde68a", "#854d0e"],
+    growth: ["#eff6ff", "#bfdbfe", "#1d4ed8"],
+  };
+  const [background, border, color] = palettes[tone] || palettes.safe;
+  return {
+    display: "grid",
+    gap: 7,
+    textAlign: "left",
+    padding: 14,
+    borderRadius: 16,
+    border: `1px solid ${border}`,
+    background,
+    color,
+    cursor: "pointer",
   };
 }
 

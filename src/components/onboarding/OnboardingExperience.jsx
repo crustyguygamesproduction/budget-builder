@@ -8,20 +8,16 @@ import "./onboarding.css";
 
 const PHASES = {
   WELCOME: "welcome",
-  ACCOUNT: "account",
   UPLOAD: "upload",
   CALENDAR: "calendar",
-  GOALS: "goals",
   COACH: "coach",
   DONE: "done",
 };
 
 const FLOW = [
   PHASES.WELCOME,
-  PHASES.ACCOUNT,
   PHASES.UPLOAD,
   PHASES.CALENDAR,
-  PHASES.GOALS,
   PHASES.COACH,
   PHASES.DONE,
 ];
@@ -49,13 +45,13 @@ function MoneyPathPreview() {
         <span />
       </div>
       <div className="mh-ob-balance-card">
-        <p>Money Hub setup</p>
-        <strong>Upload. Check. Plan.</strong>
+        <p>Quick setup</p>
+        <strong>See the next bill first.</strong>
       </div>
       <div className="mh-ob-mini-list">
-        <span><b /> CSV statements sorted</span>
-        <span><b /> Bills, rent and subs checked</span>
-        <span><b /> Goals and AI plan next</span>
+        <span><b /> Dump in CSVs</span>
+        <span><b /> Bills appear in Calendar</span>
+        <span><b /> Goals get suggested</span>
       </div>
       <p style={{ marginTop: 10, fontSize: 13, opacity: 0.7 }}>
         Built for people who want help, not homework.
@@ -122,57 +118,42 @@ export default function OnboardingExperience({
 
   const content = useMemo(() => ({
     [PHASES.WELCOME]: {
-      eyebrow: "First setup",
-      title: hasData ? "Let's make your money easier to read." : "Install it, sign in, dump in statements.",
-      body: "Money Hub is for people who want help, not homework. Add it to your phone if you want, upload CSVs, and let it sort the mess before asking you to check anything.",
-      bullets: ["Add to phone from your browser", "No spreadsheets to maintain", "Bulk uploads are fine"],
-      primary: "Show me the flow",
+      eyebrow: "2 minute setup",
+      title: hasData ? "Let's turn this into a plan." : "Dump statements in. Get a money read.",
+      body: "No budgeting homework. Upload CSVs, Money Hub finds bills and suggests the first sensible goal.",
+      bullets: ["Multiple CSVs are fine", "Duplicates get checked", "You can redo this from More"],
+      primary: hasData ? "Show my next step" : "Start with upload",
       secondary: "Skip for now",
     },
-    [PHASES.ACCOUNT]: {
-      eyebrow: "Step 1",
-      title: "Create your account once.",
-      body: "You are already signed in now. New users do this first so their statements, goals and AI history stay private to them.",
-      bullets: ["Email login", "Private user data", "Replay setup anytime from More"],
-      primary: "Next: upload statements",
-    },
     [PHASES.UPLOAD]: {
-      eyebrow: "Step 2",
-      title: "Dump in your bank statements.",
-      body: "CSV files are the easy mode. You can upload multiple files, old months first or all at once. Money Hub checks overlap and avoids putting the same transaction in twice.",
-      bullets: ["CSV format", "Multiple statements are fine", "Duplicates are checked before import"],
-      primary: "Go to Upload",
+      eyebrow: "Big win first",
+      title: "Upload enough to find the next bill.",
+      body: "A few months is best. The reward is quick: Home and Calendar start showing what needs covering.",
+      bullets: ["CSV only for now", "Old months are useful", "No manual sorting"],
+      primary: hasData ? "I've uploaded" : "Go to Upload",
       page: "upload",
     },
     [PHASES.CALENDAR]: {
-      eyebrow: "Step 3",
-      title: "Use Calendar to check bills, rent and subscriptions.",
-      body: "Calendar is where Money Hub shows bills it found, possible missing bills, hidden suggestions, and past spending. You confirm the big recurring stuff so the rest of the app stops guessing.",
-      bullets: ["Rent, bills, subs and debt payments", "Mark things as not bills", "Restore hidden suggestions if needed"],
+      eyebrow: "One quick check",
+      title: "Calendar is where bills become real.",
+      body: "Confirm rent, bills, subs and debt payments. Mark nonsense as not a bill. That fixes Home, Goals and AI together.",
+      bullets: ["Bills found", "Missing bills", "Not a bill"],
       primary: "Open Calendar",
       page: "calendar",
     },
-    [PHASES.GOALS]: {
-      eyebrow: "Step 4",
-      title: "Set one goal: safety first, growth second.",
-      body: "Start with a safety buffer. Once that exists, move toward growth: debt freedom, investing, a move, a house, or whatever matters.",
-      bullets: ["Recommended safety goal", "Safe monthly amount", "No fake optimism"],
-      primary: "Open Goals",
-      page: "goals",
-    },
     [PHASES.COACH]: {
-      eyebrow: "Step 5",
-      title: "Ask AI what your money pattern looks like.",
-      body: "The coach uses the organised money layer, Calendar bills, Checks and goals. Ask for a plain-English overview, a spending personality read, or a 7-day plan.",
-      bullets: ["Helpful, direct advice", "Uses your real app data", "Good for lazy check-ins"],
+      eyebrow: "Then let it help",
+      title: "Goals and AI do the thinking.",
+      body: "Goals suggests realistic safety pots. AI can explain today's spending in plain English.",
+      bullets: ["Smart goal suggestions", "7-day plan", "No fake optimism"],
       primary: "Open AI Coach",
       page: "coach",
     },
     [PHASES.DONE]: {
-      eyebrow: "You're ready",
-      title: "Money Hub now has a simple rhythm.",
-      body: "Upload statements, check Calendar, set one goal, then ask AI. In the paid future, live bank feeds can replace the upload chore.",
-      bullets: ["Redo this from More", "Delete your data anytime", "Delete single months if an upload was wrong"],
+      eyebrow: "That's it",
+      title: "The rhythm is simple.",
+      body: "Upload. Check Calendar. Pick one goal. Ask AI when stuck.",
+      bullets: ["Redo from More", "Delete data anytime", "Paid bank linking later"],
       primary: "Start on Home",
       page: "today",
     },
