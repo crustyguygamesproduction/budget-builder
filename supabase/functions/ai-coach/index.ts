@@ -150,23 +150,30 @@ function buildDocumentExtractionInput(systemPrompt: string, message: string, con
   return [{ role: "user", content: textParts }];
 }
 
-async function getAuthenticatedUserId(req: Request) {
+async function getAuthenticatedUser(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceKey) throw new Error("AI data service is not configured.");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey) throw new Error("AI data service is not configured.");
 
   const authHeader = req.headers.get("Authorization") || "";
-  const userClient = createClient(supabaseUrl, serviceKey, { global: { headers: { Authorization: authHeader } } });
+  if (!authHeader.startsWith("Bearer ")) throw new Error("Not signed in.");
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
   const { data, error } = await userClient.auth.getUser();
   if (error || !data?.user?.id) throw new Error("Not signed in.");
-  return { userId: data.user.id, supabaseUrl, serviceKey };
+
+  return { userId: data.user.id, supabaseUrl, anonKey, authHeader };
 }
 
 async function getSavedCoachContext(req: Request) {
-  const { userId, supabaseUrl, serviceKey } = await getAuthenticatedUserId(req);
-  const adminClient = createClient(supabaseUrl, serviceKey);
+  const { userId, supabaseUrl, anonKey, authHeader } = await getAuthenticatedUser(req);
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
 
-  const { data, error } = await adminClient
+  const { data, error } = await userClient
     .from("coach_context_snapshots")
     .select("context, context_hash, transaction_count, latest_transaction_date, updated_at")
     .eq("user_id", userId)
