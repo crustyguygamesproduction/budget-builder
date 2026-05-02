@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { Section } from "../components/ui";
 import { getTopCategories } from "../lib/dashboardIntelligence";
+import { getStatementIntelligenceContext } from "../lib/statementIntelligence";
 import {
   getDebtSignals,
   getInvestmentSignals,
@@ -204,6 +205,8 @@ export default function CoachPage({
         role: "user",
         content: text,
       });
+
+      await refreshSavedCoachQueryFocus(user.id, transactions, text);
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {
         body: {
@@ -586,6 +589,51 @@ async function getFunctionErrorMessage(error) {
     // Keep the original Supabase error when the response body is not JSON.
   }
   return fallback;
+}
+
+async function refreshSavedCoachQueryFocus(userId, transactions, message) {
+  if (!userId || !transactions.length) return;
+
+  const statementIntelligence = getStatementIntelligenceContext(transactions, message);
+  const latestTransactionDate =
+    transactions
+      .map((transaction) => transaction.transaction_date)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
+
+  const { data, error } = await supabase
+    .from("coach_context_snapshots")
+    .select("context, context_hash")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data?.context) return;
+
+  const context = {
+    ...data.context,
+    query_focus: statementIntelligence.queryFocus,
+    statement_intelligence: statementIntelligence.summary,
+    searchable_transactions: statementIntelligence.searchableTransactions,
+    searchable_transaction_count: statementIntelligence.searchableTransactions.length,
+    searchable_transaction_note: statementIntelligence.searchableTransactionNote,
+  };
+
+  const { error: updateError } = await supabase.from("coach_context_snapshots").upsert(
+    {
+      user_id: userId,
+      source: "client_interpreted_money_layer",
+      context,
+      context_hash: data.context_hash || `message-focus:${latestTransactionDate || "none"}`,
+      transaction_count: transactions.length,
+      latest_transaction_date: latestTransactionDate,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (updateError) throw updateError;
 }
 
 function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals }) {

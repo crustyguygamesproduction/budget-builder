@@ -9,6 +9,7 @@ const server = await createServer({
 
 const { buildMoneyUnderstanding } = await server.ssrLoadModule("/src/lib/moneyUnderstanding.js");
 const { buildAppMoneyModel } = await server.ssrLoadModule("/src/lib/appMoneyModel.js");
+const { getStatementIntelligenceContext } = await server.ssrLoadModule("/src/lib/statementIntelligence.js");
 
 let nextId = 1;
 
@@ -249,6 +250,26 @@ function amounts(items) {
   assert.equal(appModel.monthlyBillTotal, 1450);
   assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
   assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const context = getStatementIntelligenceContext(
+    [
+      tx("Uber trip old", -100, "2026-02-01"),
+      tx("Uber trip latest", -12.5, "2026-04-10"),
+      tx("Uber ride latest", -7.25, "2026-04-28"),
+      tx("Tesco latest", -20, "2026-04-29"),
+    ],
+    "How much did I spend on Uber in the latest 30 days of data you have on me?"
+  );
+
+  assert.equal(context.queryFocus.time_window.matched, true);
+  assert.equal(context.queryFocus.time_window.start, "2026-03-30");
+  assert.equal(context.queryFocus.time_window.end, "2026-04-29");
+  assert.equal(context.queryFocus.direct_match_count, 2);
+  assert.equal(context.queryFocus.direct_money_out, 19.75);
+  assert.equal(context.queryFocus.relevant_money_total, 19.75);
+  assert.ok(context.queryFocus.direct_match_note.includes("latest 30 days of uploaded data"));
 }
 
 await server.close();

@@ -301,10 +301,12 @@ async function getSavedCoachContext(req: Request) {
 function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
   const recentMessages = Array.isArray(savedContext?.recent_messages) ? savedContext.recent_messages.slice(-8) : [];
   const relevantTransactions = getRelevantTransactions(savedContext, message);
+  const queryFocus = buildServerQueryFocus(savedContext, message) || savedContext?.query_focus || null;
   return {
     server_context_meta: savedContext?.server_context_meta || null,
     totals: savedContext?.totals || null,
     transaction_count: savedContext?.transaction_count || 0,
+    query_focus: queryFocus,
     statement_intelligence: compactStatementIntelligence(savedContext?.statement_intelligence),
     app_money_model: savedContext?.app_money_model || null,
     monthly_income_estimate: savedContext?.monthly_income_estimate || null,
@@ -333,12 +335,14 @@ function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
   };
 }
 
-function buildMinimalCoachBrainForPrompt(savedContext: any) {
+function buildMinimalCoachBrainForPrompt(savedContext: any, message = "") {
   const statement = compactStatementIntelligence(savedContext?.statement_intelligence);
+  const queryFocus = buildServerQueryFocus(savedContext, message) || savedContext?.query_focus || null;
   return {
     server_context_meta: savedContext?.server_context_meta || null,
     totals: savedContext?.totals || null,
     transaction_count: savedContext?.transaction_count || 0,
+    query_focus: queryFocus,
     statement_intelligence: statement
       ? {
           date_range: statement.date_range,
@@ -388,6 +392,41 @@ function buildCoachRequestBody(message: string, promptContext: Record<string, un
   };
 }
 
+function buildDeterministicLookupReply(message: string, promptContext: Record<string, unknown>) {
+  if (!isCompactLookup(message)) return null;
+  const queryFocus = promptContext?.query_focus as any;
+  if (!queryFocus || !Array.isArray(queryFocus.search_terms) || !queryFocus.search_terms.length) return null;
+  if (!queryFocus.direct_match_count && !queryFocus.relevant_match_count) return null;
+
+  const amount = Number(
+    queryFocus.direction_intent === "incoming"
+      ? queryFocus.direct_money_in
+      : queryFocus.direction_intent === "net"
+        ? queryFocus.direct_net
+        : queryFocus.relevant_money_total ?? queryFocus.direct_money_out
+  );
+  if (!Number.isFinite(amount)) return null;
+
+  const target = queryFocus.search_terms
+    .map((term: string) => term.charAt(0).toUpperCase() + term.slice(1))
+    .join(" ");
+  const verb =
+    queryFocus.direction_intent === "incoming"
+      ? "received from"
+      : queryFocus.direction_intent === "net"
+        ? "net for"
+        : "spent on";
+  const windowText = queryFocus.time_window?.matched
+    ? ` in ${queryFocus.time_window.label}`
+    : "";
+
+  return `Total: ${formatGbp(Math.abs(amount))} ${verb} ${target}${windowText}.`;
+}
+
+function formatGbp(value: number) {
+  return `£${Number(value || 0).toFixed(2)}`;
+}
+
 function getRelevantTransactions(savedContext: any, message: string) {
   const transactions = Array.isArray(savedContext?.searchable_transactions)
     ? savedContext.searchable_transactions
@@ -412,6 +451,273 @@ function getRelevantTransactions(savedContext: any, message: string) {
     .map((item) => item.transaction);
 
   return compactTransactions((scored.length ? scored : transactions).slice(0, isCompactLookup(message) ? 80 : 30));
+}
+
+function buildServerQueryFocus(savedContext: any, message: string) {
+  const transactions = Array.isArray(savedContext?.searchable_transactions)
+    ? savedContext.searchable_transactions
+    : [];
+  const searchTerms = getServerSearchTerms(message);
+  const timeWindow = getServerQueryTimeWindow(transactions, message, savedContext?.server_context_meta?.latest_transaction_date);
+  const scopedTransactions = timeWindow.matched
+    ? transactions.filter((transaction: any) => isServerTransactionInTimeWindow(transaction, timeWindow))
+    : transactions;
+
+  if (!searchTerms.length) {
+    return {
+      original_query: message,
+      search_terms: searchTerms,
+      direction_intent: getServerDirectionIntent(message),
+      time_window: timeWindow,
+      direct_match_count: 0,
+      relevant_match_count: 0,
+      direct_money_in: 0,
+      direct_money_out: 0,
+      direct_net: 0,
+      relevant_money_total: 0,
+      relevant_money_label: "money_out_only",
+      grouped_matches: [],
+      relevant_grouped_matches: [],
+      direct_matches: [],
+      relevant_matches: [],
+      direct_match_note: timeWindow.matched
+        ? `No specific search terms were found. The detected time window is ${timeWindow.label} (${timeWindow.start} to ${timeWindow.end}).`
+        : "No specific search terms were found.",
+    };
+  }
+
+  const directionIntent = getServerDirectionIntent(message);
+  const matches = scopedTransactions
+    .map((transaction: any, index: number) => ({
+      transaction,
+      score: scoreServerTransactionForTerms(transaction, searchTerms),
+      index,
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || String(b.transaction.date || b.transaction.transaction_date || "").localeCompare(String(a.transaction.date || a.transaction.transaction_date || "")) || a.index - b.index)
+    .map((item) => item.transaction);
+  const relevantMatches = filterServerDirection(matches, directionIntent);
+  const moneyIn = matches
+    .filter((transaction: any) => Number(transaction.amount) > 0)
+    .reduce((sum, transaction: any) => sum + Number(transaction.amount || 0), 0);
+  const moneyOut = matches
+    .filter((transaction: any) => Number(transaction.amount) < 0)
+    .reduce((sum, transaction: any) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  const relevantMoneyTotal = getServerRelevantMoneyTotal(relevantMatches, directionIntent);
+
+  return {
+    original_query: message,
+    search_terms: searchTerms,
+    direction_intent: directionIntent,
+    time_window: timeWindow,
+    direct_match_count: matches.length,
+    relevant_match_count: relevantMatches.length,
+    direct_money_in: roundServerMoney(moneyIn),
+    direct_money_out: roundServerMoney(moneyOut),
+    direct_net: roundServerMoney(moneyIn - moneyOut),
+    relevant_money_total: roundServerMoney(relevantMoneyTotal),
+    relevant_money_label: getServerRelevantMoneyLabel(directionIntent),
+    grouped_matches: buildServerTransactionGroups(matches).slice(0, 12),
+    relevant_grouped_matches: buildServerTransactionGroups(relevantMatches).slice(0, 12),
+    direct_matches: compactTransactions(matches).slice(0, 80),
+    relevant_matches: compactTransactions(relevantMatches).slice(0, 80),
+    direct_match_note: `${directionIntent === "outgoing" ? "Outgoing money only because the question asks what the user spent." : "Matching transactions were filtered by the user's wording."} Totals use ${timeWindow.matched ? `${timeWindow.label} (${timeWindow.start} to ${timeWindow.end})` : "all uploaded searchable history"}. Use query_focus totals before merchant_totals for this answer.`,
+  };
+}
+
+function getServerSearchTerms(message: string) {
+  const stopWords = new Set([
+    "about", "all", "and", "any", "data", "day", "days", "did", "does", "for", "from", "have", "how", "last", "latest", "me", "money", "month", "much", "on", "paid", "pay", "spend", "spending", "spent", "the", "this", "to", "total", "what", "when", "with", "you", "your",
+  ]);
+  return Array.from(new Set(normalizeServerText(message).split(" ")))
+    .filter((term) => term.length >= 3 && !stopWords.has(term))
+    .slice(0, 8);
+}
+
+function getServerDirectionIntent(message: string) {
+  const text = normalizeServerText(message);
+  if (/\b(sent me|received|paid me|money in|income from)\b/.test(text)) return "incoming";
+  if (/\b(i sent|sent to|sent out|i paid|paid to|spent|spend|spending|bought|buying|purchased|purchase)\b/.test(text)) return "outgoing";
+  if (/\b(net|difference|overall)\b/.test(text)) return "net";
+  return "unknown";
+}
+
+function getServerQueryTimeWindow(transactions: any[], message: string, latestTransactionDate?: string | null) {
+  const text = normalizeServerText(message);
+  const anchor = parseServerDate(latestTransactionDate) || getServerLatestTransactionDate(transactions);
+  const emptyWindow = {
+    label: "all uploaded data",
+    start: "",
+    end: anchor ? toServerIsoDate(anchor) : "",
+    matched: false,
+  };
+
+  if (!anchor) return emptyWindow;
+
+  if (/\b(latest|last)\s+30\s+days?\b/.test(text)) {
+    return {
+      label: "latest 30 days of uploaded data",
+      start: toServerIsoDate(addServerDays(anchor, -30)),
+      end: toServerIsoDate(anchor),
+      matched: true,
+    };
+  }
+
+  if (/\blatest\s+month\b/.test(text)) {
+    return {
+      label: "latest uploaded month",
+      start: toServerIsoDate(startOfServerMonth(anchor)),
+      end: toServerIsoDate(anchor),
+      matched: true,
+    };
+  }
+
+  if (/\bthis\s+month\b/.test(text)) {
+    return {
+      label: "this month in uploaded data",
+      start: toServerIsoDate(startOfServerMonth(anchor)),
+      end: toServerIsoDate(anchor),
+      matched: true,
+    };
+  }
+
+  if (/\blast\s+month\b/.test(text)) {
+    const previousMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1));
+    return {
+      label: "last month in uploaded data",
+      start: toServerIsoDate(startOfServerMonth(previousMonth)),
+      end: toServerIsoDate(endOfServerMonth(previousMonth)),
+      matched: true,
+    };
+  }
+
+  return emptyWindow;
+}
+
+function isServerTransactionInTimeWindow(transaction: any, timeWindow: any) {
+  if (!timeWindow?.matched) return true;
+  const date = parseServerDate(transaction.date || transaction.transaction_date);
+  if (!date) return false;
+  const start = parseServerDate(timeWindow.start);
+  const end = parseServerDate(timeWindow.end);
+  if (start && date < start) return false;
+  if (end && date > end) return false;
+  return true;
+}
+
+function scoreServerTransactionForTerms(transaction: any, terms: string[]) {
+  const haystack = normalizeServerText([
+    transaction.description,
+    transaction.name,
+    transaction.merchant,
+    transaction.category,
+    transaction.account,
+  ].join(" "));
+  return terms.reduce((score, term) => {
+    const exactWord = new RegExp(`(^|\\s)${escapeServerRegExp(term)}(\\s|$)`).test(haystack);
+    if (exactWord) return score + 4;
+    if (haystack.includes(term)) return score + 2;
+    return score;
+  }, 0);
+}
+
+function filterServerDirection(transactions: any[], directionIntent: string) {
+  if (directionIntent === "incoming") return transactions.filter((transaction) => Number(transaction.amount) > 0);
+  if (directionIntent === "outgoing") return transactions.filter((transaction) => Number(transaction.amount) < 0);
+  return transactions;
+}
+
+function getServerRelevantMoneyTotal(transactions: any[], directionIntent: string) {
+  if (directionIntent === "incoming") {
+    return transactions.filter((transaction) => Number(transaction.amount) > 0).reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  }
+  if (directionIntent === "outgoing") {
+    return transactions.filter((transaction) => Number(transaction.amount) < 0).reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+  }
+  if (directionIntent === "net") {
+    return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  }
+  return transactions.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
+}
+
+function getServerRelevantMoneyLabel(directionIntent: string) {
+  if (directionIntent === "incoming") return "money_in_only";
+  if (directionIntent === "outgoing") return "money_out_only";
+  if (directionIntent === "net") return "net_money_in_minus_out";
+  return "all_matching_money_absolute";
+}
+
+function buildServerTransactionGroups(transactions: any[]) {
+  const groups = new Map();
+  transactions.forEach((transaction) => {
+    const label = transaction.name || transaction.description || transaction.merchant || "Transaction";
+    const key = normalizeServerText(label) || "transaction";
+    const amount = Number(transaction.amount || 0);
+    if (!groups.has(key)) groups.set(key, { label, count: 0, total: 0, money_in: 0, money_out: 0 });
+    const group = groups.get(key);
+    group.count += 1;
+    group.total += Math.abs(amount);
+    if (amount > 0) group.money_in += amount;
+    if (amount < 0) group.money_out += Math.abs(amount);
+  });
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      total: roundServerMoney(group.total),
+      money_in: roundServerMoney(group.money_in),
+      money_out: roundServerMoney(group.money_out),
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function getServerLatestTransactionDate(transactions: any[]) {
+  return transactions
+    .map((transaction) => parseServerDate(transaction.date || transaction.transaction_date))
+    .filter(Boolean)
+    .sort((a, b) => Number(b) - Number(a))[0] || null;
+}
+
+function parseServerDate(value: string | null | undefined) {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toServerIsoDate(date: Date | null) {
+  if (!date || Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function addServerDays(date: Date, days: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + Number(days || 0)));
+}
+
+function startOfServerMonth(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function endOfServerMonth(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+}
+
+function normalizeServerText(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeServerRegExp(value: string) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function roundServerMoney(value: number) {
+  return Math.round(Number(value || 0) * 100) / 100;
 }
 
 function compactTransactions(transactions: any[]) {
@@ -533,6 +839,8 @@ Maths and trust rules:
 - Use only the supplied server-saved financial context from coach_context_snapshots.
 - Never invent totals, surplus, rent, bills, pass-throughs, reimbursements, debt balances, investment values, or safe-to-spend numbers.
 - Prefer app_money_model, statement_intelligence, money_understanding, query_focus, monthly_breakdown_all and saved checks over raw examples.
+- For "how much did I spend/receive on X in latest/last/this month" questions, use query_focus.relevant_money_total, query_focus.direct_money_out, query_focus.direct_money_in and query_focus.time_window before merchant_totals or category_totals.
+- If query_focus.time_window.matched is true, say the answer is for that uploaded-data window only. Do not use all-history merchant totals for that answer.
 - If pass_through_analysis is present, use its standard_view and known_pass_through_view exactly. Do not recalculate those numbers in prose.
 - Do not say the user is ahead, up, in surplus, or fine unless that exact claim is supported by an app-calculated field.
 - Always distinguish historical statement net from current cash available today.
@@ -647,7 +955,12 @@ Deno.serve(async (req) => {
     const wantsSearchableTransactions = isCompactLookup(safeMessage);
     const promptContext = wantsSearchableTransactions
       ? buildSavedCoachBrainForPrompt(savedContext, safeMessage)
-      : buildMinimalCoachBrainForPrompt(savedContext);
+      : buildMinimalCoachBrainForPrompt(savedContext, safeMessage);
+    const deterministicReply = buildDeterministicLookupReply(safeMessage, promptContext);
+    if (deterministicReply) {
+      return new Response(JSON.stringify({ reply: deterministicReply, model: "app_query_focus", mode: "premium", context_source: "coach_context_snapshots", context_detail: "deterministic_query_focus" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     let contextDetail = wantsSearchableTransactions ? "searchable_compact" : "decision_compact";
     let data: any;
     let model = "";
@@ -667,7 +980,7 @@ Deno.serve(async (req) => {
       contextDetail = "decision_compact_retry";
       const result = await callResponsesApiWithModels(
         apiKey,
-        buildCoachRequestBody(safeMessage, buildMinimalCoachBrainForPrompt(savedContext)),
+        buildCoachRequestBody(safeMessage, buildMinimalCoachBrainForPrompt(savedContext, safeMessage)),
         getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS")
       );
       data = result.data;
