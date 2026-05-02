@@ -55,6 +55,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   const [calendarNotice, setCalendarNotice] = useState("");
   const [showBillsList, setShowBillsList] = useState(false);
   const [showMissingBills, setShowMissingBills] = useState(false);
+  const [showHiddenSuggestions, setShowHiddenSuggestions] = useState(false);
   const [hiddenCandidateKeys, setHiddenCandidateKeys] = useState([]);
   const [confirmedCandidateKeys, setConfirmedCandidateKeys] = useState([]);
 
@@ -81,6 +82,16 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     () => missingBillCandidates.filter((candidate) => !hiddenCandidateKeys.includes(candidate.key) && !confirmedCandidateKeys.includes(candidate.key)),
     [missingBillCandidates, hiddenCandidateKeys, confirmedCandidateKeys]
   );
+  const hiddenSuggestionRules = useMemo(
+  () => dedupeHiddenSuggestionRules(
+    (transactionRules || []).filter((rule) => {
+      const ruleType = normalizeText(rule.rule_type || "");
+      const category = normalizeText(rule.category || "");
+      return Boolean(rule.match_text) && (ruleType === "calendar_suppression" || category === "ignore for calendar");
+    })
+  ),
+  [transactionRules]
+);
   const shortTimeframe = isShortTimeframe(timeframe);
   const usingShortHistoryView = shortTimeframe && calendarMode === "history";
   const shortWindowSize = getTimeframeDayCount(timeframe);
@@ -243,6 +254,52 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
       setCorrectionBusyKey("");
     }
   }
+  async function restoreHiddenSuggestion(rule) {
+  const matchText = rule.match_text || "";
+  const niceName = niceCandidateName(matchText);
+  const restoreKey = `restore-${rule.id || matchText}`;
+
+  setCorrectionBusyKey(restoreKey);
+  setCalendarNotice(`Restoring ${niceName}...`);
+
+  try {
+    let query = supabase.from("transaction_rules").delete();
+
+    if (rule.id) {
+      query = query.eq("id", rule.id);
+    } else {
+      const { data: { user } } = await supabase.auth.getUser();
+      query = query
+        .eq("user_id", user.id)
+        .eq("rule_type", "calendar_suppression")
+        .eq("match_text", matchText);
+
+      if (rule.match_amount != null) {
+        query = query.eq("match_amount", rule.match_amount);
+      }
+    }
+
+    const { error } = await query;
+    if (error) throw error;
+
+    const providerKey = getProviderKey(matchText);
+
+    setHiddenCandidateKeys((keys) =>
+      keys.filter((key) => !normalizeText(key).includes(providerKey))
+    );
+
+    await onTransactionRulesChange?.();
+    await onRefreshMoneyUnderstanding?.();
+
+    setCalendarNotice(`${niceName} restored. Check Bills missing again.`);
+    setShowHiddenSuggestions(false);
+    setShowMissingBills(true);
+  } catch (error) {
+    setCalendarNotice(error.message || `Could not restore ${niceName}. Try again.`);
+  } finally {
+    setCorrectionBusyKey("");
+  }
+}
 
   async function runCalendarAiAnalysis() {
     setCalendarAiBusy(true);
@@ -306,6 +363,11 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
               <strong>{visibleMissingBillCandidates.length ? `${visibleMissingBillCandidates.length} to review` : "Nothing obvious"}</strong>
               <small>Check possible missing bills</small>
             </button>
+            <button type="button" onClick={() => setShowHiddenSuggestions((open) => !open)} style={styles.calendarSummaryAction}>
+  <span>Hidden</span>
+  <strong>{hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "None"}</strong>
+  <small>Restore removed suggestions</small>
+</button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
             <MiniCard styles={styles} title="Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />
           </div>
@@ -325,6 +387,15 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
         {calendarMode === "recurring" && showMissingBills ? (
           <MissingBillsPanel candidates={visibleMissingBillCandidates} styles={styles} busyKey={correctionBusyKey} onConfirm={markCandidateAsBill} onHide={hideMissingBillCandidate} onClose={() => setShowMissingBills(false)} />
         ) : null}
+        {calendarMode === "recurring" && showHiddenSuggestions ? (
+  <HiddenSuggestionsPanel
+    rules={hiddenSuggestionRules}
+    styles={styles}
+    busyKey={correctionBusyKey}
+    onRestore={restoreHiddenSuggestion}
+    onClose={() => setShowHiddenSuggestions(false)}
+  />
+) : null}
 
         <div style={{ ...styles.calendarGridViewport, overflowX: allowHorizontalScroll ? "auto" : "hidden" }}>
           <div style={{ ...(shortTimeframe && calendarMode === "history" ? getRollingDaysGridStyle(screenWidth, shortWindowSize) : styles.calendarGrid), minWidth: usingShortHistoryView && allowHorizontalScroll ? `${Math.max(shortWindowSize, 7) * 96}px` : !usingShortHistoryView && screenWidth <= 760 ? "640px" : undefined }}>
@@ -425,6 +496,52 @@ function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onC
           </div>
         </div>
       )) : <p style={styles.emptyText}>Nothing obvious right now. If Money Hub is unsure later, it will ask you to check.</p>}
+    </div>
+  );
+}
+function HiddenSuggestionsPanel({ rules, styles, busyKey, onRestore, onClose }) {
+  return (
+    <div style={styles.calendarCorrectionPanel}>
+      <div style={styles.calendarCorrectionHeader}>
+        <div>
+          <strong>Hidden suggestions</strong>
+          <p style={styles.transactionMeta}>Restore anything you removed by mistake.</p>
+        </div>
+        <button style={styles.ghostBtn} type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      {rules.length ? (
+        rules.map((rule) => {
+          const restoreKey = `restore-${rule.id || rule.match_text}`;
+          const name = niceCandidateName(rule.match_text || "");
+          const amount = Math.abs(Number(rule.match_amount || 0));
+
+          return (
+            <div key={rule.id || `${rule.match_text}-${rule.match_amount || ""}`} style={styles.calendarCorrectionRow}>
+              <div>
+                <strong>{name}</strong>
+                <p style={styles.transactionMeta}>
+                  {amount ? `${formatCurrency(amount)} hidden from Calendar suggestions.` : "Hidden from Calendar suggestions."}
+                </p>
+                {rule.notes ? <p style={styles.transactionMeta}>{shortenHiddenNote(rule.notes)}</p> : null}
+              </div>
+
+              <button
+                style={styles.secondaryInlineBtn}
+                type="button"
+                disabled={busyKey === restoreKey}
+                onClick={() => onRestore(rule)}
+              >
+                {busyKey === restoreKey ? "Restoring..." : "Restore"}
+              </button>
+            </div>
+          );
+        })
+      ) : (
+        <p style={styles.emptyText}>Nothing hidden right now.</p>
+      )}
     </div>
   );
 }
@@ -540,6 +657,34 @@ function getProviderKey(value) {
 
 function niceCandidateName(value) {
   return cleanCandidateText(value).split(" ").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") || "Possible bill";
+}
+function dedupeHiddenSuggestionRules(rules = []) {
+  return (rules || []).reduce((list, rule) => {
+    const providerKey = getProviderKey(rule.match_text || "");
+    const amount = Math.abs(Number(rule.match_amount || 0));
+    const matchIndex = list.findIndex((existing) => {
+      const existingProviderKey = getProviderKey(existing.match_text || "");
+      const existingAmount = Math.abs(Number(existing.match_amount || 0));
+      return providerKey && existingProviderKey && providerKey === existingProviderKey && amountsClose(amount, existingAmount, 0.12, 3);
+    });
+
+    if (matchIndex < 0) return [...list, rule];
+
+    const current = list[matchIndex];
+    const better = new Date(rule.updated_at || rule.created_at || 0) > new Date(current.updated_at || current.created_at || 0)
+      ? rule
+      : current;
+
+    return list.map((item, index) => (index === matchIndex ? better : item));
+  }, []);
+}
+
+function shortenHiddenNote(value) {
+  return String(value || "")
+    .replace(/^User marked\s+/i, "")
+    .replace(/\s+from Calendar suggestions\./i, ".")
+    .replace(/\s+from Calendar\./i, ".")
+    .slice(0, 120);
 }
 
 function usual(values) {
