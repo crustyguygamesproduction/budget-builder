@@ -1,5 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 
+class PublicFunctionError extends Error {
+  status: number;
+  code: string;
+  publicMessage: string;
+
+  constructor(code: string, publicMessage: string, status = 500, logMessage = publicMessage) {
+    super(logMessage);
+    this.name = "PublicFunctionError";
+    this.code = code;
+    this.publicMessage = publicMessage;
+    this.status = status;
+  }
+}
+
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
@@ -152,35 +166,77 @@ function buildDocumentExtractionInput(systemPrompt: string, message: string, con
 
 async function getAuthenticatedUser(req: Request) {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!supabaseUrl || !anonKey) throw new Error("AI data service is not configured.");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || (!anonKey && !serviceRoleKey)) {
+    throw new PublicFunctionError("missing_supabase_env", "AI data service is not configured.", 500);
+  }
 
   const authHeader = req.headers.get("Authorization") || "";
-  if (!authHeader.startsWith("Bearer ")) throw new Error("Not signed in.");
+  if (!authHeader.startsWith("Bearer ")) {
+    throw new PublicFunctionError("not_signed_in", "Please sign in again before using Coach.", 401);
+  }
+  const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-  const userClient = createClient(supabaseUrl, anonKey, {
+  const authClient = createClient(supabaseUrl, serviceRoleKey || anonKey || "", {
     global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await userClient.auth.getUser();
-  if (error || !data?.user?.id) throw new Error("Not signed in.");
+  const { data, error } = await authClient.auth.getUser(jwt);
+  if (error || !data?.user?.id) {
+    throw new PublicFunctionError("not_signed_in", "Please sign in again before using Coach.", 401, error?.message || "JWT validation failed");
+  }
 
-  return { userId: data.user.id, supabaseUrl, anonKey, authHeader };
+  return { userId: data.user.id, supabaseUrl, anonKey, serviceRoleKey, authHeader };
 }
 
 async function getSavedCoachContext(req: Request) {
-  const { userId, supabaseUrl, anonKey, authHeader } = await getAuthenticatedUser(req);
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  const { userId, supabaseUrl, anonKey, serviceRoleKey, authHeader } = await getAuthenticatedUser(req);
+  const selectSnapshot = (client: ReturnType<typeof createClient>) =>
+    client
+      .from("coach_context_snapshots")
+      .select("context, context_hash, transaction_count, latest_transaction_date, updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-  const { data, error } = await userClient
-    .from("coach_context_snapshots")
-    .select("context, context_hash, transaction_count, latest_transaction_date, updated_at")
-    .eq("user_id", userId)
-    .maybeSingle();
+  let data: any = null;
+  let rlsError: any = null;
 
-  if (error) throw error;
-  if (!data?.context) throw new Error("Saved coach context is not ready yet.");
+  if (anonKey) {
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const result = await selectSnapshot(userClient);
+    data = result.data;
+    rlsError = result.error;
+  }
+
+  if (rlsError && !serviceRoleKey) throw rlsError;
+
+  if ((rlsError || !data) && serviceRoleKey) {
+    if (rlsError) {
+      console.warn("ai-coach: RLS context read failed, falling back to service role after JWT validation", {
+        code: rlsError.code || null,
+        message: rlsError.message || "unknown",
+      });
+    }
+    const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const result = await selectSnapshot(serviceClient);
+    if (result.error) throw result.error;
+    data = result.data;
+  }
+
+  if (!data?.context) {
+    throw new PublicFunctionError(
+      "coach_brain_missing",
+      "Coach brain is still saving. Wait a moment, then try again.",
+      200,
+      "No coach_context_snapshots row/context found for authenticated user."
+    );
+  }
 
   return {
     ...(data.context || {}),
@@ -192,6 +248,67 @@ async function getSavedCoachContext(req: Request) {
       updated_at: data.updated_at || null,
     },
   };
+}
+
+function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
+  const recentMessages = Array.isArray(savedContext?.recent_messages) ? savedContext.recent_messages.slice(-8) : [];
+  const relevantTransactions = getRelevantTransactions(savedContext, message);
+  return {
+    server_context_meta: savedContext?.server_context_meta || null,
+    totals: savedContext?.totals || null,
+    transaction_count: savedContext?.transaction_count || 0,
+    statement_intelligence: savedContext?.statement_intelligence || null,
+    app_money_model: savedContext?.app_money_model || null,
+    monthly_income_estimate: savedContext?.monthly_income_estimate || null,
+    monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
+    monthly_bills_from_calendar_gross: savedContext?.monthly_bills_from_calendar_gross ?? null,
+    monthly_flexible_spending: savedContext?.monthly_flexible_spending || null,
+    savings_capacity: savedContext?.savings_capacity || null,
+    cash_position: savedContext?.cash_position || null,
+    confidence_warnings: savedContext?.confidence_warnings || [],
+    next_best_actions: savedContext?.next_best_actions || [],
+    top_categories: (savedContext?.top_categories || []).slice(0, 12),
+    monthly_breakdown: (savedContext?.monthly_breakdown_all || savedContext?.monthly_breakdown || []).slice(0, 12),
+    calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
+    money_understanding: savedContext?.money_understanding || null,
+    bills_found: (savedContext?.bills_found || []).slice(0, 30),
+    checks_waiting: (savedContext?.checks_waiting || []).slice(0, 30),
+    transfer_summary: savedContext?.transfer_summary || null,
+    debts: (savedContext?.debts || []).slice(0, 8),
+    investments: (savedContext?.investments || []).slice(0, 8),
+    debt_signals: (savedContext?.debt_signals || []).slice(0, 8),
+    investment_signals: (savedContext?.investment_signals || []).slice(0, 8),
+    recent_transactions: (savedContext?.recent_transactions || []).slice(0, 40),
+    relevant_searchable_transactions: relevantTransactions,
+    recent_messages: recentMessages,
+    launch_safety_rules: savedContext?.launch_safety_rules || null,
+  };
+}
+
+function getRelevantTransactions(savedContext: any, message: string) {
+  const transactions = Array.isArray(savedContext?.searchable_transactions)
+    ? savedContext.searchable_transactions
+    : [];
+  if (!transactions.length) return [];
+
+  const tokens = String(message || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9£.\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3)
+    .filter((token) => !["what", "where", "when", "with", "from", "money", "like", "have", "been", "this", "that"].includes(token));
+
+  const scored = transactions
+    .map((transaction: any, index: number) => {
+      const haystack = JSON.stringify(transaction).toLowerCase();
+      const score = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0);
+      return { transaction, score, index };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.transaction);
+
+  return (scored.length ? scored : transactions).slice(0, isCompactLookup(message) ? 180 : 80);
 }
 
 function buildCoachSystemPrompt(message: string) {
@@ -321,9 +438,12 @@ Return exactly this shape:
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: buildCorsHeaders(req) });
   const corsHeaders = buildCorsHeaders(req);
+  let modeForLogs = "unknown";
+  const requestId = crypto.randomUUID();
 
   try {
     const { mode = "coach", message, context = {} } = await req.json();
+    modeForLogs = String(mode || "coach");
     const apiKey = Deno.env.get("OPENAI_API_KEY");
 
     if (!apiKey) {
@@ -362,7 +482,7 @@ Deno.serve(async (req) => {
     }
 
     const savedContext = await getSavedCoachContext(req);
-    const recentMessages = Array.isArray(savedContext?.recent_messages) ? savedContext.recent_messages.slice(-8) : [];
+    const promptContext = buildSavedCoachBrainForPrompt(savedContext, safeMessage);
     const data = await callResponsesApi(apiKey, {
       model: "gpt-5.1",
       max_output_tokens: getCoachMaxOutputTokens(safeMessage),
@@ -370,7 +490,7 @@ Deno.serve(async (req) => {
         { role: "system", content: buildCoachSystemPrompt(safeMessage) },
         {
           role: "user",
-          content: `User message:\n${safeMessage}\n\nResponse mode:\n${isCompactLookup(safeMessage) ? "compact_lookup" : "normal_coach"}\n\nHard truth mode:\n${isHardTruthRequest(safeMessage) ? "on" : "off"}\n\nFinancial context from saved server-side coach brain. Ignore any browser-sent financial context for normal coach chat:\n${JSON.stringify({ ...savedContext, recent_messages: recentMessages }, null, 2)}`,
+          content: `User message:\n${safeMessage}\n\nResponse mode:\n${isCompactLookup(safeMessage) ? "compact_lookup" : "normal_coach"}\n\nHard truth mode:\n${isHardTruthRequest(safeMessage) ? "on" : "off"}\n\nFinancial context from saved server-side coach brain. Ignore any browser-sent financial context for normal coach chat:\n${JSON.stringify(promptContext, null, 2)}`,
         },
       ],
     });
@@ -378,9 +498,19 @@ Deno.serve(async (req) => {
     const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "How can I help?";
     const reply = enforceCompactReply(rawReply, safeMessage);
     return new Response(JSON.stringify({ reply, model: "gpt-5.1", mode: "premium", context_source: "coach_context_snapshots" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-  } catch (_error) {
-    return new Response(JSON.stringify({ error: "AI request could not be completed right now." }), {
-      status: 500,
+  } catch (error) {
+    const publicError = error instanceof PublicFunctionError
+      ? error
+      : new PublicFunctionError("ai_coach_failed", "AI request could not be completed right now.", 500, error instanceof Error ? error.message : String(error));
+    console.error("ai-coach request failed", {
+      request_id: requestId,
+      mode: modeForLogs,
+      code: publicError.code,
+      status: publicError.status,
+      message: publicError.message,
+    });
+    return new Response(JSON.stringify({ error: publicError.publicMessage, code: publicError.code, request_id: requestId }), {
+      status: publicError.status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

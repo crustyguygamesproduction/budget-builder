@@ -1,13 +1,8 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
-import { buildCoachContext } from "../lib/coachContext";
 import { Section } from "../components/ui";
-import {
-  getDataFreshness,
-  getSubscriptionSummary,
-  getTopCategories,
-} from "../lib/dashboardIntelligence";
+import { getTopCategories } from "../lib/dashboardIntelligence";
 import {
   getDebtSignals,
   getInvestmentSignals,
@@ -24,11 +19,7 @@ export default function CoachPage({
   moneyUnderstanding,
   appMoneyModel,
   goals,
-  debts,
-  investments,
   aiMessages,
-  subscriptionStatus,
-  bankFeedReadiness,
   onChange,
   onTransactionRulesChange,
   screenWidth,
@@ -65,25 +56,9 @@ export default function CoachPage({
   const chatBottomRef = useRef(null);
   const latestMessageRef = useRef(null);
 
-  const totals = useMemo(() => ({
-    income: appMoneyModel?.income?.monthlyEstimate || 0,
-    spending: appMoneyModel?.flexibleSpending?.monthlyEstimate || 0,
-    bills: appMoneyModel?.monthlyBillTotal || 0,
-    net:
-      (appMoneyModel?.income?.monthlyEstimate || 0) -
-      (appMoneyModel?.monthlyBillTotal || 0) -
-      (appMoneyModel?.flexibleSpending?.monthlyEstimate || 0),
-    safeToSpend: appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0,
-    basis: "shared_money_model_monthly_estimate",
-  }), [appMoneyModel]);
   const debtSignals = useMemo(() => getDebtSignals(transactions), [transactions]);
   const investmentSignals = useMemo(() => getInvestmentSignals(transactions), [transactions]);
   const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
-  const subscriptionSummary = useMemo(
-    () => getSubscriptionSummary(transactions),
-    [transactions]
-  );
-  const dataFreshness = useMemo(() => getDataFreshness(transactions), [transactions]);
   const correctionCandidates = useMemo(
     () => (moneyUnderstanding?.checks || [])
       .filter((candidate) => !dismissedRuleKeys.includes(candidate.key))
@@ -230,34 +205,18 @@ export default function CoachPage({
         content: text,
       });
 
-      const context = buildCoachContext({
-        transactions,
-        debts,
-        investments,
-        debtSignals,
-        investmentSignals,
-        totals,
-        topCategories,
-        subscriptionSummary,
-        dataFreshness,
-        baseMessages,
-        userMessage: text,
-        subscriptionStatus,
-        bankFeedReadiness,
-        moneyUnderstanding,
-        appMoneyModel,
-      });
-
       const { data, error } = await supabase.functions.invoke("ai-coach", {
         body: {
           mode: "coach",
           message: text,
-          context,
         },
       });
 
       if (error) {
         throw new Error(error.message || "AI request failed.");
+      }
+      if (data?.error) {
+        throw new Error(data.error);
       }
 
       await supabase.from("ai_messages").insert({
