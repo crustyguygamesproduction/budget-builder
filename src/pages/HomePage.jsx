@@ -28,7 +28,8 @@ export default function HomePage({
     hasMatchingInvestment,
   } = helpers;
 
-  const dataFreshness = useMemo(() => getDataFreshness(transactions), [getDataFreshness, transactions]);
+  const fallbackDataFreshness = useMemo(() => getDataFreshness(transactions), [getDataFreshness, transactions]);
+  const dataFreshness = appMoneyModel?.dataFreshness || fallbackDataFreshness;
   const statementCoverage = useMemo(() => getStatementCoverageSummary(transactions, statementImports), [getStatementCoverageSummary, transactions, statementImports]);
   const visibleCash = useMemo(() => getVisibleCash(appMoneyModel, accounts), [appMoneyModel, accounts]);
   const calendarBills = useMemo(() => getCalendarBillRead(appMoneyModel), [appMoneyModel]);
