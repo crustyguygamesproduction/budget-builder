@@ -63,14 +63,14 @@ export default function HomePage({
 
         <div style={getHeroFocusGridStyle(screenWidth)}>
           <HeroFact
+            label="Bills to cover"
+            value={formatCurrency(billShare.personalTotal)}
+            detail="This month"
+          />
+          <HeroFact
             label="Next bill"
             value={nextBill ? `${nextBill.name}` : "None found"}
             detail={nextBill ? `${formatCurrency(nextBill.amount)} ${nextBill.when}` : "Calendar is quiet"}
-          />
-          <HeroFact
-            label={billShare.hasSharedMoney ? "Your bills after shared money" : "Bills this month"}
-            value={formatCurrency(billShare.personalTotal)}
-            detail={billShare.hasSharedMoney ? `Already allows for ${formatCurrency(billShare.sharedMoney)}` : `${calendarBills.count} bill${calendarBills.count === 1 ? "" : "s"} found by Calendar`}
           />
           <HeroFact
             label="Expected in"
@@ -80,7 +80,7 @@ export default function HomePage({
         </div>
       </section>
 
-      <Section title="Right Now" styles={styles}>
+      <Section title="Today’s call" styles={styles}>
         <div style={getNowCardStyle(homeRead.tone)}>
           <strong>{homeRead.headline}</strong>
           <span>{homeRead.nextMove}</span>
@@ -89,16 +89,13 @@ export default function HomePage({
             style={styles.primaryBtn}
             onClick={() => onGoToCoach(homeRead.prompt, { autoSend: true })}
           >
-            {homeRead.buttonLabel}
-          </button>
+            {homeRead.buttonLabel}</button>
         </div>
       </Section>
 
       <Section title="Your Next 30 Days" styles={styles}>
         <div style={styles.inlineInfoBlock}>
-          <Row name={billShare.hasSharedMoney ? "Your bills after shared money" : "Bills due"} value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
-          {billShare.hasSharedMoney ? <Row name="Full bills leaving account" value={`${formatCurrency(calendarBills.total)} before shared money`} styles={styles} /> : null}
-          {billShare.hasSharedMoney ? <Row name="Shared money already counted" value={`${formatCurrency(billShare.sharedMoney)} from someone else`} styles={styles} /> : null}
+          <Row name="Bills to cover" value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
           <Row name="Money expected in" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} next 30 days` : expectedIncome.label} styles={styles} />
           <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
           <Row name="Needs checking" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
@@ -114,7 +111,8 @@ export default function HomePage({
           ) : (
             <Shortcut title="Upload" body={dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
           )}
-          <Shortcut title="AI plan" body="What can I cut?" onClick={() => onGoToCoach("Look at my bills, expected income and recent spending. Tell me the one most useful thing to cut or fix this week.", { autoSend: true })} />
+          <Shortcut title="Lower bills" body="Find easy wins" onClick={() => onGoToCoach("Look at my bills and subscriptions. Find realistic ways to lower them without a lecture.", { autoSend: true })} />
+          <Shortcut title="AI plan" body="What should I do today?" onClick={() => onGoToCoach("Look at my current balance, bills, expected income and recent spending. Tell me what I should do today in plain English.", { autoSend: true })} />
           {unlinkedDebtSignals.length || debts.length ? <Shortcut title="Debts" body="Repayments" onClick={() => onNavigate("debts")} /> : null}
           {unlinkedInvestmentSignals.length || investments.length ? <Shortcut title="Invest" body="Keep safe first" onClick={() => onNavigate("investments")} /> : null}
           {!subscriptionStatus?.isPremium && bankFeedReadiness ? <Shortcut title="More" body="Settings" onClick={() => onNavigate("settings")} /> : null}
@@ -211,21 +209,18 @@ function getCalendarBillRead(appMoneyModel) {
 
 function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome }) {
   const hasBills = billShare.personalTotal > 0;
-  const billPhrase = billShare.hasSharedMoney
-    ? `${formatCurrency(billShare.personalTotal)} of bills to cover yourself. This already allows for ${formatCurrency(billShare.sharedMoney)} expected from shared bills.`
-    : `${formatCurrency(calendarBills.total)} of bills`;
   const nextBillText = nextBill ? `${nextBill.name} for ${formatCurrency(nextBill.amount)} ${nextBill.when}` : "no next bill found yet";
-  const incomeText = expectedIncome?.hasExpectedIncome ? `Expected income: ${formatCurrency(expectedIncome.amount)}. ` : "";
+  const expectedText = expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} expected in` : "money is next in";
 
   if (!dataFreshness.hasData) {
     return {
       tone: "neutral",
       badge: "Start",
-      label: "No bank history yet",
+      label: "Start here",
       amount: "No data",
-      body: "Upload a statement and Money Hub will show bills, income, spending and the first safe goal.",
-      headline: "Start with one statement",
-      nextMove: "One upload is enough to get the first useful read.",
+      body: "Add a bank statement and Money Hub will show what needs paying, what is coming in, and what to do first.",
+      headline: "Add your first statement",
+      nextMove: "One upload is enough to get a first useful read.",
       buttonLabel: "Help me start",
       prompt: "Help me start Money Hub with one bank statement. Tell me exactly what to do next.",
     };
@@ -235,13 +230,13 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
     return {
       tone: "bad",
       badge: "Urgent",
-      label: "Do not spend money",
+      label: "Nothing spare today",
       amount: formatCurrency(visibleCash.total),
-      body: `You have ${formatCurrency(visibleCash.total)} showing. Money Hub sees ${billPhrase} ${incomeText}Next leaving your account: ${nextBillText}.`,
-      headline: "Freeze non-essential spending today",
-      nextMove: expectedIncome?.hasExpectedIncome ? "Protect the next income before spending it. Food, travel to work and bills only until money lands." : "Food, travel to work and bills only. No takeaways, shopping, gaming or top-ups until money is showing.",
+      body: `${formatCurrency(billShare.personalTotal)} still needs covering this month. ${expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} is expected soon.` : "No clear money coming in yet."} Keep it boring today.`,
+      headline: "Don’t spend from this account today",
+      nextMove: `Bills only until ${expectedText}. No takeaways, shops, gaming or random top-ups. Next bill: ${nextBillText}.`,
       buttonLabel: "Make 7-day plan",
-      prompt: `Across the money Money Hub can see, I have ${formatCurrency(visibleCash.total)} showing, ${billPhrase} ${incomeText}and my next bill leaving the account is ${nextBillText}. Give me a simple 7-day emergency plan.`,
+      prompt: `I have ${formatCurrency(visibleCash.total)} showing, ${formatCurrency(billShare.personalTotal)} of bills to cover this month, ${expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} expected in` : "no clear incoming money"}, and my next bill is ${nextBillText}. Give me a short, human, practical 7-day plan.`,
     };
   }
 
@@ -249,13 +244,13 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
     return {
       tone: "bad",
       badge: "Short",
-      label: "Bills are bigger than balance",
+      label: "Short this month",
       amount: formatCurrency(visibleCash.total),
-      body: `Money Hub sees ${billPhrase} You look ${formatCurrency(Math.abs(moneyLeft))} short before normal spending. ${incomeText}`,
+      body: `${formatCurrency(billShare.personalTotal)} needs covering this month. You look ${formatCurrency(Math.abs(moneyLeft))} short before normal spending.`,
       headline: "Keep spending locked down",
-      nextMove: `Next leaving your account: ${nextBillText}. Do not add new spending until this is covered.`,
+      nextMove: `Next bill: ${nextBillText}. No extra spending until this is covered.`,
       buttonLabel: "Make shortfall plan",
-      prompt: `My visible balance is ${formatCurrency(visibleCash.total)}, Money Hub sees ${billPhrase} ${incomeText}and I look ${formatCurrency(Math.abs(moneyLeft))} short. Make a simple plan.`,
+      prompt: `My visible balance is ${formatCurrency(visibleCash.total)}, bills to cover are ${formatCurrency(billShare.personalTotal)}, and I look ${formatCurrency(Math.abs(moneyLeft))} short. Make a simple plan.`,
     };
   }
 
@@ -263,26 +258,26 @@ function getHomeRead({ visibleCash, calendarBills, billShare, nextBill, moneyLef
     return {
       tone: "warn",
       badge: "No balance",
-      label: "Current cash is missing",
+      label: "Need today’s balance",
       amount: "Need balance",
-      body: `Money Hub sees ${billPhrase} ${incomeText}Next leaving your account: ${nextBillText}. It needs a current balance before saying what you can spend.`,
+      body: `${formatCurrency(billShare.personalTotal)} needs covering this month. Add today’s balance before trusting spending room.`,
       headline: "Good pattern, missing today",
-      nextMove: "The app can show bills and expected income, but not real spending room until a balance or latest statement is in.",
+      nextMove: "Money Hub can see bills and expected income, but not what you can spend right now.",
       buttonLabel: "Ask what is safe",
-      prompt: `Money Hub sees ${billPhrase} ${incomeText}next leaving the account is ${nextBillText}, but no current balance. Tell me what I can safely assume.`,
+      prompt: `Money Hub sees ${formatCurrency(billShare.personalTotal)} of bills to cover this month, next bill ${nextBillText}, but no current balance. Tell me what I can safely assume.`,
     };
   }
 
   return {
     tone: moneyLeft <= 25 ? "warn" : "good",
     badge: moneyLeft <= 25 ? "Tight" : "OK",
-    label: billShare.hasSharedMoney ? "Money after your bills" : "Money after Calendar bills",
+    label: "Left after bills",
     amount: formatCurrency(Math.max(moneyLeft, 0)),
-    body: `After ${billPhrase} this is the cautious amount left from the visible balance. ${incomeText}Next leaving your account: ${nextBillText}.`,
+    body: `${formatCurrency(billShare.personalTotal)} needs covering this month. ${expectedIncome?.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} expected in.` : "Incoming money is not clear yet."}`,
     headline: moneyLeft <= 25 ? "Keep it careful" : "You have some room",
     nextMove: moneyLeft <= 25 ? "Treat this as tight. Keep spending boring until more money lands." : "Bills are covered in this read. Still keep some back for surprises.",
     buttonLabel: "Check my week",
-    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${billPhrase} ${incomeText}Next bill: ${nextBillText}.`,
+    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${formatCurrency(billShare.personalTotal)} of bills to cover. Next bill: ${nextBillText}.`,
   };
 }
 
@@ -325,19 +320,19 @@ function getPrimaryGoal(goals) {
 
 function getBigMoneyStyle(screenWidth) {
   return {
-    fontSize: screenWidth <= 390 ? 40 : screenWidth <= 520 ? 48 : 58,
-    lineHeight: 0.98,
-    margin: "6px 0 10px",
-    letterSpacing: 0,
+    fontSize: screenWidth <= 390 ? 46 : screenWidth <= 520 ? 58 : 72,
+    lineHeight: 0.94,
+    margin: "8px 0 12px",
+    letterSpacing: "-0.04em",
   };
 }
 
 function getHeroFocusGridStyle(screenWidth) {
   return {
     display: "grid",
-    gridTemplateColumns: screenWidth <= 520 ? "1fr" : "1.2fr 1fr 1fr",
+    gridTemplateColumns: screenWidth <= 520 ? "1fr" : "repeat(3, minmax(0, 1fr))",
     gap: 10,
-    marginTop: 16,
+    marginTop: 18,
   };
 }
 
