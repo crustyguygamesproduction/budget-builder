@@ -42,7 +42,6 @@ export default function HomePage({
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const unlinkedInvestmentSignals = investmentSignals.filter((signal) => !hasMatchingInvestment(signal, investments));
   const latestTransactions = transactions.slice(0, 3);
-  const topFlexible = appMoneyModel?.flexibleSpending?.topCategories?.[0] || null;
 
   return (
     <>
@@ -70,7 +69,7 @@ export default function HomePage({
           <HeroFact
             label="Bills this month"
             value={formatCurrency(calendarBills.total)}
-            detail={`${calendarBills.count} found by Calendar`}
+            detail={`${calendarBills.count} bill${calendarBills.count === 1 ? "" : "s"} found by Calendar`}
           />
           <HeroFact
             label="Expected in"
@@ -94,13 +93,12 @@ export default function HomePage({
         </div>
       </Section>
 
-      <Section title="What Money Hub Found" styles={styles}>
+      <Section title="Your Next 30 Days" styles={styles}>
         <div style={styles.inlineInfoBlock}>
-          <Row name="Calendar bills" value={`${formatCurrency(calendarBills.total)} across ${calendarBills.count}`} styles={styles} />
-          <Row name="Expected income" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} in 30 days` : expectedIncome.label} styles={styles} />
-          <Row name="Checks waiting" value={checksWaitingCount ? `${checksWaitingCount} to answer` : "Nothing urgent"} styles={styles} />
-          <Row name="Income" value={appMoneyModel?.income?.label || "Not clear yet"} styles={styles} />
-          <Row name="Usual spending" value={appMoneyModel?.flexibleSpending?.label || "Needs checking"} styles={styles} />
+          <Row name="Bills due" value={`${formatCurrency(calendarBills.total)} this month`} styles={styles} />
+          <Row name="Money expected in" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} next 30 days` : expectedIncome.label} styles={styles} />
+          <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
+          <Row name="Needs checking" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
         </div>
       </Section>
 
@@ -113,9 +111,7 @@ export default function HomePage({
           ) : (
             <Shortcut title="Upload" body={dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
           )}
-          {topFlexible ? (
-            <Shortcut title="Spending" body={`${topFlexible.category}: ${formatCurrency(topFlexible.total)}`} onClick={() => onGoToCoach(`Look at my ${topFlexible.category} spending and tell me the one easiest thing to cut.`, { autoSend: true })} />
-          ) : null}
+          <Shortcut title="AI plan" body="What can I cut?" onClick={() => onGoToCoach("Look at my bills, expected income and recent spending. Tell me the one most useful thing to cut or fix this week.", { autoSend: true })} />
           {unlinkedDebtSignals.length || debts.length ? <Shortcut title="Debts" body="Repayments" onClick={() => onNavigate("debts")} /> : null}
           {unlinkedInvestmentSignals.length || investments.length ? <Shortcut title="Invest" body="Keep safe first" onClick={() => onNavigate("investments")} /> : null}
           {!subscriptionStatus?.isPremium && bankFeedReadiness ? <Shortcut title="More" body="Settings" onClick={() => onNavigate("settings")} /> : null}
