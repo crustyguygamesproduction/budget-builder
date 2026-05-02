@@ -12,6 +12,7 @@ const DEFAULT_STOP_WORDS = new Set([
   "for",
   "from",
   "have",
+  "has",
   "how",
   "in",
   "into",
@@ -30,8 +31,8 @@ const DEFAULT_STOP_WORDS = new Set([
   "payment",
   "payments",
   "received",
-  "sent",
   "send",
+  "sent",
   "spend",
   "spending",
   "spent",
@@ -41,8 +42,11 @@ const DEFAULT_STOP_WORDS = new Set([
   "to",
   "total",
   "transfer",
+  "transferred",
   "transfers",
   "uploaded",
+  "was",
+  "were",
   "what",
   "when",
   "with",
@@ -60,18 +64,20 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
   const relevantFilter = options.relevantFilter || (() => true);
   const groupLimit = Number(options.groupLimit || 20);
   const exampleLimit = Number(options.exampleLimit || 120);
-  const terms = getSearchTerms(query, options.stopWords);
-  const directionIntent = getQueryDirectionIntent(query);
+  const parsedQuery = parseMoneyLookupQuery(query);
+  const terms = getSearchTerms(query, options.stopWords, parsedQuery);
+  const directionIntent = parsedQuery.directionIntent || getQueryDirectionIntent(query);
   const personalMoneyIntent = hasPersonalMoneyIntent(query) || directionIntent === "incoming" || directionIntent === "outgoing";
   const timeWindow = getQueryTimeWindow(transactions, query, { getDate, anchorDate: options.anchorDate || options.latestTransactionDate });
   const scopedTransactions = timeWindow.matched
     ? transactions.filter((transaction) => isTransactionInTimeWindow(transaction, timeWindow, getDate))
     : transactions;
 
-  if (terms.length === 0) {
+  if (terms.length === 0 && !parsedQuery.searchPhrase) {
     return {
       original_query: query,
       search_terms: terms,
+      search_phrase: "",
       direction_intent: directionIntent,
       personal_money_intent: personalMoneyIntent,
       time_window: timeWindow,
@@ -95,7 +101,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
   const matches = scopedTransactions
     .map((transaction, index) => ({
       transaction,
-      score: scoreTransactionForTerms(transaction, terms, getSearchText),
+      score: scoreTransactionForTerms(transaction, terms, getSearchText, parsedQuery.searchPhrase),
       index,
     }))
     .filter((item) => item.score > 0)
@@ -121,6 +127,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
   return {
     original_query: query,
     search_terms: terms,
+    search_phrase: parsedQuery.searchPhrase,
     direction_intent: directionIntent,
     personal_money_intent: personalMoneyIntent,
     time_window: timeWindow,
@@ -141,6 +148,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
       directionIntent,
       personalMoneyIntent,
       timeWindow,
+      searchPhrase: parsedQuery.searchPhrase,
       noteSuffix: options.noteSuffix,
     }),
   };
@@ -163,6 +171,24 @@ export function getQueryTimeWindow(transactions = [], query = "", options = {}) 
     return {
       label: "latest 30 days of uploaded data",
       start: toIsoDate(addDays(anchor, -30)),
+      end: toIsoDate(anchor),
+      matched: true,
+    };
+  }
+
+  if (/\b(latest|last|past)\s+7\s+days?\b/.test(text) || /\bover\s+the\s+last\s+7\s+days?\b/.test(text)) {
+    return {
+      label: "latest 7 days of uploaded data",
+      start: toIsoDate(addDays(anchor, -7)),
+      end: toIsoDate(anchor),
+      matched: true,
+    };
+  }
+
+  if (/\b(latest|last|past)\s+90\s+days?\b/.test(text) || /\bover\s+the\s+last\s+90\s+days?\b/.test(text)) {
+    return {
+      label: "latest 90 days of uploaded data",
+      start: toIsoDate(addDays(anchor, -90)),
       end: toIsoDate(anchor),
       matched: true,
     };
@@ -206,7 +232,15 @@ export function getQueryDirectionIntent(query) {
     return "incoming";
   }
 
+  if (/\b(?:did|has|have)?\s*[a-z0-9 ]+\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:me|to me)\b/.test(text)) {
+    return "incoming";
+  }
+
   if (/\b(i sent|i send|sent to|send to|sent out|send out|i paid|paid to|pay to|money to|transferred to|transfer to|gave|give money|send people|sent people|send to people|spent|spend|spending|bought|buying|purchased|purchase)\b/.test(text)) {
+    return "outgoing";
+  }
+
+  if (/\b(?:did\s+)?i\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:money\s+)?(?:to\s+)?[a-z0-9 ]+\b/.test(text)) {
     return "outgoing";
   }
 
@@ -222,10 +256,13 @@ export function hasPersonalMoneyIntent(query) {
   return /\b(friend|friends|family|mum|mother|dad|father|brother|sister|mate|mates|people|person|personal|loaned|lent|borrowed|gift|gifts|sent me|send me|paid me|pay me|transferred me|transfer me)\b/.test(text);
 }
 
-export function getSearchTerms(query, extraStopWords = []) {
+export function getSearchTerms(query, extraStopWords = [], parsedQuery = null) {
   const stopWords = new Set([...DEFAULT_STOP_WORDS, ...extraStopWords]);
-  return [...new Set(normalizeText(query).split(" "))]
-    .filter((term) => term.length >= 3 && !stopWords.has(term))
+  const source = parsedQuery?.searchPhrase || stripLookupNoise(query);
+  const minLength = parsedQuery?.searchPhrase ? 2 : 3;
+
+  return [...new Set(normalizeText(source).split(" "))]
+    .filter((term) => term.length >= minLength && !stopWords.has(term) && !/^\d+$/.test(term))
     .slice(0, 8);
 }
 
@@ -240,6 +277,69 @@ export function normalizeText(value) {
 
 export function roundMoney(value) {
   return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function parseMoneyLookupQuery(query) {
+  const text = stripLookupNoise(query);
+  const directionIntent = getQueryDirectionIntent(query);
+  let searchPhrase = "";
+
+  if (directionIntent === "incoming") {
+    searchPhrase = firstCapture(text, [
+      /(?:^|\b)(?:did|has|have)?\s*(.+?)\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:me|to me)\b/,
+      /(?:^|\b)(?:received|money in|income)\s+from\s+(.+?)\b/,
+      /(?:^|\b)from\s+(.+?)\b/,
+    ]);
+  } else if (directionIntent === "outgoing") {
+    searchPhrase = firstCapture(text, [
+      /(?:^|\b)(?:did\s+)?i\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:money\s+)?(?:to\s+)?(.+?)\b/,
+      /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
+      /(?:^|\b)(?:at|on|to)\s+(.+?)\b/,
+    ]);
+  } else {
+    searchPhrase = firstCapture(text, [
+      /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
+      /(?:^|\b)(?:with|from|at|on|to)\s+(.+?)\b/,
+    ]);
+  }
+
+  return {
+    directionIntent,
+    searchPhrase: cleanupSearchPhrase(searchPhrase),
+  };
+}
+
+function stripLookupNoise(query) {
+  return normalizeText(query)
+    .replace(/\b(over|in|within|during|for)\s+(the\s+)?(latest|last|past)\s+\d+\s+days?\b/g, " ")
+    .replace(/\b(latest|last|past)\s+\d+\s+days?\b/g, " ")
+    .replace(/\b(this|last|latest)\s+month\b/g, " ")
+    .replace(/\bof\s+uploaded\s+data\b/g, " ")
+    .replace(/\buploaded\s+data\b/g, " ")
+    .replace(/\bhow\s+much\b/g, " ")
+    .replace(/\bwhat\s+total\b/g, " ")
+    .replace(/\btotal\b/g, " ")
+    .replace(/\?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstCapture(text, patterns) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+function cleanupSearchPhrase(value) {
+  const phrase = normalizeText(value)
+    .replace(/\b(did|does|do|has|have|was|were|i|me|my|you|your|send|sent|pay|paid|transfer|transferred|give|gave|spend|spent|spending|received|from|to|on|at|with|over|last|latest|past|days|day|month|data|uploaded|money|total|how|much)\b/g, " ")
+    .replace(/\b\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return phrase;
 }
 
 function filterByDirectionIntent(transactions, directionIntent, getAmount) {
@@ -272,7 +372,7 @@ function getRelevantMoneyLabel(directionIntent) {
   return "all_matching_money_absolute";
 }
 
-function buildQueryFocusNote({ matches, relevantMatches, directionIntent, personalMoneyIntent, timeWindow, noteSuffix }) {
+function buildQueryFocusNote({ matches, relevantMatches, directionIntent, personalMoneyIntent, timeWindow, searchPhrase, noteSuffix }) {
   const directionText =
     directionIntent === "incoming"
       ? "incoming money only because the question asks about money sent to/received by the user"
@@ -284,24 +384,29 @@ function buildQueryFocusNote({ matches, relevantMatches, directionIntent, person
   const personalText = personalMoneyIntent
     ? " Rent, bills, subscriptions, business/work payments, pass-through flows and payees with rent/bill-tagged transactions have been excluded from relevant personal-payment matches."
     : "";
+  const phraseText = searchPhrase ? ` Search phrase interpreted as '${searchPhrase}'.` : "";
   const capText =
     matches.length > relevantMatches.length || matches.length > 120 || relevantMatches.length > 120
       ? ` Showing example transactions, but totals use all direct matches${timeWindow?.matched ? ` inside ${timeWindow.label} (${timeWindow.start} to ${timeWindow.end})` : " across full uploaded history"}.`
       : ` Showing all direct matches${timeWindow?.matched ? ` inside ${timeWindow.label} (${timeWindow.start} to ${timeWindow.end})` : " across full uploaded history"}.`;
 
-  return `${directionText}.${personalText}${capText}${noteSuffix ? ` ${noteSuffix}` : ""}`;
+  return `${directionText}.${personalText}${phraseText}${capText}${noteSuffix ? ` ${noteSuffix}` : ""}`;
 }
 
-function scoreTransactionForTerms(transaction, terms, getSearchText) {
+function scoreTransactionForTerms(transaction, terms, getSearchText, searchPhrase = "") {
   const haystack = normalizeText(getSearchText(transaction));
   if (!haystack) return 0;
 
-  return terms.reduce((score, term) => {
+  const phrase = normalizeText(searchPhrase);
+  const phraseScore = phrase && haystack.includes(phrase) ? 30 : 0;
+  const termScore = terms.reduce((score, term) => {
     const exactWord = new RegExp(`(^|\\s)${escapeRegExp(term)}(\\s|$)`).test(haystack);
     if (exactWord) return score + 4;
     if (haystack.includes(term)) return score + 2;
     return score;
   }, 0);
+
+  return phraseScore + termScore;
 }
 
 function isTransactionInTimeWindow(transaction, timeWindow, getDate) {
