@@ -4,6 +4,7 @@ import { buildStrongBillFallbackEvents, mergeRecurringEvents } from "./billFallb
 import { getRealWorldMerchant, getFriendlyTransactionName } from "./merchantIntelligence";
 import { buildRecurringMajorPaymentCandidates } from "./transactionCategorisation";
 import { formatCurrency, normalizeText } from "./finance";
+import { cleanBillName, mergeBillStreams } from "./moneyUnderstandingGuards";
 
 export function buildMoneyUnderstanding({ transactions = [], transactionRules = [], snapshot = null } = {}) {
   const smartTransactions = enhanceTransactions(transactions, transactionRules).map((transaction) => {
@@ -23,9 +24,16 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
     };
   });
 
+  const localEvents = mergeRecurringEvents([
+    ...getSmartRecurringCalendarEvents(smartTransactions),
+    ...buildStrongBillFallbackEvents(smartTransactions, []),
+  ]);
+  const localBillStreams = eventsToBillStreams(localEvents);
+
   if (snapshot?.id) {
-    const billStreams = normaliseSnapshotBillStreams(snapshot.bill_streams);
-    const recurringEvents = normaliseSnapshotRecurringEvents(snapshot.recurring_events, billStreams);
+    const snapshotStreams = normaliseSnapshotBillStreams(snapshot.bill_streams);
+    const billStreams = mergeBillStreams(snapshotStreams, localBillStreams);
+    const recurringEvents = billStreamsToRecurringEvents(billStreams);
     const checks = normaliseSnapshotChecks(snapshot.checks);
     const upcomingBills = getUpcomingBills(billStreams);
     const upcomingBillsTotal = upcomingBills.reduce((sum, bill) => sum + Number(bill.amount || 0), 0);
@@ -37,8 +45,8 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
       upcomingBillsTotal,
       nextBill: upcomingBills[0] || null,
       includesRent: billStreams.some((stream) => /rent|landlord|letting|mortgage/i.test(`${stream.name} ${stream.kind}`)),
-      source: "ai-organised",
-      plainEnglish: snapshot.summary?.plainEnglish || (billStreams.length ? `${billStreams.length} regular bill${billStreams.length === 1 ? "" : "s"} found. ${formatCurrency(upcomingBillsTotal)} is expected in the next month.` : "No regular bills are solid enough to forecast yet."),
+      source: "ai-organised-guarded",
+      plainEnglish: billStreams.length ? `${billStreams.length} regular bill${billStreams.length === 1 ? "" : "s"} found. ${formatCurrency(upcomingBillsTotal)} is expected in the next month.` : "No regular bills are solid enough to forecast yet.",
     };
 
     return {
@@ -49,28 +57,12 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
       summary,
       aiContext: snapshot.ai_context || buildAiContext({ smartTransactions, billStreams, checks, summary }),
       snapshot,
-      source: "ai-organised",
+      source: "ai-organised-guarded",
     };
   }
 
-  const detectedRecurringEvents = getSmartRecurringCalendarEvents(smartTransactions);
-  const recurringEvents = mergeRecurringEvents([
-    ...detectedRecurringEvents,
-    ...buildStrongBillFallbackEvents(smartTransactions, detectedRecurringEvents),
-  ]);
-  const billStreams = recurringEvents
-    .filter((event) => Number(event.amount || 0) < 0)
-    .map((event) => ({
-      key: event.key,
-      name: event.title,
-      amount: Math.abs(Number(event.amount || 0)),
-      day: event.day,
-      kind: event.kind || "bill",
-      confidence: event.confidenceLabel || "estimated",
-      note: event.estimateNote || "",
-      sourceCount: event.sourceCount || 0,
-      sourceMonths: event.sourceMonths || 0,
-    }));
+  const recurringEvents = localEvents;
+  const billStreams = localBillStreams;
   const checks = buildChecks({
     candidates: buildRecurringMajorPaymentCandidates(smartTransactions, transactionRules),
     billStreams,
@@ -108,11 +100,43 @@ function getSnapshotTransaction(snapshot, id) {
   return (snapshot.transactions || []).find((item) => String(item.id) === String(id)) || null;
 }
 
+function eventsToBillStreams(events = []) {
+  return (events || [])
+    .filter((event) => Number(event.amount || 0) < 0)
+    .map((event) => ({
+      key: event.key,
+      name: cleanBillName(event.title),
+      amount: Math.abs(Number(event.amount || 0)),
+      day: event.day,
+      kind: event.kind || "bill",
+      confidence: event.confidenceLabel || "estimated",
+      note: event.estimateNote || "",
+      sourceCount: event.sourceCount || 0,
+      sourceMonths: event.sourceMonths || 0,
+    }));
+}
+
+function billStreamsToRecurringEvents(billStreams = []) {
+  return (billStreams || []).map((stream) => ({
+    key: stream.key,
+    title: cleanBillName(stream.name),
+    amount: -Math.abs(Number(stream.amount || 0)),
+    day: stream.day || 1,
+    month: null,
+    kind: stream.kind === "subscription" ? "subscription" : "bill",
+    kindLabel: stream.kind === "subscription" ? "Subscription" : "Bill",
+    confidenceLabel: stream.confidence || "medium",
+    estimateNote: stream.note || "Organised from your uploaded statements.",
+    sourceCount: stream.sourceCount || 0,
+    sourceMonths: stream.sourceMonths || 0,
+  }));
+}
+
 function normaliseSnapshotBillStreams(items = []) {
   return (items || [])
     .map((item) => ({
       key: item.key || item.name,
-      name: item.name || item.title || "Bill",
+      name: cleanBillName(item.name || item.title || "Bill"),
       amount: Math.abs(Number(item.amount ?? item.usual_amount ?? 0)),
       day: Number(item.day ?? item.usual_day ?? 1) || 1,
       kind: item.kind || "bill",
@@ -124,38 +148,6 @@ function normaliseSnapshotBillStreams(items = []) {
     }))
     .filter((item) => item.amount > 0)
     .sort((a, b) => a.day - b.day || b.amount - a.amount);
-}
-
-function normaliseSnapshotRecurringEvents(items = [], billStreams = []) {
-  const events = (items || []).map((item) => ({
-    key: item.key || item.title,
-    title: item.title || item.name || "Bill",
-    amount: Number(item.amount || 0) < 0 ? Number(item.amount) : -Math.abs(Number(item.amount || item.usual_amount || 0)),
-    day: Number(item.day || item.usual_day || 1) || 1,
-    month: null,
-    kind: item.kind || "bill",
-    kindLabel: item.kindLabel || (item.kind === "subscription" ? "Subscription" : "Bill"),
-    confidenceLabel: item.confidenceLabel || item.confidence || "medium",
-    estimateNote: item.estimateNote || item.evidence || "AI organised from your uploaded statements.",
-    sourceCount: item.sourceCount || (Array.isArray(item.source_transaction_ids) ? item.source_transaction_ids.length : 0),
-    sourceMonths: item.sourceMonths || 0,
-  })).filter((event) => event.amount < 0);
-
-  if (events.length) return events;
-
-  return billStreams.map((stream) => ({
-    key: stream.key,
-    title: stream.name,
-    amount: -Math.abs(Number(stream.amount || 0)),
-    day: stream.day || 1,
-    month: null,
-    kind: stream.kind === "subscription" ? "subscription" : "bill",
-    kindLabel: stream.kind === "subscription" ? "Subscription" : "Bill",
-    confidenceLabel: stream.confidence || "medium",
-    estimateNote: stream.note || "AI organised from your uploaded statements.",
-    sourceCount: stream.sourceCount || 0,
-    sourceMonths: stream.sourceMonths || 0,
-  }));
 }
 
 function normaliseSnapshotChecks(items = []) {
