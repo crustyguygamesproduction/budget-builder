@@ -8,6 +8,8 @@ export default function DebtsPage({
   debts,
   debtSignals,
   transactions,
+  moneyUnderstanding,
+  appMoneyModel,
   documents,
   onChange,
   onDocumentsChange,
@@ -49,6 +51,11 @@ export default function DebtsPage({
   const unlinkedSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const totalDetectedPayments = debtSignals.reduce((sum, item) => sum + item.total, 0);
   const debtSnapshot = getDebtPortfolioSnapshot(debts, transactions);
+  const calendarDebtBills = (moneyUnderstanding?.billStreams || []).filter((stream) =>
+    /debt|loan|credit|finance/i.test(`${stream.kind || ""} ${stream.name || ""}`)
+  );
+  const calendarDebtMonthly = calendarDebtBills.reduce((sum, stream) => sum + Math.abs(Number(stream.amount || 0)), 0);
+  const safeExtraPayment = Math.max(Number(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0), 0);
 
   function fillFromSignal(signal) {
     setForm({
@@ -312,7 +319,7 @@ export default function DebtsPage({
       <div style={styles.grid}>
         <MiniCard styles={styles} title="Debts" value={`${debts.length}`} />
         <MiniCard styles={styles} title="Signals" value={`${unlinkedSignals.length}`} />
-        <MiniCard styles={styles} title="Detected Paid Out" value={`£${totalDetectedPayments.toFixed(2)}`} />
+        <MiniCard styles={styles} title="Detected Paid Out" value={formatCurrency(totalDetectedPayments)} />
         <MiniCard styles={styles} title="Trend" value={trendSummary.label} />
       </div>
 
@@ -320,9 +327,15 @@ export default function DebtsPage({
         <div style={styles.grid}>
           <MiniCard styles={styles} title="Balance" value={formatCurrency(debtSnapshot.totalBalance)} />
           <MiniCard styles={styles} title="Minimums" value={formatCurrency(debtSnapshot.totalMinimum)} />
+          <MiniCard styles={styles} title="Calendar debt bills" value={formatCurrency(calendarDebtMonthly)} />
           <MiniCard styles={styles} title="Paid This Month" value={formatCurrency(debtSnapshot.totalPaidThisMonth)} />
           <MiniCard styles={styles} title="Behind" value={`${debtSnapshot.behindCount}`} />
         </div>
+        <p style={styles.sectionIntro}>
+          {safeExtraPayment > 0
+            ? `A cautious extra debt payment should stay under ${formatCurrency(safeExtraPayment)} unless your current balance says otherwise.`
+            : "No extra debt payment looks safe yet. Cover Calendar bills first, then check this again."}
+        </p>
       </Section>
 
       <Section styles={styles} title="Tell AI About A Debt">

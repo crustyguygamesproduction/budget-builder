@@ -8,6 +8,7 @@ export default function InvestmentsPage({
   investments,
   investmentSignals,
   transactions,
+  appMoneyModel,
   documents,
   onChange,
   onDocumentsChange,
@@ -60,6 +61,8 @@ export default function InvestmentsPage({
     0
   );
   const investmentSnapshot = getInvestmentPortfolioSnapshot(investments);
+  const safeInvestingRoom = Math.max(Number(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0), 0);
+  const billsFirstWarning = safeInvestingRoom <= 0 || appMoneyModel?.income?.confidence === "low";
 
   function fillFromSignal(signal) {
     setForm({
@@ -397,6 +400,11 @@ export default function InvestmentsPage({
           <MiniCard styles={styles} title="Gain/Loss" value={`${investmentSnapshot.gainLoss >= 0 ? "+" : "-"}${formatCurrency(Math.abs(investmentSnapshot.gainLoss))}`} />
           <MiniCard styles={styles} title="Live Priced" value={`${investmentSnapshot.pricedCount}`} />
         </div>
+        <p style={styles.sectionIntro}>
+          {billsFirstWarning
+            ? "Do not increase investing yet. Money Hub cannot see safe spare money after Calendar bills and usual spending."
+            : `Keep regular investing under the shared safe amount of ${formatCurrency(safeInvestingRoom)} unless you know your current cash is stronger.`}
+        </p>
       </Section>
 
       <Section styles={styles} title="Tell AI About An Investment">

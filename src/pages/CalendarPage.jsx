@@ -83,15 +83,9 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     [missingBillCandidates, hiddenCandidateKeys, confirmedCandidateKeys]
   );
   const hiddenSuggestionRules = useMemo(
-  () => dedupeHiddenSuggestionRules(
-    (transactionRules || []).filter((rule) => {
-      const ruleType = normalizeText(rule.rule_type || "");
-      const category = normalizeText(rule.category || "");
-      return Boolean(rule.match_text) && (ruleType === "calendar_suppression" || category === "ignore for calendar");
-    })
-  ),
-  [transactionRules]
-);
+    () => dedupeHiddenSuggestionRules(transactionRules || []),
+    [transactionRules]
+  );
   const shortTimeframe = isShortTimeframe(timeframe);
   const usingShortHistoryView = shortTimeframe && calendarMode === "history";
   const shortWindowSize = getTimeframeDayCount(timeframe);
@@ -659,7 +653,13 @@ function niceCandidateName(value) {
   return cleanCandidateText(value).split(" ").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") || "Possible bill";
 }
 function dedupeHiddenSuggestionRules(rules = []) {
-  return (rules || []).reduce((list, rule) => {
+  const suppressions = (rules || []).filter((rule) => {
+    const ruleType = normalizeText(rule.rule_type || "");
+    const category = normalizeText(rule.category || "");
+    return Boolean(rule.match_text) && (ruleType === "calendar_suppression" || category === "ignore for calendar");
+  });
+
+  return suppressions.filter((rule) => latestSuppressionWins(rule, rules)).reduce((list, rule) => {
     const providerKey = getProviderKey(rule.match_text || "");
     const amount = Math.abs(Number(rule.match_amount || 0));
     const matchIndex = list.findIndex((existing) => {
@@ -677,6 +677,23 @@ function dedupeHiddenSuggestionRules(rules = []) {
 
     return list.map((item, index) => (index === matchIndex ? better : item));
   }, []);
+}
+
+function latestSuppressionWins(suppressionRule, rules = []) {
+  const providerKey = getProviderKey(suppressionRule.match_text || "");
+  const amount = Math.abs(Number(suppressionRule.match_amount || 0));
+  const suppressionTime = ruleTime(suppressionRule);
+  const latestConfirmedTime = Math.max(0, ...(rules || []).filter((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
+    const ruleProviderKey = getProviderKey(rule.match_text || "");
+    if (!providerKey || !ruleProviderKey) return false;
+    const sameProvider = providerKey === ruleProviderKey || providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(providerKey);
+    const ruleAmount = Math.abs(Number(rule.match_amount || 0));
+    const sameAmount = !amount || !ruleAmount || amountsClose(amount, ruleAmount, 0.18, 3);
+    return sameProvider && sameAmount;
+  }).map(ruleTime));
+  return suppressionTime >= latestConfirmedTime;
 }
 
 function shortenHiddenNote(value) {
@@ -725,7 +742,7 @@ function candidateMatchesExistingBill(candidate, events = []) {
 }
 
 function isSuppressedByCalendarRules(candidate, transactionRules = []) {
-  return (transactionRules || []).some((rule) => {
+  const matchingSuppressions = (transactionRules || []).filter((rule) => {
     const category = normalizeText(rule?.category || "");
     const saysNotBill = rule?.rule_type === "calendar_suppression" || (!rule?.is_bill && !rule?.is_subscription && ["ignore for calendar", "not a bill", "spending", "personal payment"].includes(category));
     if (!saysNotBill) return false;
@@ -736,6 +753,27 @@ function isSuppressedByCalendarRules(candidate, transactionRules = []) {
     const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
     return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.12, 3);
   });
+
+  if (!matchingSuppressions.length) return false;
+
+  const latestSuppressionTime = Math.max(...matchingSuppressions.map(ruleTime));
+  const latestConfirmedTime = Math.max(0, ...(transactionRules || []).filter((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
+    const ruleProviderKey = getProviderKey(rule?.match_text || "");
+    if (!ruleProviderKey) return false;
+    const textMatches = candidate.providerKey === ruleProviderKey || candidate.providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(candidate.providerKey);
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.18, 3);
+  }).map(ruleTime));
+
+  return latestSuppressionTime >= latestConfirmedTime;
+}
+
+function ruleTime(rule) {
+  const value = new Date(rule?.updated_at || rule?.created_at || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
 }
 
 function isSeparateAmountBand(a, b) {

@@ -213,11 +213,22 @@ function meaningfulTokens(value) {
 }
 
 function hasUserConfirmedRule(transaction, transactionRules = []) {
-  return (transactionRules || []).some((rule) => {
+  const confirmedRules = (transactionRules || []).filter((rule) => {
     const type = normalizeText(rule?.rule_type || "");
     if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
     return transactionMatchesRule(transaction, rule);
   });
+
+  if (!confirmedRules.length) return false;
+
+  const suppressionRules = (transactionRules || []).filter((rule) => {
+    const category = normalizeText(rule?.category || "");
+    const type = normalizeText(rule?.rule_type || "");
+    const saysNotBill = type === "calendar_suppression" || (!rule?.is_bill && !rule?.is_subscription && ["spending", "not a bill", "personal payment", "ignore for calendar"].includes(category));
+    return saysNotBill && transactionMatchesRule(transaction, rule);
+  });
+
+  return latestRuleTime(confirmedRules) >= latestRuleTime(suppressionRules);
 }
 
 function getKindFromCategory(category, rule = {}) {
@@ -320,10 +331,13 @@ function buildCommitmentStreams(transactions = []) {
 }
 
 function makeGroup(key, name, kind) {
-  return { key, name, kind, amounts: [], dates: [], monthTotals: new Map(), transactionCount: 0 };
+  return { key, name, kind, amounts: [], dates: [], monthTotals: new Map(), transactionCount: 0, seen: new Set() };
 }
 
 function addToGroup(group, transaction, amount, date, monthKey) {
+  const transactionKey = `${monthKey}:${date.getDate()}:${normalizeText(transaction.description || "")}:${amount.toFixed(2)}`;
+  if (group.seen.has(transactionKey)) return;
+  group.seen.add(transactionKey);
   group.amounts.push(amount);
   group.dates.push(date);
   group.monthTotals.set(monthKey, (group.monthTotals.get(monthKey) || 0) + amount);

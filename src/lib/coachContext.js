@@ -16,6 +16,7 @@ export function buildCoachContext({
   subscriptionStatus,
   bankFeedReadiness,
   moneyUnderstanding,
+  appMoneyModel,
 }) {
   const {
     getDebtMonthlyStatus,
@@ -59,6 +60,14 @@ export function buildCoachContext({
     searchable_transaction_note: statementIntelligence.searchableTransactionNote,
     query_focus: statementIntelligence.queryFocus,
     statement_intelligence: statementIntelligence.summary,
+    app_money_model: appMoneyModel?.aiContext || {},
+    monthly_income_estimate: appMoneyModel?.income || null,
+    monthly_bills_from_calendar: appMoneyModel?.monthlyBillTotal ?? null,
+    monthly_flexible_spending: appMoneyModel?.flexibleSpending || null,
+    savings_capacity: appMoneyModel?.savingsCapacity || null,
+    cash_position: appMoneyModel?.cashPosition || null,
+    confidence_warnings: appMoneyModel?.confidenceWarnings || [],
+    next_best_actions: appMoneyModel?.nextBestActions || [],
     top_categories: topCategories.slice(0, 5),
     monthly_breakdown: getMonthlyBreakdown(transactions, "6m").slice(0, 6),
     monthly_breakdown_all: getMonthlyBreakdown(transactions, "all"),
@@ -80,6 +89,7 @@ export function buildCoachContext({
     launch_safety_rules: {
       audience: "People who feel bad with money and need plain, trustworthy guidance.",
       maths_source_of_truth: "Use money_understanding, app-calculated totals, statement_intelligence, query_focus and rules. Do not invent or re-estimate core figures.",
+      shared_app_model: "For bills, income, usual spending, saving room and warnings, use app_money_model before older raw summaries.",
       safe_to_spend: "Only treat safe-to-spend as real spendable money when live balances or explicit current balances are supplied. Statement net is historical movement, not cash today.",
       checks_page: "If a person, bill, transfer, work payment or pass-through looks uncertain, tell the user to confirm it in Confidence Checks instead of guessing.",
       calendar: "Future Bills only contains regular bills/subscriptions Money Hub is confident about. Unclear repeated payments belong in Checks, not Calendar.",

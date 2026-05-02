@@ -7,7 +7,7 @@ import {
 } from "../lib/finance";
 import { Row, Section } from "../components/ui";
 
-export default function AccountsPage({ accounts, transactions, styles }) {
+export default function AccountsPage({ accounts, transactions, appMoneyModel, styles }) {
   const accountInsights = accounts.map((account) => {
     const accountTransactions = transactions.filter((transaction) => transaction.account_id === account.id);
     const totals = getTotals(accountTransactions);
@@ -15,7 +15,9 @@ export default function AccountsPage({ accounts, transactions, styles }) {
     const outgoingCount = accountTransactions.filter((transaction) => Number(transaction.amount) < 0 && !isInternalTransferLike(transaction)).length;
     const transferCount = accountTransactions.filter((transaction) => isInternalTransferLike(transaction)).length;
     const salaryCount = accountTransactions.filter((transaction) => /salary|payroll|wage|paye/i.test(transaction.description || "")).length;
-    const billCount = accountTransactions.filter((transaction) => transaction.is_bill || transaction.is_subscription).length;
+    const billCount = accountTransactions.filter((transaction) =>
+      transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription
+    ).length;
     const latestDate = accountTransactions
       .map((transaction) => parseAppDate(transaction.transaction_date))
       .filter(Boolean)
@@ -75,11 +77,12 @@ export default function AccountsPage({ accounts, transactions, styles }) {
 
       <Section title="Statement Separation" styles={styles}>
         <p style={styles.sectionIntro}>
-          Accounts are inferred from the statement file name and saved import account. The key is keeping each CSV tied to the correct account so transfers can be ignored and real income/spending stays clean.
+          Accounts use the same interpreted transactions as Calendar, Goals and AI. The key is keeping each CSV tied to the correct account so transfers can be ignored and real income/spending stays clean.
         </p>
         <Row name="Accounts found" value={`${accounts.length}`} styles={styles} />
         <Row name="Unassigned transactions" value={`${unassignedTransactions}`} styles={styles} />
         <Row name="Transfer handling" value="Excluded from income/spend when detected" styles={styles} />
+        <Row name="Calendar bills" value={`${appMoneyModel?.billStreams?.length || 0}`} styles={styles} />
       </Section>
     </>
   );

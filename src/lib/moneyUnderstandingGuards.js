@@ -72,7 +72,7 @@ export function mergeBillStreams(primary = [], fallback = []) {
         const sameProvider = base && existingBase && (base === existingBase || base.includes(existingBase) || existingBase.includes(base));
         const sameKind = normal.kind === existing.kind || normal.kind === "bill" || existing.kind === "bill" || normal.kind === "other_bill" || existing.kind === "other_bill";
         const duplicateMonthlyEstimate = sameProvider && sameKind && closeAmount;
-        return existing.key === normal.key || (duplicateMonthlyEstimate && (closeDay || scoreStream(normal) !== scoreStream(existing)));
+        return existing.key === normal.key || duplicateMonthlyEstimate || (sameProvider && sameKind && closeDay && closeAmount);
       });
       if (matchIndex < 0) return [...list, normal];
       const current = list[matchIndex];

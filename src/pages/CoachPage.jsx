@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { buildCoachContext } from "../lib/coachContext";
-import { getTotals } from "../lib/finance";
 import { Section } from "../components/ui";
 
 const COACH_DISPLAY_LIMIT = 18;
@@ -12,6 +11,7 @@ const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
 export default function CoachPage({
   transactions,
   moneyUnderstanding,
+  appMoneyModel,
   goals,
   debts,
   investments,
@@ -52,7 +52,17 @@ export default function CoachPage({
   const chatBottomRef = useRef(null);
   const latestMessageRef = useRef(null);
 
-  const totals = useMemo(() => getTotals(transactions), [transactions]);
+  const totals = useMemo(() => ({
+    income: appMoneyModel?.income?.monthlyEstimate || 0,
+    spending: appMoneyModel?.flexibleSpending?.monthlyEstimate || 0,
+    bills: appMoneyModel?.monthlyBillTotal || 0,
+    net:
+      (appMoneyModel?.income?.monthlyEstimate || 0) -
+      (appMoneyModel?.monthlyBillTotal || 0) -
+      (appMoneyModel?.flexibleSpending?.monthlyEstimate || 0),
+    safeToSpend: appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0,
+    basis: "shared_money_model_monthly_estimate",
+  }), [appMoneyModel]);
   const topCategories = useMemo(() => helpers.getTopCategories(transactions), [helpers, transactions]);
   const subscriptionSummary = useMemo(
     () => helpers.getSubscriptionSummary(transactions),
@@ -163,6 +173,7 @@ export default function CoachPage({
         subscriptionStatus,
         bankFeedReadiness,
         moneyUnderstanding,
+        appMoneyModel,
       });
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {
