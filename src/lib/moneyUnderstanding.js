@@ -10,18 +10,20 @@ const COMMITMENT_CATEGORIES = new Set(["Rent", "Mortgage", "Major bill", "Energy
 const EVERYDAY_TEXT = /\b(chickie|chicken|takeaway|restaurant|mcdonald|kfc|burger king|subway|greggs|deliveroo|uber eats|just eat|cafe|coffee|bar|pub|tesco|aldi|lidl|asda|sainsbury|morrisons|one stop|premier|shop|store|vinted|ebay|amazon marketplace|fuel|petrol|parking|cash withdrawal|atm|gaming|lvl up|xsolla|odeon|cinema)\b/;
 
 export function buildMoneyUnderstanding({ transactions = [], transactionRules = [], snapshot = null } = {}) {
-  const smartTransactions = enhanceTransactions(transactions, transactionRules).map((transaction) => {
+  const ruleEnhancedTransactions = enhanceTransactions(transactions, transactionRules);
+  const smartTransactions = ruleEnhancedTransactions.map((transaction) => {
     const merchant = getRealWorldMerchant(transaction);
     const interpreted = getSnapshotTransaction(snapshot, transaction.id);
+    const userConfirmed = hasUserConfirmedRule(transaction, transactionRules);
     return {
       ...transaction,
       _real_merchant_key: merchant.cleanKey || merchant.key,
       _real_merchant_name: interpreted?.real_merchant_name || (merchant.known ? merchant.name : getFriendlyTransactionName(transaction)),
       _real_merchant_type: merchant.type || "",
       _real_merchant_known: Boolean(merchant.known || interpreted?.real_merchant_name),
-      _smart_category: interpreted?.category || transaction._smart_category,
-      _smart_is_bill: interpreted ? Boolean(interpreted.is_bill) : transaction._smart_is_bill,
-      _smart_is_subscription: interpreted ? Boolean(interpreted.is_subscription) : transaction._smart_is_subscription,
+      _smart_category: userConfirmed ? transaction._smart_category : (interpreted?.category || transaction._smart_category),
+      _smart_is_bill: userConfirmed ? transaction._smart_is_bill : (interpreted ? Boolean(interpreted.is_bill) : transaction._smart_is_bill),
+      _smart_is_subscription: userConfirmed ? transaction._smart_is_subscription : (interpreted ? Boolean(interpreted.is_subscription) : transaction._smart_is_subscription),
       _smart_internal_transfer: interpreted ? Boolean(interpreted.is_internal_transfer) : transaction._smart_internal_transfer,
       _ai_interpreted_confidence: interpreted?.confidence || "",
     };
@@ -31,7 +33,9 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
     ...getSmartRecurringCalendarEvents(smartTransactions),
     ...buildStrongBillFallbackEvents(smartTransactions, []),
   ]);
-  const localBillStreams = mergeBillStreams(eventsToBillStreams(localEvents), buildCommitmentStreams(smartTransactions))
+  const detectedStreams = mergeBillStreams(eventsToBillStreams(localEvents), buildCommitmentStreams(smartTransactions));
+  const userConfirmedStreams = buildConfirmedRuleStreams(ruleEnhancedTransactions, transactionRules);
+  const localBillStreams = mergeBillStreams(detectedStreams, userConfirmedStreams)
     .filter((stream) => !isSuppressedByTransactionRules(stream, transactionRules));
 
   if (snapshot?.id) {
@@ -119,6 +123,87 @@ function eventsToBillStreams(events = []) {
       sourceCount: event.sourceCount || 0,
       sourceMonths: event.sourceMonths || 0,
     }));
+}
+
+function buildConfirmedRuleStreams(transactions = [], transactionRules = []) {
+  const confirmedRules = (transactionRules || []).filter((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    const category = normalizeText(rule?.category || "");
+    return Boolean(rule?.match_text) && (type === "calendar_confirmed_bill" || rule?.is_bill || rule?.is_subscription) && category !== "ignore for calendar";
+  });
+
+  return confirmedRules.map((rule) => {
+    const matches = (transactions || []).filter((transaction) => transactionMatchesRule(transaction, rule));
+    const amounts = matches.map((transaction) => Math.abs(Number(transaction.amount || 0))).filter((value) => value > 0);
+    const dates = matches.map((transaction) => parseAppDate(transaction.transaction_date)).filter(Boolean);
+    const amount = amounts.length ? usualAmount(amounts) : Math.abs(Number(rule.match_amount || 0));
+    if (!amount) return null;
+    const category = String(rule.category || (rule.is_subscription ? "Subscription" : "Major bill"));
+    const kind = getKindFromCategory(category, rule);
+    const day = dates.length ? likelyDay(dates) : 1;
+    const name = cleanBillName(`${titleFromMatchText(rule.match_text)}${kind === "subscription" ? "" : " bill"}`);
+
+    return {
+      key: `confirmed:${kind}:${normalizeText(rule.match_text)}:${Math.round(amount * 100)}`,
+      name,
+      amount: Math.round(amount * 100) / 100,
+      day,
+      kind,
+      confidence: "high",
+      note: "You confirmed this from Bills missing, so Money Hub will keep it in Calendar unless you remove it.",
+      sourceCount: Math.max(matches.length, 1),
+      sourceMonths: new Set(matches.map((transaction) => String(transaction.transaction_date || "").slice(0, 7)).filter(Boolean)).size || 1,
+    };
+  }).filter(Boolean);
+}
+
+function transactionMatchesRule(transaction, rule) {
+  const amount = Math.abs(Number(transaction?.amount || 0));
+  if (Number(transaction?.amount || 0) >= 0 || amount <= 0) return false;
+  if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return false;
+
+  const matchText = normalizeText(rule?.match_text || "");
+  const description = normalizeText(transaction?.description || "");
+  const merchantKey = normalizeText(getRuleMerchantKey(transaction?.description || ""));
+  const textMatches = matchText && (description.includes(matchText) || merchantKey.includes(matchText) || matchText.includes(merchantKey));
+  if (!textMatches) return false;
+
+  const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+  if (!ruleAmount) return true;
+  return Math.abs(amount - ruleAmount) <= Math.max(1.5, ruleAmount * 0.18);
+}
+
+function hasUserConfirmedRule(transaction, transactionRules = []) {
+  return (transactionRules || []).some((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
+    return transactionMatchesRule(transaction, rule);
+  });
+}
+
+function getKindFromCategory(category, rule = {}) {
+  const c = normalizeText(category);
+  if (/rent/.test(c)) return "rent";
+  if (/mortgage/.test(c)) return "mortgage";
+  if (/energy/.test(c)) return "energy";
+  if (/water/.test(c)) return "water";
+  if (/broadband/.test(c)) return "broadband";
+  if (/phone/.test(c)) return "phone";
+  if (/insurance/.test(c)) return "insurance";
+  if (/debt|credit|finance/.test(c)) return "debt";
+  if (/council/.test(c)) return "council_tax";
+  if (/childcare/.test(c)) return "childcare";
+  if (/subscription/.test(c) || rule?.is_subscription) return "subscription";
+  return "other_bill";
+}
+
+function titleFromMatchText(value) {
+  const text = normalizeText(value)
+    .replace(/\b(direct debit|standing order|faster payment|card payment|payment to|payment from|reference|ref|dd|so|pos|visa)\b/g, " ")
+    .replace(/\b[a-z]*\d{4,}[a-z0-9]*\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.split(" ").slice(0, 4).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Bill";
 }
 
 function buildCommitmentStreams(transactions = []) {
