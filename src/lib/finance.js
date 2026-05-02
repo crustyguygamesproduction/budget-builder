@@ -8,6 +8,7 @@ export function getTotals(transactions) {
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
 
   const bills = transactions
+    .filter((transaction) => !isInternalTransferLike(transaction))
     .filter((transaction) => transaction._smart_is_bill || transaction.is_bill || transaction._smart_is_subscription || transaction.is_subscription)
     .reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount || 0)), 0);
 
@@ -19,7 +20,28 @@ export function getMeaningfulCategory(transaction) {
 }
 
 export function isInternalTransferLike(transaction) {
-  return Boolean(transaction?._smart_internal_transfer || transaction?.is_internal_transfer);
+  if (!transaction) return false;
+  if (transaction?._smart_internal_transfer || transaction?.is_internal_transfer) return true;
+
+  const amount = Number(transaction?.amount || 0);
+  if (!amount) return false;
+
+  const category = normalizeText(getMeaningfulCategory(transaction));
+  const description = normalizeText(transaction?.description || "");
+  const merchant = normalizeText(transaction?._real_merchant_name || transaction?.merchant || "");
+  const account = normalizeText(transaction?.accounts?.name || transaction?.account_name || "");
+  const text = normalizeText(`${description} ${merchant} ${category} ${account}`);
+
+  if (category === "internal transfer" || category === "ignore for calendar") return true;
+
+  const ownPotWords = /\b(income hub|spending pot|to spending|from spending|bills pot|bill pot|savings pot|saving pot|buffer pot|emergency fund|own account|between accounts|main account|current account)\b/;
+  const transferWords = /\b(transfer|standing order|faster payment|moved|move|top ?up|sweep|pot|vault|space)\b/;
+  const directionToOwnPot = /\b(to|from)\s+(income hub|spending|bills?|savings?|buffer|pot|main|current|own account)\b/;
+
+  if (directionToOwnPot.test(text)) return true;
+  if (ownPotWords.test(text) && transferWords.test(text)) return true;
+
+  return false;
 }
 
 export function dayDifference(a, b) {
