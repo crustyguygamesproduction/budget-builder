@@ -13,6 +13,7 @@ const DEFAULT_STOP_WORDS = new Set([
   "from",
   "have",
   "how",
+  "in",
   "into",
   "last",
   "latest",
@@ -20,8 +21,11 @@ const DEFAULT_STOP_WORDS = new Set([
   "money",
   "month",
   "much",
+  "of",
   "on",
+  "over",
   "paid",
+  "past",
   "pay",
   "payment",
   "payments",
@@ -38,9 +42,11 @@ const DEFAULT_STOP_WORDS = new Set([
   "total",
   "transfer",
   "transfers",
+  "uploaded",
   "what",
   "when",
   "with",
+  "within",
   "you",
   "your",
 ]);
@@ -56,7 +62,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
   const exampleLimit = Number(options.exampleLimit || 120);
   const terms = getSearchTerms(query, options.stopWords);
   const directionIntent = getQueryDirectionIntent(query);
-  const personalMoneyIntent = hasPersonalMoneyIntent(query);
+  const personalMoneyIntent = hasPersonalMoneyIntent(query) || directionIntent === "incoming" || directionIntent === "outgoing";
   const timeWindow = getQueryTimeWindow(transactions, query, { getDate, anchorDate: options.anchorDate || options.latestTransactionDate });
   const scopedTransactions = timeWindow.matched
     ? transactions.filter((transaction) => isTransactionInTimeWindow(transaction, timeWindow, getDate))
@@ -153,7 +159,7 @@ export function getQueryTimeWindow(transactions = [], query = "", options = {}) 
 
   if (!anchor) return emptyWindow;
 
-  if (/\b(latest|last)\s+30\s+days?\b/.test(text)) {
+  if (/\b(latest|last|past)\s+30\s+days?\b/.test(text) || /\bover\s+the\s+last\s+30\s+days?\b/.test(text)) {
     return {
       label: "latest 30 days of uploaded data",
       start: toIsoDate(addDays(anchor, -30)),
@@ -196,11 +202,11 @@ export function getQueryTimeWindow(transactions = [], query = "", options = {}) 
 export function getQueryDirectionIntent(query) {
   const text = normalizeText(query);
 
-  if (/\b(sent me|sent to me|been sent|received|paid me|pays me|pay me|transferred me|transfer me|money in|income from|from friends|from family|family sent|friends sent|given me|gave me)\b/.test(text)) {
+  if (/\b(sent me|send me|sent to me|send to me|been sent|received|paid me|pays me|pay me|transferred me|transfer me|money in|income from|from friends|from family|family sent|friends sent|given me|gave me)\b/.test(text)) {
     return "incoming";
   }
 
-  if (/\b(i sent|sent to|sent out|i paid|paid to|pay to|money to|transferred to|transfer to|gave|give money|send people|sent people|send to people|spent|spend|spending|bought|buying|purchased|purchase)\b/.test(text)) {
+  if (/\b(i sent|i send|sent to|send to|sent out|send out|i paid|paid to|pay to|money to|transferred to|transfer to|gave|give money|send people|sent people|send to people|spent|spend|spending|bought|buying|purchased|purchase)\b/.test(text)) {
     return "outgoing";
   }
 
@@ -213,7 +219,7 @@ export function getQueryDirectionIntent(query) {
 
 export function hasPersonalMoneyIntent(query) {
   const text = normalizeText(query);
-  return /\b(friend|friends|family|mum|mother|dad|father|brother|sister|mate|mates|people|person|personal|loaned|lent|borrowed|gift|gifts)\b/.test(text);
+  return /\b(friend|friends|family|mum|mother|dad|father|brother|sister|mate|mates|people|person|personal|loaned|lent|borrowed|gift|gifts|sent me|send me|paid me|pay me|transferred me|transfer me)\b/.test(text);
 }
 
 export function getSearchTerms(query, extraStopWords = []) {
