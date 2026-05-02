@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "patch:shared-contributions": "node scripts/patch-shared-contribution-grouping.mjs",
-    "predev": "npm run patch:shared-contributions",
+    "patch:calendar-bill-share": "node scripts/patch-calendar-bill-share.mjs",
+    "patch:app": "npm run patch:shared-contributions && npm run patch:calendar-bill-share",
+    "predev": "npm run patch:app",
     "dev": "vite",
-    "prebuild": "npm run patch:shared-contributions",
+    "prebuild": "npm run patch:app",
     "build": "vite build",
     "check": "npm run lint && npm run test:money && npm run build",
     "test:money": "node scripts/check-money-understanding.mjs",
