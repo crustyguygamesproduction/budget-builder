@@ -62,21 +62,18 @@ export function mergeBillStreams(primary = [], fallback = []) {
         name: cleanBillName(stream.name || stream.title || "Bill"),
         amount: Math.abs(Number(stream.amount ?? stream.usual_amount ?? 0)),
         day: Math.max(1, Math.min(Number(stream.day ?? stream.usual_day ?? 1) || 1, 28)),
+        kind: normalizeText(stream.kind || "bill").replace(/ /g, "_") || "bill",
       };
       const base = getBillBaseName(normal.name);
       const matchIndex = list.findIndex((existing) => {
-  const existingBase = getBillBaseName(existing.name);
-  const closeAmount =
-    Math.abs(Number(existing.amount || 0) - Number(normal.amount || 0)) <=
-    Math.max(3, Number(normal.amount || 0) * 0.12);
-
-  const closeDay =
-    Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 5;
-
-  const sameProvider = base && existingBase && base === existingBase;
-
-  return existing.key === normal.key || (sameProvider && closeAmount && closeDay);
-});
+        const existingBase = getBillBaseName(existing.name);
+        const closeAmount = Math.abs(Number(existing.amount || 0) - Number(normal.amount || 0)) <= Math.max(3, Number(normal.amount || 0) * 0.12);
+        const closeDay = Math.abs(Number(existing.day || 0) - Number(normal.day || 0)) <= 5;
+        const sameProvider = base && existingBase && (base === existingBase || base.includes(existingBase) || existingBase.includes(base));
+        const sameKind = normal.kind === existing.kind || normal.kind === "bill" || existing.kind === "bill" || normal.kind === "other_bill" || existing.kind === "other_bill";
+        const duplicateMonthlyEstimate = sameProvider && sameKind && closeAmount;
+        return existing.key === normal.key || (duplicateMonthlyEstimate && (closeDay || scoreStream(normal) !== scoreStream(existing)));
+      });
       if (matchIndex < 0) return [...list, normal];
       const current = list[matchIndex];
       const better = scoreStream(normal) > scoreStream(current) ? normal : current;
@@ -108,15 +105,18 @@ function collapseDependentRentStreams(streams) {
 function scoreStream(stream) {
   const confidence = normalizeText(stream.confidence || stream.confidenceLabel || "");
   const name = normalizeText(stream.name || stream.title || "");
+  const note = normalizeText(stream.note || stream.estimateNote || stream.evidence || "");
+  const key = normalizeText(stream.key || "");
+  const confirmedBonus = key.startsWith("confirmed:") || note.includes("you confirmed") ? 10 : 0;
   const sourceScore =
-    (confidence === "high" ? 4 : confidence === "medium" ? 3 : confidence === "estimated" ? 2 : 1) +
+    (confidence === "high" ? 4 : confidence === "medium" ? 3 : confidence === "estimated" ? 2 : confidence === "good" ? 2 : 1) +
     Number(stream.sourceMonths || 0) +
     Number(stream.sourceCount || 0) / 10;
 
-  const cleanNameBonus =
-    name.includes("spending") || name.includes("around") || /£?\\d+(\\.\\d{1,2})?/.test(name)
+  const noisyNamePenalty =
+    name.includes("spending") || name.includes("around") || /£?\d+(\.\d{1,2})?/.test(name)
       ? -2
       : 0;
 
-  return sourceScore + cleanNameBonus;
+  return confirmedBonus + sourceScore + noisyNamePenalty;
 }
