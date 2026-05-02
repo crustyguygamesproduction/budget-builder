@@ -4,13 +4,15 @@ class PublicFunctionError extends Error {
   status: number;
   code: string;
   publicMessage: string;
+  details: Record<string, unknown>;
 
-  constructor(code: string, publicMessage: string, status = 500, logMessage = publicMessage) {
+  constructor(code: string, publicMessage: string, status = 500, logMessage = publicMessage, details: Record<string, unknown> = {}) {
     super(logMessage);
     this.name = "PublicFunctionError";
     this.code = code;
     this.publicMessage = publicMessage;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -130,8 +132,54 @@ async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
   });
 
   const data = await response.json();
-  if (!response.ok) throw new Error(JSON.stringify(data));
+  if (!response.ok) {
+    const openAIErrorKind = data?.error?.code || data?.error?.type || "unknown";
+    console.error("ai-coach: OpenAI request failed", {
+      status: response.status,
+      error_type: data?.error?.type || null,
+      error_code: data?.error?.code || null,
+      model: body?.model || null,
+      error_message: data?.error?.message || JSON.stringify(data).slice(0, 500),
+    });
+    throw new PublicFunctionError(
+      "openai_request_failed",
+      "Coach had trouble reading the saved money brain. Try again in a moment.",
+      500,
+      data?.error?.message || "OpenAI request failed",
+      { openai_error_kind: openAIErrorKind, openai_status: response.status, model: body?.model || null }
+    );
+  }
   return data;
+}
+
+async function callResponsesApiWithModels(apiKey: string, body: Record<string, unknown>, models: string[]) {
+  let lastError: unknown = null;
+  for (const model of models) {
+    try {
+      return { data: await callResponsesApi(apiKey, { ...body, model }), model };
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof PublicFunctionError) || error.code !== "openai_request_failed") throw error;
+      console.warn("ai-coach: OpenAI model failed, trying next candidate if available", {
+        model,
+        openai_error_kind: error.details?.openai_error_kind || null,
+      });
+    }
+  }
+  throw lastError;
+}
+
+function uniqueStrings(items: string[]) {
+  return Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function getOpenAIModelCandidates(primaryEnvName: string, fallbackEnvName: string, defaultPrimary = "gpt-5.1") {
+  const primary = Deno.env.get(primaryEnvName) || defaultPrimary;
+  const fallbacks = (Deno.env.get(fallbackEnvName) || "gpt-4.1-mini,gpt-4o-mini")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return uniqueStrings([primary, ...fallbacks]);
 }
 
 async function getYahooPrice(symbol: string) {
@@ -257,7 +305,7 @@ function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
     server_context_meta: savedContext?.server_context_meta || null,
     totals: savedContext?.totals || null,
     transaction_count: savedContext?.transaction_count || 0,
-    statement_intelligence: savedContext?.statement_intelligence || null,
+    statement_intelligence: compactStatementIntelligence(savedContext?.statement_intelligence),
     app_money_model: savedContext?.app_money_model || null,
     monthly_income_estimate: savedContext?.monthly_income_estimate || null,
     monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
@@ -270,18 +318,73 @@ function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
     top_categories: (savedContext?.top_categories || []).slice(0, 12),
     monthly_breakdown: (savedContext?.monthly_breakdown_all || savedContext?.monthly_breakdown || []).slice(0, 12),
     calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
-    money_understanding: savedContext?.money_understanding || null,
-    bills_found: (savedContext?.bills_found || []).slice(0, 30),
-    checks_waiting: (savedContext?.checks_waiting || []).slice(0, 30),
+    money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
+    bills_found: compactBills(savedContext?.bills_found || []).slice(0, 20),
+    checks_waiting: compactChecks(savedContext?.checks_waiting || []).slice(0, 12),
     transfer_summary: savedContext?.transfer_summary || null,
     debts: (savedContext?.debts || []).slice(0, 8),
     investments: (savedContext?.investments || []).slice(0, 8),
     debt_signals: (savedContext?.debt_signals || []).slice(0, 8),
     investment_signals: (savedContext?.investment_signals || []).slice(0, 8),
-    recent_transactions: (savedContext?.recent_transactions || []).slice(0, 40),
+    recent_transactions: compactTransactions(savedContext?.recent_transactions || []).slice(0, 20),
     relevant_searchable_transactions: relevantTransactions,
     recent_messages: recentMessages,
     launch_safety_rules: savedContext?.launch_safety_rules || null,
+  };
+}
+
+function buildMinimalCoachBrainForPrompt(savedContext: any) {
+  const statement = compactStatementIntelligence(savedContext?.statement_intelligence);
+  return {
+    server_context_meta: savedContext?.server_context_meta || null,
+    totals: savedContext?.totals || null,
+    transaction_count: savedContext?.transaction_count || 0,
+    statement_intelligence: statement
+      ? {
+          date_range: statement.date_range,
+          totals: statement.totals,
+          total_transactions: statement.total_transactions,
+          settled_transaction_count: statement.settled_transaction_count,
+          pass_through_analysis: statement.pass_through_analysis,
+          category_totals: (statement.category_totals || []).slice(0, 8),
+          merchant_totals: (statement.merchant_totals || []).slice(0, 8),
+          income_streams: (statement.income_streams || []).slice(0, 5),
+        }
+      : null,
+    app_money_model: savedContext?.app_money_model || null,
+    monthly_income_estimate: savedContext?.monthly_income_estimate || null,
+    monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
+    monthly_bills_from_calendar_gross: savedContext?.monthly_bills_from_calendar_gross ?? null,
+    monthly_flexible_spending: savedContext?.monthly_flexible_spending || null,
+    savings_capacity: savedContext?.savings_capacity || null,
+    cash_position: savedContext?.cash_position || null,
+    confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 6),
+    next_best_actions: (savedContext?.next_best_actions || []).slice(0, 5),
+    top_categories: (savedContext?.top_categories || []).slice(0, 8),
+    calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
+    money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
+    bills_found: compactBills(savedContext?.bills_found || []).slice(0, 8),
+    checks_waiting: compactChecks(savedContext?.checks_waiting || []).slice(0, 6),
+    transfer_summary: savedContext?.transfer_summary || null,
+    debts: (savedContext?.debts || []).slice(0, 5),
+    investments: (savedContext?.investments || []).slice(0, 5),
+    debt_signals: (savedContext?.debt_signals || []).slice(0, 5),
+    investment_signals: (savedContext?.investment_signals || []).slice(0, 5),
+    recent_transactions: compactTransactions(savedContext?.recent_transactions || []).slice(0, 8),
+    launch_safety_rules: savedContext?.launch_safety_rules || null,
+  };
+}
+
+function buildCoachRequestBody(message: string, promptContext: Record<string, unknown>) {
+  return {
+    max_output_tokens: getCoachMaxOutputTokens(message),
+    input: [
+      { role: "system", content: buildCoachSystemPrompt(message) },
+      {
+        role: "user",
+        content: `User message:\n${message}\n\nResponse mode:\n${isCompactLookup(message) ? "compact_lookup" : "normal_coach"}\n\nHard truth mode:\n${isHardTruthRequest(message) ? "on" : "off"}\n\nFinancial context from saved server-side coach brain. Ignore any browser-sent financial context for normal coach chat:\n${JSON.stringify(promptContext, null, 2)}`,
+      },
+    ],
   };
 }
 
@@ -308,7 +411,66 @@ function getRelevantTransactions(savedContext: any, message: string) {
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((item) => item.transaction);
 
-  return (scored.length ? scored : transactions).slice(0, isCompactLookup(message) ? 180 : 80);
+  return compactTransactions((scored.length ? scored : transactions).slice(0, isCompactLookup(message) ? 80 : 30));
+}
+
+function compactTransactions(transactions: any[]) {
+  return (transactions || []).map((transaction) => ({
+    date: transaction.date || transaction.transaction_date || null,
+    name: transaction.name || transaction.description || transaction.merchant || null,
+    category: transaction.category || null,
+    amount: transaction.amount ?? null,
+  }));
+}
+
+function compactBills(bills: any[]) {
+  return (bills || []).map((bill) => ({
+    name: bill.name || bill.title || null,
+    amount: bill.amount ?? null,
+    expected_day: bill.expected_day || bill.day || null,
+    kind: bill.kind || null,
+  }));
+}
+
+function compactChecks(checks: any[]) {
+  return (checks || []).map((check) => ({
+    label: check.label || check.question || null,
+    amount: check.amount ?? null,
+    reason: check.reason || check.helper || null,
+  }));
+}
+
+function compactStatementIntelligence(summary: any) {
+  if (!summary) return null;
+  return {
+    date_range: summary.date_range || null,
+    totals: summary.totals || null,
+    total_transactions: summary.total_transactions || null,
+    settled_transaction_count: summary.settled_transaction_count || null,
+    transfer_transaction_count: summary.transfer_transaction_count || null,
+    pass_through_analysis: summary.pass_through_analysis
+      ? {
+          standard_view: summary.pass_through_analysis.standard_view || null,
+          known_pass_through_view: summary.pass_through_analysis.known_pass_through_view || null,
+          possible_pass_through_count: summary.pass_through_analysis.possible_pass_through_count || 0,
+        }
+      : null,
+    category_totals: (summary.category_totals || []).slice(0, 10),
+    merchant_totals: (summary.merchant_totals || []).slice(0, 12),
+    income_streams: (summary.income_streams || []).slice(0, 8),
+    recurring_outgoings: (summary.recurring_outgoings || []).slice(0, 10),
+    large_outgoings: compactTransactions(summary.large_outgoings || []).slice(0, 10),
+    unusual_transactions: compactTransactions(summary.unusual_transactions || []).slice(0, 10),
+  };
+}
+
+function compactMoneyUnderstanding(context: any) {
+  if (!context) return null;
+  return {
+    summary: context.summary || null,
+    bills_found: compactBills(context.bills_found || []),
+    recent_transactions: compactTransactions(context.recent_transactions || []).slice(0, 12),
+  };
 }
 
 function buildCoachSystemPrompt(message: string) {
@@ -468,9 +630,9 @@ Deno.serve(async (req) => {
       const input = mode.endsWith("_document")
         ? buildDocumentExtractionInput(systemPrompt, String(message || ""), context)
         : [{ role: "user", content: `${systemPrompt}\n\nUser description:\n${message}\n\nSignals:\n${JSON.stringify(kind === "debt" ? context?.debt_signals || [] : context?.investment_signals || [], null, 2)}` }];
-      const data = await callResponsesApi(apiKey, { model: "gpt-5.1", input });
+      const { data, model } = await callResponsesApiWithModels(apiKey, { input }, getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS"));
       const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "{}";
-      return new Response(JSON.stringify({ extracted: parseJsonReply(rawReply), message: mode.endsWith("_document") ? "AI filled the form from the uploaded document. Check it before saving." : "AI filled the form. Check it before saving.", mode }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ extracted: parseJsonReply(rawReply), message: mode.endsWith("_document") ? "AI filled the form from the uploaded document. Check it before saving." : "AI filled the form. Check it before saving.", mode, model }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const safeMessage = String(message || "").trim();
@@ -482,22 +644,39 @@ Deno.serve(async (req) => {
     }
 
     const savedContext = await getSavedCoachContext(req);
-    const promptContext = buildSavedCoachBrainForPrompt(savedContext, safeMessage);
-    const data = await callResponsesApi(apiKey, {
-      model: "gpt-5.1",
-      max_output_tokens: getCoachMaxOutputTokens(safeMessage),
-      input: [
-        { role: "system", content: buildCoachSystemPrompt(safeMessage) },
-        {
-          role: "user",
-          content: `User message:\n${safeMessage}\n\nResponse mode:\n${isCompactLookup(safeMessage) ? "compact_lookup" : "normal_coach"}\n\nHard truth mode:\n${isHardTruthRequest(safeMessage) ? "on" : "off"}\n\nFinancial context from saved server-side coach brain. Ignore any browser-sent financial context for normal coach chat:\n${JSON.stringify(promptContext, null, 2)}`,
-        },
-      ],
-    });
+    const wantsSearchableTransactions = isCompactLookup(safeMessage);
+    const promptContext = wantsSearchableTransactions
+      ? buildSavedCoachBrainForPrompt(savedContext, safeMessage)
+      : buildMinimalCoachBrainForPrompt(savedContext);
+    let contextDetail = wantsSearchableTransactions ? "searchable_compact" : "decision_compact";
+    let data: any;
+    let model = "";
+    try {
+      const result = await callResponsesApiWithModels(
+        apiKey,
+        buildCoachRequestBody(safeMessage, promptContext),
+        getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS")
+      );
+      data = result.data;
+      model = result.model;
+    } catch (error) {
+      if (!(error instanceof PublicFunctionError) || error.code !== "openai_request_failed" || !wantsSearchableTransactions) {
+        throw error;
+      }
+      console.warn("ai-coach: retrying compact lookup with decision context only", { request_id: requestId });
+      contextDetail = "decision_compact_retry";
+      const result = await callResponsesApiWithModels(
+        apiKey,
+        buildCoachRequestBody(safeMessage, buildMinimalCoachBrainForPrompt(savedContext)),
+        getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS")
+      );
+      data = result.data;
+      model = result.model;
+    }
 
     const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "How can I help?";
     const reply = enforceCompactReply(rawReply, safeMessage);
-    return new Response(JSON.stringify({ reply, model: "gpt-5.1", mode: "premium", context_source: "coach_context_snapshots" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ reply, model, mode: "premium", context_source: "coach_context_snapshots", context_detail: contextDetail }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
     const publicError = error instanceof PublicFunctionError
       ? error

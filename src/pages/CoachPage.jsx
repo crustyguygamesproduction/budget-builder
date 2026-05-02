@@ -213,7 +213,7 @@ export default function CoachPage({
       });
 
       if (error) {
-        throw new Error(error.message || "AI request failed.");
+        throw new Error(await getFunctionErrorMessage(error));
       }
       if (data?.error) {
         throw new Error(data.error);
@@ -568,6 +568,20 @@ function formatChatTime(value) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+async function getFunctionErrorMessage(error) {
+  const fallback = error?.message || "AI request failed.";
+  try {
+    const response = error?.context;
+    if (response && typeof response.clone === "function") {
+      const data = await response.clone().json();
+      return data?.error || data?.code || fallback;
+    }
+  } catch {
+    // Keep the original Supabase error when the response body is not JSON.
+  }
+  return fallback;
 }
 
 function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals }) {
