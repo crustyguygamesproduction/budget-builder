@@ -341,7 +341,7 @@ function isPossibleSharedBillContribution(transaction, recurringContributionKeys
   if (INCOME_WORDS.test(text) || REFUND_WORDS.test(text) || PASS_THROUGH_WORDS.test(text)) return false;
   if (SAVINGS_INVESTMENT_WORDS.test(text)) return false;
   if (amount > 1800 && !SHARED_BILL_WORDS.test(text)) return false;
-  return recurringContributionKeys.has(transactionKey(transaction)) || SHARED_BILL_WORDS.test(text);
+  return recurringContributionKeys.has(contributionKey(transaction)) || SHARED_BILL_WORDS.test(text);
 }
 
 function getBestContributionBillMatch({ monthlyAmount, day, calendarBills }) {
