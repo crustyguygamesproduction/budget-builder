@@ -4,9 +4,7 @@ import BottomNav from "./components/BottomNav";
 import TopBar from "./components/TopBar";
 import AuthPage from "./pages/AuthPage";
 import { styles } from "./styles";
-import {
-  getMainStyle,
-} from "./lib/styleHelpers";
+import { getMainStyle } from "./lib/styleHelpers";
 import { getBankFeedReadiness } from "./lib/bankFeeds";
 import { getSubscriptionStatus } from "./lib/productPlan";
 import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
@@ -52,6 +50,10 @@ const PAGE_TITLES = {
 const COACH_DRAFT_KEY = "moneyhub-coach-draft";
 const COACH_AUTOSEND_KEY = "moneyhub-coach-autosend";
 const COACH_CONTEXT_SAVE_DELAY_MS = 900;
+
+function getSignedInUserId(session) {
+  return session?.user?.id || null;
+}
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -104,9 +106,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (session) loadAllData();
+    const userId = getSignedInUserId(session);
+    if (userId) {
+      loadAllData(userId);
+    } else {
+      resetUserData();
+    }
+    // loadAllData reads the current Supabase client and resets via local setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     function handleResize() {
@@ -123,22 +131,49 @@ export default function App() {
     localStorage.setItem("moneyhub-viewer-preview", viewerMode ? "true" : "false");
   }, [viewerMode]);
 
-  async function loadAllData() {
+  function resetUserData() {
+    setTransactions([]);
+    setAccounts([]);
+    setGoals([]);
+    setReceipts([]);
+    setAiMessages([]);
+    setDebts([]);
+    setInvestments([]);
+    setStatementImports([]);
+    setViewerAccess([]);
+    setFinancialDocuments([]);
+    setSubscriptionProfile(null);
+    setBankConnections([]);
+    setTransactionRules([]);
+    setMoneySnapshot(null);
+  }
+
+  function resolveUserId(userId = getSignedInUserId(session)) {
+    return userId || null;
+  }
+
+  async function loadAllData(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      resetUserData();
+      return;
+    }
+
     await Promise.all([
-      loadTransactions(),
-      loadAccounts(),
-      loadGoals(),
-      loadReceipts(),
-      loadAiMessages(),
-      loadDebts(),
-      loadInvestments(),
-      loadStatementImports(),
-      loadViewerAccess(),
-      loadFinancialDocuments(),
-      loadSubscriptionProfile(),
-      loadBankConnections(),
-      loadTransactionRules(),
-      loadMoneySnapshot(),
+      loadTransactions(scopedUserId),
+      loadAccounts(scopedUserId),
+      loadGoals(scopedUserId),
+      loadReceipts(scopedUserId),
+      loadAiMessages(scopedUserId),
+      loadDebts(scopedUserId),
+      loadInvestments(scopedUserId),
+      loadStatementImports(scopedUserId),
+      loadViewerAccess(scopedUserId),
+      loadFinancialDocuments(scopedUserId),
+      loadSubscriptionProfile(scopedUserId),
+      loadBankConnections(scopedUserId),
+      loadTransactionRules(scopedUserId),
+      loadMoneySnapshot(scopedUserId),
     ]);
   }
 
@@ -157,16 +192,26 @@ export default function App() {
   }
 
   async function refreshMoneyUnderstandingAfterCorrection() {
-    await loadTransactionRules();
-    await loadTransactions();
+    const userId = resolveUserId();
+    if (!userId) return;
+
+    await loadTransactionRules(userId);
+    await loadTransactions(userId);
     await refreshMoneyOrganiser({ force: true });
-    await loadMoneySnapshot();
+    await loadMoneySnapshot(userId);
   }
 
-  async function loadMoneySnapshot() {
+  async function loadMoneySnapshot(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setMoneySnapshot(null);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("money_understanding_snapshots")
       .select("*")
+      .eq("user_id", scopedUserId)
       .eq("model_version", "money-organiser-ai-v1")
       .order("interpreted_at", { ascending: false })
       .limit(1)
@@ -179,76 +224,200 @@ export default function App() {
     setMoneySnapshot(data || null);
   }
 
-  async function loadTransactions() {
+  async function loadTransactions(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setTransactions([]);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("transactions")
       .select("*, accounts(name, institution)")
+      .eq("user_id", scopedUserId)
       .order("transaction_date", { ascending: false });
 
     if (!error) setTransactions(data || []);
   }
 
-  async function loadAccounts() {
+  async function loadAccounts(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setAccounts([]);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("accounts")
       .select("*")
+      .eq("user_id", scopedUserId)
       .order("created_at", { ascending: true });
 
     if (!error) setAccounts(data || []);
   }
 
-  async function loadGoals() {
-    const { data, error } = await supabase.from("money_goals").select("*").order("priority", { ascending: true });
+  async function loadGoals(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setGoals([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("money_goals")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("priority", { ascending: true });
     if (!error) setGoals(data || []);
   }
 
-  async function loadReceipts() {
-    const { data, error } = await supabase.from("receipts").select("*").order("created_at", { ascending: false });
+  async function loadReceipts(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setReceipts([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("receipts")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     if (!error) setReceipts(data || []);
   }
 
-  async function loadAiMessages() {
-    const { data, error } = await supabase.from("ai_messages").select("*").order("created_at", { ascending: true });
+  async function loadAiMessages(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setAiMessages([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("ai_messages")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: true });
     if (!error) setAiMessages(data || []);
   }
 
-  async function loadDebts() {
-    const { data, error } = await supabase.from("debts").select("*").order("created_at", { ascending: false });
+  async function loadDebts(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setDebts([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("debts")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     if (!error) setDebts(data || []);
   }
 
-  async function loadInvestments() {
-    const { data, error } = await supabase.from("investments").select("*").order("created_at", { ascending: false });
+  async function loadInvestments(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setInvestments([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("investments")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     if (!error) setInvestments(data || []);
   }
 
-  async function loadStatementImports() {
-    const { data, error } = await supabase.from("statement_imports").select("*").order("created_at", { ascending: false });
+  async function loadStatementImports(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setStatementImports([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("statement_imports")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     if (!error) setStatementImports(data || []);
   }
 
-  async function loadViewerAccess() {
-    const { data, error } = await supabase.from("viewer_access").select("*").order("created_at", { ascending: false });
+  async function loadViewerAccess(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setViewerAccess([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("viewer_access")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     setViewerAccess(error ? [] : data || []);
   }
 
-  async function loadFinancialDocuments() {
-    const { data, error } = await supabase.from("financial_documents").select("*").order("created_at", { ascending: false });
+  async function loadFinancialDocuments(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setFinancialDocuments([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("financial_documents")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     setFinancialDocuments(error ? [] : data || []);
   }
 
-  async function loadSubscriptionProfile() {
-    const { data, error } = await supabase.from("subscription_profiles").select("*").maybeSingle();
+  async function loadSubscriptionProfile(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setSubscriptionProfile(null);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("subscription_profiles")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .maybeSingle();
     setSubscriptionProfile(error ? null : data || null);
   }
 
-  async function loadBankConnections() {
-    const { data, error } = await supabase.from("bank_connections").select("*").order("created_at", { ascending: false });
+  async function loadBankConnections(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setBankConnections([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("bank_connections")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     setBankConnections(error ? [] : data || []);
   }
 
-  async function loadTransactionRules() {
-    const { data, error } = await supabase.from("transaction_rules").select("*").order("created_at", { ascending: false });
+  async function loadTransactionRules(userId = getSignedInUserId(session)) {
+    const scopedUserId = resolveUserId(userId);
+    if (!scopedUserId) {
+      setTransactionRules([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("transaction_rules")
+      .select("*")
+      .eq("user_id", scopedUserId)
+      .order("created_at", { ascending: false });
     setTransactionRules(error ? [] : data || []);
   }
 
@@ -401,7 +570,13 @@ export default function App() {
   if (loading) return <div style={styles.loading}>Loading Money Hub...</div>;
   if (!session) {
     return page === "privacy" ? (
-      <div style={styles.app}><main style={getMainStyle(screenWidth, "privacy")}><Suspense fallback={<div style={styles.loading}>Opening Privacy...</div>}><PrivacyPage onBack={() => setPage("today")} styles={styles} /></Suspense></main></div>
+      <div style={styles.app}>
+        <main style={getMainStyle(screenWidth, "privacy")}>
+          <Suspense fallback={<div style={styles.loading}>Opening Privacy...</div>}>
+            <PrivacyPage onBack={() => setPage("today")} styles={styles} />
+          </Suspense>
+        </main>
+      </div>
     ) : <AuthPage screenWidth={screenWidth} styles={styles} onShowPrivacy={() => setPage("privacy")} />;
   }
 
