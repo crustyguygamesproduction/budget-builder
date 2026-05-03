@@ -10,6 +10,7 @@ import { getSubscriptionStatus } from "./lib/productPlan";
 import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
 import { buildAppMoneyModel } from "./lib/appMoneyModel";
 import { buildCoachContext } from "./lib/coachContext";
+import { useViewport } from "./hooks/useViewport";
 import {
   getDataFreshness,
   getSubscriptionSummary,
@@ -55,6 +56,24 @@ function getSignedInUserId(session) {
   return session?.user?.id || null;
 }
 
+function setSessionItem(key, value) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Private browsing or strict storage settings can block sessionStorage.
+  }
+}
+
+function removeSessionItem(key) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Storage is optional for one-shot Coach drafts.
+  }
+}
+
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
@@ -80,12 +99,7 @@ export default function App() {
     return localStorage.getItem("moneyhub-viewer-preview") === "true";
   });
 
-  const [screenWidth, setScreenWidth] = useState(() =>
-    typeof window === "undefined" ? 1280 : window.innerWidth
-  );
-  const [viewportHeight, setViewportHeight] = useState(() =>
-    typeof window === "undefined" ? 900 : window.innerHeight
-  );
+  const { screenWidth, viewportHeight } = useViewport();
 
   useEffect(() => {
     async function init() {
@@ -115,16 +129,6 @@ export default function App() {
     // loadAllData reads the current Supabase client and resets via local setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user?.id]);
-
-  useEffect(() => {
-    function handleResize() {
-      setScreenWidth(window.innerWidth);
-      setViewportHeight(window.innerHeight);
-    }
-
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -438,11 +442,9 @@ export default function App() {
   }
 
   function openCoachWithPrompt(prompt, options = {}) {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(COACH_DRAFT_KEY, prompt);
-      if (options.autoSend) localStorage.setItem(COACH_AUTOSEND_KEY, "true");
-      else localStorage.removeItem(COACH_AUTOSEND_KEY);
-    }
+    setSessionItem(COACH_DRAFT_KEY, prompt);
+    if (options.autoSend) setSessionItem(COACH_AUTOSEND_KEY, "true");
+    else removeSessionItem(COACH_AUTOSEND_KEY);
     navigateTo("coach", options);
   }
 

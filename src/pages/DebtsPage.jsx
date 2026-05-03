@@ -2,7 +2,11 @@
 import { supabase } from "../supabase";
 import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, intOrNull, normalizeText, numberOrNull } from "../lib/finance";
-import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
+import {
+  buildPrivateStoragePath,
+  prepareSensitiveUploadFile,
+  validateSensitiveFileContent,
+} from "../lib/security";
 import { fileToDataUrl } from "../lib/calendarIntelligence";
 import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
@@ -73,6 +77,21 @@ export default function DebtsPage({
     });
   }
 
+  async function chooseDebtDocument(nextFile, input) {
+    if (!nextFile) {
+      setDocumentFile(null);
+      return;
+    }
+    const validation = await validateSensitiveFileContent(nextFile);
+    if (!validation.ok) {
+      alert(validation.message);
+      if (input) input.value = "";
+      setDocumentFile(null);
+      return;
+    }
+    setDocumentFile(nextFile);
+  }
+
   async function runAiDebtParse() {
     if (!aiText.trim()) return;
 
@@ -132,7 +151,7 @@ export default function DebtsPage({
         data: { user },
       } = await supabase.auth.getUser();
 
-      const validation = validateSensitiveFile(documentFile);
+      const validation = await validateSensitiveFileContent(documentFile);
       if (!validation.ok) throw new Error(validation.message);
 
       const uploadFile = await prepareSensitiveUploadFile(documentFile, {
@@ -375,20 +394,9 @@ export default function DebtsPage({
           style={styles.input}
           type="file"
           accept="image/*,.pdf"
-          onChange={(e) => {
+          onChange={async (e) => {
             const nextFile = e.target.files?.[0] || null;
-            if (!nextFile) {
-              setDocumentFile(null);
-              return;
-            }
-            const validation = validateSensitiveFile(nextFile);
-            if (!validation.ok) {
-              alert(validation.message);
-              e.target.value = "";
-              setDocumentFile(null);
-              return;
-            }
-            setDocumentFile(nextFile);
+            await chooseDebtDocument(nextFile, e.target);
           }}
         />
         {documentFile ? <p style={styles.smallMuted}>{documentFile.name}</p> : null}

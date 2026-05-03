@@ -19,6 +19,24 @@ const COACH_AUTOSEND_KEY = "moneyhub-coach-autosend";
 const COACH_FRESH_CUTOFF_KEY = "moneyhub-coach-fresh-cutoff";
 const COACH_BRAIN_CHECK_DELAY_MS = 1200;
 
+function getSessionItem(key) {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.sessionStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function removeSessionItem(key) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Session drafts are optional.
+  }
+}
+
 export default function CoachPage({
   transactions,
   moneyUnderstanding,
@@ -34,7 +52,7 @@ export default function CoachPage({
 }) {
   const [message, setMessage] = useState(() => {
     if (typeof window === "undefined") return "";
-    return localStorage.getItem(COACH_DRAFT_KEY) || "";
+    return getSessionItem(COACH_DRAFT_KEY);
   });
   const [pendingUserMessage, setPendingUserMessage] = useState(null);
   const [thinking, setThinking] = useState(false);
@@ -103,11 +121,11 @@ export default function CoachPage({
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const shouldAutoSend = localStorage.getItem(COACH_AUTOSEND_KEY) === "true";
-    const draft = localStorage.getItem(COACH_DRAFT_KEY) || "";
+    const shouldAutoSend = getSessionItem(COACH_AUTOSEND_KEY) === "true";
+    const draft = getSessionItem(COACH_DRAFT_KEY);
 
-    localStorage.removeItem(COACH_DRAFT_KEY);
-    localStorage.removeItem(COACH_AUTOSEND_KEY);
+    removeSessionItem(COACH_DRAFT_KEY);
+    removeSessionItem(COACH_AUTOSEND_KEY);
 
     if (shouldAutoSend && draft.trim()) {
       sendMessage(draft);

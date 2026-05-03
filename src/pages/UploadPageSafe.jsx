@@ -11,7 +11,7 @@ import {
 } from "../lib/importAnalysis";
 import { buildUploadGuidance } from "../lib/uploadGuidance";
 import { getTotals, normalizeText } from "../lib/finance";
-import { validateStatementCsvFile } from "../lib/security";
+import { validateStatementCsvFileContent } from "../lib/security";
 import {
   enhanceTransactions,
   getHistorySummary,
@@ -569,7 +569,7 @@ export default function UploadPageSafe({
     };
   }
 
-  function handleFiles(event) {
+  async function handleFiles(event) {
     const selectedFiles = Array.from(event.target.files || []);
     if (selectedFiles.length === 0) return;
 
@@ -581,11 +581,11 @@ export default function UploadPageSafe({
       body: "Money Hub is checking your file. Nothing has been saved yet.",
     });
 
-    selectedFiles.forEach((file) => {
-      const validation = validateStatementCsvFile(file);
+    for (const file of selectedFiles) {
+      const validation = await validateStatementCsvFileContent(file);
       if (!validation.ok) {
         alert(`${file.name}: ${validation.message}`);
-        return;
+        continue;
       }
 
       Papa.parse(file, {
@@ -682,7 +682,7 @@ export default function UploadPageSafe({
           alert(`Could not read ${file.name}. Please check the file format and try again.`);
         },
       });
-    });
+    }
 
     event.target.value = "";
   }
@@ -828,7 +828,11 @@ export default function UploadPageSafe({
 
         if (error) throw error;
 
-        await supabase.from("accounts").update({ last_imported_at: new Date().toISOString() }).eq("id", accountId);
+        await supabase
+          .from("accounts")
+          .update({ last_imported_at: new Date().toISOString() })
+          .eq("id", accountId)
+          .eq("user_id", user.id);
 
         totalSavedFiles += 1;
         totalRows += fileItem.rows.length;

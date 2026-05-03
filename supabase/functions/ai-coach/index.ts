@@ -27,19 +27,49 @@ class PublicFunctionError extends Error {
   }
 }
 
+function isProductionRuntime() {
+  const env = String(Deno.env.get("ENVIRONMENT") || Deno.env.get("DENO_ENV") || Deno.env.get("APP_ENV") || "").toLowerCase();
+  return ["production", "prod"].includes(env);
+}
+
+function isLocalOrigin(origin: string) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(origin);
+}
+
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-  const allowOrigin = allowedOrigins.length === 0 || allowedOrigins.includes(origin) ? origin || "*" : allowedOrigins[0];
+
+  if (allowedOrigins.length === 0 && isProductionRuntime()) {
+    console.error("ai-coach: ALLOWED_ORIGINS must be set in production");
+    return {
+      "Access-Control-Allow-Origin": "null",
+      "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "X-CORS-Config-Error": "missing_allowed_origins",
+    };
+  }
+
+  const allowOrigin = allowedOrigins.includes(origin)
+    ? origin
+    : allowedOrigins.length > 0
+      ? allowedOrigins[0]
+      : isLocalOrigin(origin)
+        ? origin
+        : "null";
 
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
+}
+
+function hasCorsConfigError(headers: Record<string, string>) {
+  return headers["X-CORS-Config-Error"] === "missing_allowed_origins";
 }
 
 function cleanReply(text: string) {
@@ -741,8 +771,14 @@ Return exactly this shape:
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: buildCorsHeaders(req) });
   const corsHeaders = buildCorsHeaders(req);
+  if (hasCorsConfigError(corsHeaders)) {
+    return new Response(JSON.stringify({ error: "ALLOWED_ORIGINS must be set in production." }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   let modeForLogs = "unknown";
   const requestId = crypto.randomUUID();
 
@@ -761,6 +797,15 @@ Deno.serve(async (req) => {
 
     if (mode === "market_price") {
       assertTextLimit(message, 80, "ticker");
+      await enforceAiUsage(req, {
+        functionName: "ai-coach",
+        action: "market_price",
+        inputBytes: requestBytes,
+        limits: [
+          { windowSeconds: 3600, maxRequests: 60 },
+          { windowSeconds: 86400, maxRequests: 200 },
+        ],
+      });
       const assetType = String(context?.asset_type || "").toLowerCase();
       const rawSymbol = String(context?.ticker_symbol || message || "").trim();
       if (!rawSymbol) throw new Error("Missing ticker symbol.");

@@ -2,7 +2,11 @@
 import { supabase } from "../supabase";
 import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, normalizeText, numberOrNull } from "../lib/finance";
-import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
+import {
+  buildPrivateStoragePath,
+  prepareSensitiveUploadFile,
+  validateSensitiveFileContent,
+} from "../lib/security";
 import { fileToDataUrl } from "../lib/calendarIntelligence";
 import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
@@ -83,6 +87,21 @@ export default function InvestmentsPage({
     });
   }
 
+  async function chooseInvestmentDocument(nextFile, input) {
+    if (!nextFile) {
+      setDocumentFile(null);
+      return;
+    }
+    const validation = await validateSensitiveFileContent(nextFile);
+    if (!validation.ok) {
+      alert(validation.message);
+      if (input) input.value = "";
+      setDocumentFile(null);
+      return;
+    }
+    setDocumentFile(nextFile);
+  }
+
   async function runAiInvestmentParse() {
     if (!aiText.trim()) return;
 
@@ -142,7 +161,7 @@ export default function InvestmentsPage({
         data: { user },
       } = await supabase.auth.getUser();
 
-      const validation = validateSensitiveFile(documentFile);
+      const validation = await validateSensitiveFileContent(documentFile);
       if (!validation.ok) throw new Error(validation.message);
 
       const uploadFile = await prepareSensitiveUploadFile(documentFile, {
@@ -267,6 +286,10 @@ export default function InvestmentsPage({
 
       if (error) throw new Error(await getFunctionErrorMessage(error, "Price refresh is busy right now. Try again later."));
       if (!data?.price) throw new Error("No live price came back for that symbol.");
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error("Please sign in again before refreshing prices.");
 
       const { error: updateError } = await supabase
         .from("investments")
@@ -276,7 +299,8 @@ export default function InvestmentsPage({
           live_price_updated_at: new Date().toISOString(),
           price_source: data.source || "live",
         })
-        .eq("id", investment.id);
+        .eq("id", investment.id)
+        .eq("user_id", user.id);
 
       if (updateError) throw updateError;
       await onChange();
@@ -442,20 +466,9 @@ export default function InvestmentsPage({
           style={styles.input}
           type="file"
           accept="image/*,.pdf"
-          onChange={(e) => {
+          onChange={async (e) => {
             const nextFile = e.target.files?.[0] || null;
-            if (!nextFile) {
-              setDocumentFile(null);
-              return;
-            }
-            const validation = validateSensitiveFile(nextFile);
-            if (!validation.ok) {
-              alert(validation.message);
-              e.target.value = "";
-              setDocumentFile(null);
-              return;
-            }
-            setDocumentFile(nextFile);
+            await chooseInvestmentDocument(nextFile, e.target);
           }}
         />
         {documentFile ? <p style={styles.smallMuted}>{documentFile.name}</p> : null}
