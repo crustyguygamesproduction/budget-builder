@@ -168,7 +168,7 @@ function isLikelyBusinessWorkOrPassThrough(transaction) {
     [transaction.description, transaction.merchant, transaction.category, getMeaningfulCategory(transaction)].join(" ")
   );
 
-  return /\b(ltd|limited|plc|llp|mynextbike|my next bike|nextbike|proovia|salary|wages|payroll|employer|work|expenses?|reimburse|reimbursement|refund|hmrc|universal credit|dwp|trading 212|trading212|clearpay|paypal|stripe|sumup|cashback|reward|interest)\b/.test(text);
+  return /\b(ltd|limited|plc|llp|mynextbike|my next bike|nextbike|proovia|salary|wages?|payroll|paye|bonus|employer|regular income|employment income|main income|weekly pay|monthly pay|work|expenses?|reimburse|reimbursement|refund|hmrc|universal credit|dwp|benefits?|trading 212|trading212|clearpay|paypal|stripe|sumup|cashback|reward|interest)\b/.test(text);
 }
 
 function getPersonalPaymentLabel(description) {

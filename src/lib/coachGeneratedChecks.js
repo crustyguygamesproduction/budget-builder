@@ -35,5 +35,5 @@ export function mergeCoachGeneratedChecks(items = []) {
 
 function isUsefulCoachGeneratedCheck(item) {
   const text = `${item?.label || ""} ${item?.matchText || ""} ${item?.sampleDescription || ""}`.toLowerCase();
-  return !/\b(rewards?|cashback|interest|refunds?|salary|wages|payroll|benefits?|income hub|buffer|savings pot|cash pot|round ups?|roundups?)\b/.test(text);
+  return !/\b(rewards?|cashback|interest|refunds?|salary|wages?|payroll|paye|bonus|regular income|employment income|main income|weekly pay|monthly pay|benefits?|income hub|buffer|savings pot|cash pot|round ups?|roundups?)\b/.test(text);
 }

@@ -316,7 +316,7 @@ export function isLikelyPersonalTransfer(transaction, options = {}) {
   );
 
   if (!text) return false;
-  if (/\b(salary|wages|payroll|employer|work|expenses?|reimburse|reimbursement|refund|hmrc|dwp|universal credit|benefits?|interest|cashback|rewards?|paypal|stripe|sumup|trading 212|trading212|clearpay|proovia|mynextbike|nextbike|ltd|limited|plc|llp)\b/.test(text)) {
+  if (/\b(salary|wages?|payroll|paye|bonus|employer|regular income|employment income|main income|weekly pay|monthly pay|work|expenses?|reimburse|reimbursement|refund|hmrc|dwp|universal credit|benefits?|interest|cashback|rewards?|paypal|stripe|sumup|trading 212|trading212|clearpay|proovia|mynextbike|nextbike|ltd|limited|plc|llp)\b/.test(text)) {
     return false;
   }
   if (/\b(income hub|buffer|savings pot|cash pot|round ups?|roundups?)\b/.test(text)) {

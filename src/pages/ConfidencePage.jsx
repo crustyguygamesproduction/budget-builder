@@ -33,6 +33,15 @@ const RULE_OPTIONS = [
     helper: "Use this for Netflix, Apple, memberships, app plans, gyms or similar.",
   },
   {
+    label: "Wages/income",
+    category: "Wages",
+    isBill: false,
+    isSubscription: false,
+    isInternalTransfer: false,
+    matchAmount: false,
+    helper: "Use this for pay from work, wages, salary, benefits or reliable income.",
+  },
+  {
     label: "Friend/family",
     category: "Personal payment",
     isBill: false,
@@ -42,13 +51,13 @@ const RULE_OPTIONS = [
     helper: "Use this for gifts, lending, paying people back, or help from people you know.",
   },
   {
-    label: "Work money",
+    label: "Work/expense",
     category: "Work / pass-through",
     isBill: false,
     isSubscription: false,
     isInternalTransfer: false,
     matchAmount: false,
-    helper: "Use this when money comes in and goes back out for work, expenses, resale, or reimbursement.",
+    helper: "Use this for expenses, resale, client money or reimbursement that is not really yours to spend.",
   },
   {
     label: "My own transfer",
@@ -87,6 +96,7 @@ export default function ConfidencePage({
       const coachChecks = readCoachGeneratedChecks();
       return [...coachChecks, ...(moneyUnderstanding?.checks || [])]
         .filter((candidate) => !dismissedKeys.includes(candidate.key))
+        .filter((candidate) => !hasAnsweredRule(candidate, transactionRules))
         .filter((candidate, index, all) =>
           all.findIndex((item) => item.key === candidate.key) === index
         )
@@ -95,11 +105,13 @@ export default function ConfidencePage({
           examples: getExamplesForCandidate(transactions, candidate),
         }));
     },
-    [transactions, moneyUnderstanding, dismissedKeys]
+    [transactions, transactionRules, moneyUnderstanding, dismissedKeys]
   );
   const coachCheckCount = useMemo(
-    () => readCoachGeneratedChecks().filter((candidate) => !dismissedKeys.includes(candidate.key)).length,
-    [dismissedKeys]
+    () => readCoachGeneratedChecks()
+      .filter((candidate) => !dismissedKeys.includes(candidate.key))
+      .filter((candidate) => !hasAnsweredRule(candidate, transactionRules)).length,
+    [dismissedKeys, transactionRules]
   );
 
   const completedCount = transactionRules.filter((rule) =>
@@ -196,7 +208,7 @@ export default function ConfidencePage({
         {message ? <div style={styles.historyNote}>{message}</div> : null}
         {coachCheckCount > 0 ? (
           <div style={styles.historyNote}>
-            Someone missing? Ask Coach with their name, or mark these as friend/family, work money, your own transfer, or something else.
+            Someone missing? Ask Coach with their name, or mark these as friend/family, wages, work expenses, your own transfer, or something else.
           </div>
         ) : null}
       </Section>
@@ -293,6 +305,17 @@ function formatCheckPattern(candidate) {
   const countText = count === 1 ? "once" : `${count} times`;
   const monthText = months <= 1 ? "1 month" : `${months} months`;
   return `About £${amount}, seen ${countText} across ${monthText}.`;
+}
+
+function hasAnsweredRule(candidate, transactionRules = []) {
+  const match = normalizeText(candidate?.matchText || candidate?.label);
+  if (!match) return false;
+
+  return (transactionRules || []).some((rule) => {
+    const ruleText = normalizeText(rule?.match_text || "");
+    if (!ruleText) return false;
+    return ruleText.includes(match) || match.includes(ruleText);
+  });
 }
 
 function getExamplesForCandidate(transactions, candidate) {

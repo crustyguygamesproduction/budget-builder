@@ -7,7 +7,8 @@ import {
 } from "./merchantIntelligence";
 
 const CATEGORY_RULES = [
-  { category: "Income", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus|hmrc|universal credit|child benefit|pension credit|tax credit/.test(text) },
+  { category: "Wages", test: ({ text, amount }) => amount > 0 && /salary|payroll|wage|paye|bonus/.test(text) },
+  { category: "Income", test: ({ text, amount }) => amount > 0 && /hmrc|universal credit|child benefit|pension credit|tax credit|benefits?/.test(text) },
   { category: "Internal Transfer", test: ({ text }) => /transfer to|transfer from|to savings|from savings|standing order to|between accounts|own account|monzo pot|savings pot|round up|pot transfer/.test(text) },
   { category: "Rent", bill: true, test: ({ text, amount }) => amount < 0 && /rent|landlord|letting|property management|housing/.test(text) },
   { category: "Mortgage", bill: true, test: ({ text }) => /mortgage|home loan|halifax mortgage|nationwide mortgage|barclays mortgage|santander mortgage/.test(text) },
