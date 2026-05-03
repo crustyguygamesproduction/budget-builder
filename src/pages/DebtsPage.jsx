@@ -1,6 +1,6 @@
 ﻿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
-import { MiniCard, Row, Section } from "../components/ui";
+import { MiniCard, Notice, Row, Section } from "../components/ui";
 import { formatCurrency, intOrNull, normalizeText, numberOrNull } from "../lib/finance";
 import {
   buildPrivateStoragePath,
@@ -44,6 +44,7 @@ export default function DebtsPage({
   const [aiText, setAiText] = useState("");
   const [documentFile, setDocumentFile] = useState(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+  const [notice, setNotice] = useState(null);
   const [form, setForm] = useState({
     name: "",
     lender: "",
@@ -84,7 +85,7 @@ export default function DebtsPage({
     }
     const validation = await validateSensitiveFileContent(nextFile);
     if (!validation.ok) {
-      alert(validation.message);
+      setNotice({ tone: "bad", message: "That file does not look like a debt document. Upload a clear photo, image, or PDF." });
       if (input) input.value = "";
       setDocumentFile(null);
       return;
@@ -250,7 +251,7 @@ export default function DebtsPage({
 
   async function saveDebt(extra = {}) {
     if (viewerMode) {
-      alert("Viewer mode is on. Turn it off to edit debts.");
+      setNotice({ tone: "warn", message: "Viewer mode is on. Turn it off before editing debts." });
       return;
     }
 
@@ -281,7 +282,7 @@ export default function DebtsPage({
       };
 
       if (!payload.name) {
-        alert("Add a debt name first.");
+        setNotice({ tone: "warn", message: "Add the debt name first, like Barclaycard or car finance." });
         setSaving(false);
         return;
       }
@@ -308,9 +309,9 @@ export default function DebtsPage({
       setAiNote("");
 
       await onChange();
-      alert("Debt saved. If it already existed, the record was updated instead of duplicated.");
+      setNotice({ tone: "good", message: "Debt saved. If it was already there, Money Hub updated it instead of adding a duplicate." });
     } catch (error) {
-      alert(error.message || "Could not save debt.");
+      setNotice({ tone: "bad", message: error.message || "We could not save that debt. Nothing was changed." });
     } finally {
       setSaving(false);
     }
@@ -331,6 +332,7 @@ export default function DebtsPage({
 
   return (
     <>
+      <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
       <Section styles={styles} title="Debt Tracker">
         <p style={styles.sectionIntro}>
           Money Hub looks for loan, finance, card and overdraft payments, then keeps extra repayments behind bills and normal spending.

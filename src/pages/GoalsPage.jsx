@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
-import { Row, Section } from "../components/ui";
+import { Notice, Row, Section } from "../components/ui";
 import { buildGoalPlanFromMoneyModel } from "../lib/appMoneyModel";
 import { formatCurrency, numberOrNull } from "../lib/finance";
 
@@ -15,6 +15,7 @@ export default function GoalsPage({
   const [saving, setSaving] = useState(false);
   const [activeGoalId, setActiveGoalId] = useState("");
   const [showGoalForm, setShowGoalForm] = useState(false);
+  const [notice, setNotice] = useState(null);
   const [form, setForm] = useState({
     name: "",
     target_amount: "",
@@ -47,7 +48,7 @@ export default function GoalsPage({
     const targetDateValue = String((extra.target_date ?? form.target_date) || "").trim() || null;
 
     if (!name || !targetAmount) {
-      alert("Add a goal name and target first.");
+      setNotice({ tone: "warn", message: "Give the goal a name and an amount first." });
       return;
     }
 
@@ -78,9 +79,9 @@ export default function GoalsPage({
       setForm({ name: "", target_amount: "", current_amount: "", target_date: "" });
       setShowGoalForm(false);
       await onChange();
-      alert("Goal saved.");
+      setNotice({ tone: "good", message: "Goal saved. Money Hub will include it in your plan." });
     } catch (error) {
-      alert(error.message || "Could not save goal.");
+      setNotice({ tone: "bad", message: error.message || "We could not save that goal. Nothing was changed." });
     } finally {
       setSaving(false);
     }
@@ -94,6 +95,7 @@ export default function GoalsPage({
 
   return (
     <>
+      <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
       {activeGoal ? (
         <Section
           styles={styles}

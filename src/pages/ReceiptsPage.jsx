@@ -13,7 +13,7 @@ import {
   prepareSensitiveUploadFile,
   validateSensitiveFileContent,
 } from "../lib/security";
-import { Section } from "../components/ui";
+import { Notice, Section } from "../components/ui";
 
 export default function ReceiptsPage({ receipts, transactions, onChange, onGoToCoach, styles }) {
   const [merchant, setMerchant] = useState("");
@@ -27,6 +27,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
   const [receiptFilter, setReceiptFilter] = useState("all");
   const [viewerReceipt, setViewerReceipt] = useState(null);
   const [viewerError, setViewerError] = useState("");
+  const [notice, setNotice] = useState(null);
 
   function guessFromFileName(fileName) {
     const clean = fileName.toLowerCase();
@@ -89,7 +90,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
 
     const validation = await validateSensitiveFileContent(selectedFile);
     if (!validation.ok) {
-      alert(validation.message);
+      setNotice({ tone: "bad", message: "That file does not look like a receipt. Upload a clear photo, image, or PDF." });
       event.target.value = "";
       return;
     }
@@ -122,7 +123,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
 
   async function addReceipt() {
     if (!merchant.trim() && !file) {
-      alert("Add a receipt name or upload a receipt first.");
+      setNotice({ tone: "warn", message: "Add a receipt name or upload a receipt first." });
       return;
     }
 
@@ -139,7 +140,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
       const uploadValidation = await validateSensitiveFileContent(file);
       if (!uploadValidation.ok) {
         setSaving(false);
-        alert(uploadValidation.message);
+        setNotice({ tone: "bad", message: "That file does not look like a receipt. Upload a clear photo, image, or PDF." });
         return;
       }
 
@@ -159,7 +160,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
 
       if (uploadError) {
         setSaving(false);
-        alert(uploadError.message);
+        setNotice({ tone: "bad", message: uploadError.message || "We could not upload that receipt. Nothing was saved." });
         return;
       }
 
@@ -206,7 +207,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
     setSaving(false);
 
     if (error) {
-      alert(error.message);
+      setNotice({ tone: "bad", message: error.message || "We could not save that receipt. Nothing was changed." });
       return;
     }
 
@@ -217,7 +218,10 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
     setKeepFile(false);
     setMatch(null);
 
-    alert(match ? "Receipt saved and matched." : "Receipt saved.");
+    setNotice({
+      tone: "good",
+      message: match ? "Receipt saved and matched to a payment." : "Receipt saved.",
+    });
     onChange();
   }
 
@@ -280,6 +284,7 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
 
   return (
     <>
+      <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
       <Section
         title="Receipt Scanner"
         styles={styles}

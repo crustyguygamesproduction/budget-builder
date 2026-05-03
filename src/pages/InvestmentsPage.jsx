@@ -1,6 +1,6 @@
 ﻿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
-import { MiniCard, Row, Section } from "../components/ui";
+import { MiniCard, Notice, Row, Section } from "../components/ui";
 import { formatCurrency, normalizeText, numberOrNull } from "../lib/finance";
 import {
   buildPrivateStoragePath,
@@ -45,6 +45,7 @@ export default function InvestmentsPage({
   const [documentFile, setDocumentFile] = useState(null);
   const [documentBusy, setDocumentBusy] = useState(false);
   const [quoteBusyKey, setQuoteBusyKey] = useState("");
+  const [notice, setNotice] = useState(null);
   const [form, setForm] = useState({
     name: "",
     platform: "",
@@ -94,7 +95,7 @@ export default function InvestmentsPage({
     }
     const validation = await validateSensitiveFileContent(nextFile);
     if (!validation.ok) {
-      alert(validation.message);
+      setNotice({ tone: "bad", message: "That file does not look like an investment document. Upload a clear photo, image, or PDF." });
       if (input) input.value = "";
       setDocumentFile(null);
       return;
@@ -264,7 +265,7 @@ export default function InvestmentsPage({
 
   async function refreshPrice(investment) {
     if (!investment.ticker_symbol && investment.asset_type !== "crypto") {
-      alert("Add a ticker symbol first, e.g. VUAG.L or BTC.");
+      setNotice({ tone: "warn", message: "Add the ticker symbol first, like VUAG.L or BTC." });
       return;
     }
 
@@ -304,8 +305,9 @@ export default function InvestmentsPage({
 
       if (updateError) throw updateError;
       await onChange();
+      setNotice({ tone: "good", message: "Price updated." });
     } catch (error) {
-      alert(error.message || "Could not refresh price.");
+      setNotice({ tone: "bad", message: error.message || "We could not update that price. Nothing was changed." });
     } finally {
       setQuoteBusyKey("");
     }
@@ -313,7 +315,7 @@ export default function InvestmentsPage({
 
   async function saveInvestment(extra = {}) {
     if (viewerMode) {
-      alert("Viewer mode is on. Turn it off to edit investments.");
+      setNotice({ tone: "warn", message: "Viewer mode is on. Turn it off before editing investments." });
       return;
     }
 
@@ -349,7 +351,7 @@ export default function InvestmentsPage({
       };
 
       if (!payload.name) {
-        alert("Add an investment name first.");
+        setNotice({ tone: "warn", message: "Add the investment name first, like Vanguard ISA or Bitcoin." });
         setSaving(false);
         return;
       }
@@ -379,11 +381,9 @@ export default function InvestmentsPage({
       setAiNote("");
 
       await onChange();
-      alert(
-        "Investment saved. If it already existed, the record was updated instead of duplicated."
-      );
+      setNotice({ tone: "good", message: "Investment saved. If it was already there, Money Hub updated it instead of adding a duplicate." });
     } catch (error) {
-      alert(error.message || "Could not save investment.");
+      setNotice({ tone: "bad", message: error.message || "We could not save that investment. Nothing was changed." });
     } finally {
       setSaving(false);
     }
@@ -405,6 +405,7 @@ export default function InvestmentsPage({
 
   return (
     <>
+      <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
       <Section styles={styles} title="Investment Tracker">
         <p style={styles.sectionIntro}>
           Money Hub separates investing from normal spending and only encourages more when bills and usual spending look safe.

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
-import { Row, Section } from "../components/ui";
+import { Notice, Row, Section } from "../components/ui";
 import { replayOnboarding } from "../components/onboarding/onboardingState";
 import { BANK_FEED_PROVIDER } from "../lib/bankFeeds";
 import { FREE_FEATURES, PREMIUM_FEATURES, getPremiumFeatureSummary } from "../lib/productPlan";
@@ -26,6 +26,7 @@ export default function SettingsPage({
   const [resetBusy, setResetBusy] = useState(false);
   const [monthDeleteBusy, setMonthDeleteBusy] = useState(false);
   const [selectedMonths, setSelectedMonths] = useState([]);
+  const [notice, setNotice] = useState(null);
   const monthOptions = getMonthOptions(transactions);
 
   async function addViewer() {
@@ -51,9 +52,9 @@ export default function SettingsPage({
       setViewerEmail("");
       setViewerLabel("");
       await onViewerChange();
-      alert("Viewer added. Once the other person has an account, this can become a proper shared read-only view.");
+      setNotice({ tone: "good", message: "Viewer added. When they have an account, they can see a read-only view." });
     } catch (error) {
-      alert(error.message || "Could not add viewer yet.");
+      setNotice({ tone: "bad", message: error.message || "We could not add that viewer. Nothing was changed." });
     } finally {
       setSharing(false);
     }
@@ -130,7 +131,7 @@ export default function SettingsPage({
 
       replayOnboarding(userId);
       await onDataChange?.();
-      alert("Your Money Hub data was deleted. Setup will run again.");
+      setNotice({ tone: "good", message: "Your Money Hub data was deleted. Setup will run again." });
     } catch (error) {
       await finishDeletionEvent({
         eventId: auditEventId,
@@ -141,7 +142,7 @@ export default function SettingsPage({
         status: "failed",
         errorCode: getDeletionErrorCode(error),
       });
-      alert(error.message || "Could not delete all data.");
+      setNotice({ tone: "bad", message: error.message || "We could not delete everything. Some data may still be there." });
     } finally {
       setResetBusy(false);
     }
@@ -216,7 +217,7 @@ export default function SettingsPage({
 
       setSelectedMonths([]);
       await onDataChange?.();
-      alert("Selected month data deleted.");
+      setNotice({ tone: "good", message: "Selected month data deleted." });
     } catch (error) {
       await finishDeletionEvent({
         eventId: auditEventId,
@@ -227,7 +228,7 @@ export default function SettingsPage({
         status: "failed",
         errorCode: getDeletionErrorCode(error),
       });
-      alert(error.message || "Could not delete those months.");
+      setNotice({ tone: "bad", message: error.message || "We could not delete those months. Nothing else was changed." });
     } finally {
       setMonthDeleteBusy(false);
     }
@@ -241,6 +242,7 @@ export default function SettingsPage({
 
   return (
     <>
+      <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
       <Section title="Setup Guide" styles={styles}>
         <p style={styles.sectionIntro}>
           Use this if you want Money Hub to walk you through the simple rhythm again: upload statements, review Calendar, set one goal, then ask AI.

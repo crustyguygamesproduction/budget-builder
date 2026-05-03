@@ -280,6 +280,60 @@
     lineHeight: 1.6,
   },
 
+  notice: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    margin: "0 0 12px",
+    border: "1px solid #dbe4f0",
+    background: "#f8fbff",
+    color: "#0f172a",
+  },
+
+  noticeTone: {
+    info: {
+      background: "#f8fbff",
+      borderColor: "#bfdbfe",
+    },
+    good: {
+      background: "#f0fdf4",
+      borderColor: "#bbf7d0",
+    },
+    warn: {
+      background: "#fffbeb",
+      borderColor: "#fde68a",
+    },
+    bad: {
+      background: "#fef2f2",
+      borderColor: "#fecaca",
+    },
+  },
+
+  noticeTitle: {
+    display: "block",
+    fontSize: "14px",
+    marginBottom: "2px",
+  },
+
+  noticeBody: {
+    margin: 0,
+    color: "#475569",
+    fontSize: "13px",
+    lineHeight: 1.5,
+  },
+
+  noticeCloseBtn: {
+    border: 0,
+    background: "transparent",
+    color: "#475569",
+    fontWeight: 800,
+    cursor: "pointer",
+    padding: "2px 0",
+  },
+
   row: {
     display: "flex",
     justifyContent: "space-between",

@@ -597,15 +597,14 @@ export default function UploadPageSafe({
         try {
           validation = await validateStatementCsvFileContent(file);
         } catch (error) {
-          const message = error?.message || "Money Hub could not check that file. Try exporting it again as CSV.";
+          const message = error?.message || "That file does not look like a bank statement CSV. Export a CSV from your bank and try that file.";
           setUploadStatus({
             phase: "error",
             step: 1,
             tone: "bad",
-            title: "Could not check that statement",
+            title: "That file does not look right",
             body: message,
           });
-          alert(`${file.name}: ${message}`);
           continue;
         }
 
@@ -614,10 +613,9 @@ export default function UploadPageSafe({
             phase: "error",
             step: 1,
             tone: "bad",
-            title: "That statement does not look right",
-            body: validation.message,
+            title: "That file does not look like a CSV",
+            body: "Choose the CSV export from your bank. A screenshot, PDF, spreadsheet, or renamed file will not work here.",
           });
-          alert(`${file.name}: ${validation.message}`);
           continue;
         }
 
@@ -662,9 +660,9 @@ export default function UploadPageSafe({
                   step: 2,
                   tone: "bad",
                   title: "Fix the statement dates first",
-                  body: `${dateErrors.length} row${dateErrors.length === 1 ? "" : "s"} had ambiguous or unsupported dates. No rows from this file were added to the preview.`,
+                  body: `${dateErrors.length} row${dateErrors.length === 1 ? "" : "s"} had dates Money Hub cannot safely understand. Nothing from this file was added.`,
                 });
-                alert(`Money Hub rejected unsafe dates in ${file.name}.\n\n${examples}`);
+                console.warn(`Money Hub rejected unsafe dates in ${file.name}.\n${examples}`);
                 return;
               }
 
@@ -674,9 +672,8 @@ export default function UploadPageSafe({
                   step: 2,
                   tone: "bad",
                   title: "Could not find usable rows",
-                  body: "No rows had a safe date, description and amount. Check the file format and try again.",
+                  body: "Money Hub could not find the date, description and amount columns. Try a fresh CSV export from your bank.",
                 });
-                alert(`Could not find usable rows in ${file.name}.`);
                 return;
               }
 
@@ -699,9 +696,8 @@ export default function UploadPageSafe({
                 step: 2,
                 tone: "bad",
                 title: "Could not read that statement",
-                body: error?.message || "Please check the file format and try again.",
+                body: error?.message || "Money Hub could not read that file. Try a fresh CSV export from your bank.",
               });
-              alert(`Could not read ${file.name}. Please check the file format and try again.`);
             }
           },
           error() {
@@ -710,9 +706,8 @@ export default function UploadPageSafe({
               step: 1,
               tone: "bad",
               title: "Could not read that statement",
-              body: "Please check the file format and try again.",
+              body: "Money Hub could not read that file. Try a fresh CSV export from your bank.",
             });
-            alert(`Could not read ${file.name}. Please check the file format and try again.`);
           },
         });
       }
@@ -900,11 +895,9 @@ export default function UploadPageSafe({
         phase: "error",
         step: 4,
         tone: "bad",
-        title: "Import failed",
-        body: error.message || "Something went wrong while saving your statement.",
+        title: "We could not save that statement",
+        body: error.message || "Nothing was changed. Try again, or export a fresh CSV from your bank.",
       });
-
-      alert(error.message || "Import failed.");
     } finally {
       setSaving(false);
     }

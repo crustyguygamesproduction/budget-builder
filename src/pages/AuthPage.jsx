@@ -1,5 +1,6 @@
 import { Suspense, lazy, useState } from "react";
 import { supabase } from "../supabase";
+import { Notice } from "../components/ui";
 
 const PrivacyPage = lazy(() => import("./PrivacyPage"));
 const PRIVACY_POLICY_VERSION = "2026-05-03";
@@ -10,21 +11,26 @@ export default function AuthPage({ screenWidth, styles }) {
   const [busy, setBusy] = useState(false);
   const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [notice, setNotice] = useState(null);
+
+  function showNotice(message, tone = "bad", title = "") {
+    setNotice({ message, tone, title });
+  }
 
   function validateAuthInput(isSignup = false) {
     const normalizedEmail = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      alert("Enter a valid email address.");
+      showNotice("Type your email address in the normal format, like name@example.com.");
       return null;
     }
 
     if (isSignup && password.length < 10) {
-      alert("Use at least 10 characters for your password.");
+      showNotice("Use at least 10 characters for your password. A longer password keeps your money data safer.");
       return null;
     }
 
     if (!password) {
-      alert("Enter your password.");
+      showNotice("Type your password first.");
       return null;
     }
 
@@ -39,7 +45,7 @@ export default function AuthPage({ screenWidth, styles }) {
     const { error } = await supabase.auth.signInWithPassword(credentials);
     setBusy(false);
 
-    if (error) alert("Login did not work. Check your email and password, then try again.");
+    if (error) showNotice("Login did not work. Check your email and password, then try again.");
   }
 
   async function signup() {
@@ -47,7 +53,7 @@ export default function AuthPage({ screenWidth, styles }) {
     if (!credentials || busy) return;
 
     if (!agreedToPrivacy) {
-      alert("Please agree to the Privacy Policy before creating an account.");
+      showNotice("Please tick the privacy box before creating an account.");
       return;
     }
 
@@ -68,7 +74,7 @@ export default function AuthPage({ screenWidth, styles }) {
 
     if (error) {
       setBusy(false);
-      alert("Account creation did not work. Check the details and try again.");
+      showNotice("We could not create the account. Check the details and try again.");
       return;
     }
 
@@ -77,7 +83,7 @@ export default function AuthPage({ screenWidth, styles }) {
     }
 
     setBusy(false);
-    alert("Account created. You can now log in.");
+    showNotice("Account created. You can now log in.", "good");
   }
 
   async function persistPrivacyConsent(userId, normalizedEmail, consentPayload) {
@@ -111,6 +117,7 @@ export default function AuthPage({ screenWidth, styles }) {
           Upload statements, let the app do the hard bit, and get a cleaner
           money setup without spreadsheet energy.
         </p>
+        <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
 
         <form
           onSubmit={(e) => {

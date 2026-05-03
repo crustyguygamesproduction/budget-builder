@@ -28,6 +28,24 @@ export function Row({ name, value, styles }) {
   );
 }
 
+export function Notice({ notice, styles, onClose }) {
+  if (!notice?.message) return null;
+  const tone = notice.tone || "info";
+  return (
+    <div style={{ ...styles.notice, ...(styles.noticeTone?.[tone] || styles.noticeTone?.info || null) }}>
+      <div>
+        {notice.title ? <strong style={styles.noticeTitle}>{notice.title}</strong> : null}
+        <p style={styles.noticeBody}>{notice.message}</p>
+      </div>
+      {onClose ? (
+        <button type="button" style={styles.noticeCloseBtn} onClick={onClose} aria-label="Hide message">
+          Close
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function InsightCard({ label, headline, body, onClick, ctaLabel, styles }) {
   const cardStyle = onClick ? { ...styles.insightCard, ...styles.insightCardInteractive } : styles.insightCard;
 
