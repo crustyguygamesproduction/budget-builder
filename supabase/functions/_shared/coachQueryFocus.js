@@ -282,31 +282,35 @@ export function roundMoney(value) {
 function parseMoneyLookupQuery(query) {
   const text = stripLookupNoise(query);
   const directionIntent = getQueryDirectionIntent(query);
-  let searchPhrase = "";
+  const rawSearchPhrase = getRawSearchPhrase(text, directionIntent);
 
+  return {
+    directionIntent,
+    searchPhrase: cleanupSearchPhrase(rawSearchPhrase),
+  };
+}
+
+function getRawSearchPhrase(text, directionIntent) {
   if (directionIntent === "incoming") {
-    searchPhrase = firstCapture(text, [
+    return firstCapture(text, [
       /(?:^|\b)(?:did|has|have)?\s*(.+?)\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:me|to me)\b/,
       /(?:^|\b)(?:received|money in|income)\s+from\s+(.+?)\b/,
       /(?:^|\b)from\s+(.+?)\b/,
     ]);
-  } else if (directionIntent === "outgoing") {
-    searchPhrase = firstCapture(text, [
+  }
+
+  if (directionIntent === "outgoing") {
+    return firstCapture(text, [
       /(?:^|\b)(?:did\s+)?i\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:money\s+)?(?:to\s+)?(.+?)\b/,
       /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
       /(?:^|\b)(?:at|on|to)\s+(.+?)\b/,
     ]);
-  } else {
-    searchPhrase = firstCapture(text, [
-      /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
-      /(?:^|\b)(?:with|from|at|on|to)\s+(.+?)\b/,
-    ]);
   }
 
-  return {
-    directionIntent,
-    searchPhrase: cleanupSearchPhrase(searchPhrase),
-  };
+  return firstCapture(text, [
+    /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
+    /(?:^|\b)(?:with|from|at|on|to)\s+(.+?)\b/,
+  ]);
 }
 
 function stripLookupNoise(query) {
