@@ -440,6 +440,54 @@ function buildDeterministicLookupReply(message: string, promptContext: Record<st
   return `Total: ${formatGbp(Math.abs(amount))} ${verb} ${target}${windowText}.${caveat}`;
 }
 
+function buildCoachCheckSuggestions(queryFocus: any) {
+  if (!queryFocus?.broad_personal_lookup) return [];
+  const groups = Array.isArray(queryFocus.relevant_grouped_matches)
+    ? queryFocus.relevant_grouped_matches
+    : [];
+
+  return groups
+    .filter((group: any) => Number(group.count || 0) > 0)
+    .slice(0, 8)
+    .map((group: any, index: number) => {
+      const label = String(group.label || "Personal transfer").trim();
+      const direction = queryFocus.direction_intent === "incoming" ? "incoming" : "outgoing";
+      const total = direction === "incoming" ? Number(group.money_in || group.total || 0) : Number(group.money_out || group.total || 0);
+      const count = Math.max(Number(group.count || 1), 1);
+      return {
+        key: `coach:${direction}:${normalizeCheckKey(label)}:${Math.round(total * 100)}:${count}`,
+        label,
+        matchText: label,
+        amount: Math.round((total / count) * 100) / 100,
+        count,
+        monthCount: getGroupMonthCount(group),
+        sampleDescription: group.example || label,
+        direction,
+        question: direction === "incoming" ? `Is ${label} money from someone you know?` : `Is ${label} money you sent to someone you know?`,
+        helper: "Coach used this as a people-money guess. Answer it once and future advice gets sharper.",
+        source: "coach",
+        sourceQuery: queryFocus.original_query || "",
+      };
+    });
+}
+
+function normalizeCheckKey(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "check";
+}
+
+function getGroupMonthCount(group: any) {
+  const months = new Set(
+    [group?.first_date, group?.last_date]
+      .filter(Boolean)
+      .map((date) => String(date).slice(0, 7))
+  );
+  return Math.max(months.size, 1);
+}
+
 function formatGbp(value: number) {
   return `£${Number(value || 0).toFixed(2)}`;
 }
@@ -729,9 +777,10 @@ Deno.serve(async (req) => {
     const promptContext = wantsSearchableTransactions
       ? buildSavedCoachBrainForPrompt(savedContext, safeMessage)
       : buildMinimalCoachBrainForPrompt(savedContext, safeMessage);
+    const coachCheckSuggestions = buildCoachCheckSuggestions((promptContext as any)?.query_focus);
     const deterministicReply = buildDeterministicLookupReply(safeMessage, promptContext);
     if (deterministicReply) {
-      return new Response(JSON.stringify({ reply: deterministicReply, model: "app_query_focus", mode: "premium", context_source: "coach_context_snapshots", context_detail: "deterministic_query_focus" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ reply: deterministicReply, model: "app_query_focus", mode: "premium", context_source: "coach_context_snapshots", context_detail: "deterministic_query_focus", coach_check_suggestions: coachCheckSuggestions }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     let contextDetail = wantsSearchableTransactions ? "searchable_compact" : "decision_compact";
@@ -762,7 +811,7 @@ Deno.serve(async (req) => {
 
     const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "How can I help?";
     const reply = enforceCompactReply(rawReply, safeMessage);
-    return new Response(JSON.stringify({ reply, model, mode: "premium", context_source: "coach_context_snapshots", context_detail: contextDetail }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ reply, model, mode: "premium", context_source: "coach_context_snapshots", context_detail: contextDetail, coach_check_suggestions: coachCheckSuggestions }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
     const publicError = error instanceof PublicFunctionError
       ? error

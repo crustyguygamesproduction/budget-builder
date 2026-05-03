@@ -2,6 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { Section } from "../components/ui";
+import {
+  mergeCoachGeneratedChecks,
+  readCoachGeneratedChecks,
+} from "../lib/coachGeneratedChecks";
 import { getTopCategories } from "../lib/dashboardIntelligence";
 import { getStatementIntelligenceContext } from "../lib/statementIntelligence";
 import {
@@ -23,6 +27,7 @@ export default function CoachPage({
   aiMessages,
   onChange,
   onTransactionRulesChange,
+  onNavigate,
   screenWidth,
   viewportHeight,
   styles,
@@ -44,6 +49,7 @@ export default function CoachPage({
     }
   });
   const [chatError, setChatError] = useState("");
+  const [coachGeneratedChecks, setCoachGeneratedChecks] = useState(() => readCoachGeneratedChecks());
   const [coachBrainSyncStatus, setCoachBrainSyncStatus] = useState({
     state: "checking",
     label: "Checking Coach brain...",
@@ -224,6 +230,10 @@ export default function CoachPage({
         throw new Error(data.error);
       }
 
+      if (Array.isArray(data?.coach_check_suggestions) && data.coach_check_suggestions.length > 0) {
+        setCoachGeneratedChecks(mergeCoachGeneratedChecks(data.coach_check_suggestions));
+      }
+
       await supabase.from("ai_messages").insert({
         user_id: user.id,
         role: "assistant",
@@ -384,6 +394,14 @@ export default function CoachPage({
 
           <CoachBrainSyncStatus status={coachBrainSyncStatus} styles={styles} />
 
+          {coachGeneratedChecks.length > 0 ? (
+            <CoachChecksPill
+              count={coachGeneratedChecks.length}
+              styles={styles}
+              onClick={() => onNavigate?.("confidence")}
+            />
+          ) : null}
+
           <div style={getChatMessagesStyle(styles)}>
             {freshCutoff && hiddenOlderByFreshView > 0 && (
               <div style={styles.historyNote}>New chat. History is still saved.</div>
@@ -486,11 +504,56 @@ function CoachBrainSyncStatus({ status, styles }) {
   );
 }
 
+function CoachChecksPill({ count, styles, onClick }) {
+  return (
+    <button type="button" style={getCoachChecksPillStyle(styles)} onClick={onClick}>
+      <span style={getCoachChecksDotStyle()}>!</span>
+      <span style={{ fontWeight: 900 }}>You have new checks</span>
+      <span style={{ color: "#475569" }}>
+        {count} thing{count === 1 ? "" : "s"} Coach wants you to confirm
+      </span>
+    </button>
+  );
+}
+
 function buildCoachBrainReadyHelper(data) {
   const count = Number(data?.transaction_count || 0);
   const latest = data?.latest_transaction_date ? ` Latest transaction: ${data.latest_transaction_date}.` : "";
   const updated = data?.updated_at ? ` Saved ${formatRelativeSyncTime(data.updated_at)}.` : "";
   return `${count ? `${count} transactions saved for Coach.` : "Saved money read is ready."}${latest}${updated}`;
+}
+
+function getCoachChecksPillStyle(styles) {
+  return {
+    width: "100%",
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: styles.text,
+    borderRadius: 999,
+    padding: "10px 12px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    cursor: "pointer",
+    textAlign: "left",
+    fontSize: 13,
+    boxShadow: "0 8px 20px rgba(37, 99, 235, 0.10)",
+  };
+}
+
+function getCoachChecksDotStyle() {
+  return {
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    background: "#2563eb",
+    color: "white",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 900,
+    flex: "0 0 auto",
+  };
 }
 
 function formatRelativeSyncTime(value) {

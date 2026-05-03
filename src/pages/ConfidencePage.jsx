@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
+import { readCoachGeneratedChecks } from "../lib/coachGeneratedChecks";
 import { normalizeText } from "../lib/finance";
 import { Section, MiniCard } from "../components/ui";
 
@@ -80,14 +81,23 @@ export default function ConfidencePage({
   const [message, setMessage] = useState("");
 
   const checks = useMemo(
-    () =>
-      (moneyUnderstanding?.checks || [])
+    () => {
+      const coachChecks = readCoachGeneratedChecks();
+      return [...coachChecks, ...(moneyUnderstanding?.checks || [])]
         .filter((candidate) => !dismissedKeys.includes(candidate.key))
+        .filter((candidate, index, all) =>
+          all.findIndex((item) => item.key === candidate.key) === index
+        )
         .map((candidate) => ({
           ...candidate,
           examples: getExamplesForCandidate(transactions, candidate),
-        })),
+        }));
+    },
     [transactions, moneyUnderstanding, dismissedKeys]
+  );
+  const coachCheckCount = useMemo(
+    () => readCoachGeneratedChecks().filter((candidate) => !dismissedKeys.includes(candidate.key)).length,
+    [dismissedKeys]
   );
 
   const completedCount = transactionRules.filter((rule) =>
@@ -176,6 +186,11 @@ export default function ConfidencePage({
         </div>
 
         {message ? <div style={styles.historyNote}>{message}</div> : null}
+        {coachCheckCount > 0 ? (
+          <div style={styles.historyNote}>
+            Someone missing? Ask Coach with their name, or mark these as friend/family, work money, your own transfer, or something else.
+          </div>
+        ) : null}
       </Section>
 
       {checks.length === 0 ? (
@@ -213,7 +228,7 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
         <div>
           <strong>{candidate.question || `What is ${candidate.label}?`}</strong>
           <p style={styles.transactionMeta}>
-            About £{Number(candidate.amount || 0).toFixed(2)} happened {candidate.count} times across {candidate.monthCount} month{candidate.monthCount === 1 ? "" : "s"}. {candidate.helper || "Tell Money Hub what it is."}
+            {formatCheckPattern(candidate)} {candidate.helper || "Tell Money Hub what it is."}
           </p>
         </div>
         <button type="button" style={styles.ghostBtn} onClick={onSkip} disabled={saving}>
@@ -263,13 +278,25 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
   );
 }
 
+function formatCheckPattern(candidate) {
+  const amount = Number(candidate.amount || 0).toFixed(2);
+  const count = Number(candidate.count || 0);
+  const months = Number(candidate.monthCount || 0);
+  const countText = count === 1 ? "once" : `${count} times`;
+  const monthText = months <= 1 ? "1 month" : `${months} months`;
+  return `About £${amount}, seen ${countText} across ${monthText}.`;
+}
+
 function getExamplesForCandidate(transactions, candidate) {
   const match = normalizeText(candidate.matchText || candidate.label);
   if (!match) return [];
+  const direction = candidate.direction || "outgoing";
 
   return transactions
     .filter((transaction) => {
-      if (Number(transaction.amount || 0) >= 0) return false;
+      const amount = Number(transaction.amount || 0);
+      if (direction === "incoming" && amount <= 0) return false;
+      if (direction !== "incoming" && amount >= 0) return false;
       const text = normalizeText(transaction.description || "");
       return text.includes(match) || match.includes(text.slice(0, 12));
     })
