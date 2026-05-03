@@ -21,7 +21,7 @@ import {
 } from "./lib/statementSignals";
 
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
-const CoachPage = lazy(() => import("./pages/CoachPage"));
+const CoachPage = lazy(() => import("./pages/CoachPageGuarded"));
 const ConfidencePage = lazy(() => import("./pages/ConfidencePage"));
 const DebtsPage = lazy(() => import("./pages/DebtsPageUx"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
