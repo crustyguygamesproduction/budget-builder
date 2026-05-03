@@ -8,7 +8,9 @@ const COACH_SNAPSHOT_RETRY_DELAY_MS = 650;
 export default function CoachPageGuarded(props) {
   const expectedSnapshotRef = useRef(getExpectedCoachSnapshot(props.transactions));
 
-  expectedSnapshotRef.current = getExpectedCoachSnapshot(props.transactions);
+  useEffect(() => {
+    expectedSnapshotRef.current = getExpectedCoachSnapshot(props.transactions);
+  }, [props.transactions]);
 
   useEffect(() => {
     const originalInvoke = supabase.functions.invoke.bind(supabase.functions);
