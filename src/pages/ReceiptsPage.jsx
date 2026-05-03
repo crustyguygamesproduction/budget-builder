@@ -11,7 +11,7 @@ import {
   buildPrivateStoragePath,
   getSignedStorageUrl,
   prepareSensitiveUploadFile,
-  validateSensitiveFile,
+  validateSensitiveFileContent,
 } from "../lib/security";
 import { Section } from "../components/ui";
 
@@ -83,11 +83,11 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
       .map((item) => item.transaction);
   }
 
-  function handleFileChange(event) {
+  async function handleFileChange(event) {
     const selectedFile = event.target.files[0];
     if (!selectedFile) return;
 
-    const validation = validateSensitiveFile(selectedFile);
+    const validation = await validateSensitiveFileContent(selectedFile);
     if (!validation.ok) {
       alert(validation.message);
       event.target.value = "";
@@ -136,6 +136,13 @@ export default function ReceiptsPage({ receipts, transactions, onChange, onGoToC
     let fileType = file?.type || null;
 
     if (file && keepFile) {
+      const uploadValidation = await validateSensitiveFileContent(file);
+      if (!uploadValidation.ok) {
+        setSaving(false);
+        alert(uploadValidation.message);
+        return;
+      }
+
       const uploadFile = await prepareSensitiveUploadFile(file, {
         maxDimension: 1600,
         quality: 0.7,
