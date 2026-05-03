@@ -447,7 +447,9 @@ async function finishDeletionEvent({ eventId, userId, actionType, selectedMonths
 }
 
 function stripNewAuditFields(payload) {
-  const { status: _status, error_code: _errorCode, ...legacyPayload } = payload;
+  const legacyPayload = { ...payload };
+  delete legacyPayload.status;
+  delete legacyPayload.error_code;
   return legacyPayload;
 }
 
