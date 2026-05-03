@@ -13,6 +13,21 @@ Specific regression report:
 - Rent appears to be counted as the full household rent again.
 - The user's brother's share/half of rent should reduce the user's scheduled outgoings to cover.
 - The app must not treat shared-bill money as income or lifestyle money.
+- If the app is not sure, it must ask the user in Review/Checks and learn from the answer.
+
+## Core product principle
+
+Money Hub should not pretend it knows messy real-world intent when it does not.
+
+For uncertain transactions, the right behaviour is:
+
+1. make a cautious guess
+2. label confidence clearly
+3. ask the user one simple question
+4. save the answer as a rule
+5. apply that rule automatically next time
+
+The app should become smarter through lightweight user feedback. This is essential for an “idiot-proof” budgeting app.
 
 ## Current code areas involved
 
@@ -89,6 +104,47 @@ For a messy real-world budget app:
 4. If the app is not confident, surface it in Review/Checks with a one-tap correction.
 5. Once the user confirms it, persist the correction so it never regresses.
 6. Coach, Home, Calendar, Goals and safe-to-spend should all prefer the user's bill burden over gross household bill totals.
+7. Uncertain incoming payments that may be shared rent, shared bills, reimbursements, family/friend support, savings transfers, refunds or income must be asked about rather than silently guessed.
+
+## Review/Checks learning loop requirement
+
+The app should create user-facing checks for ambiguous transactions.
+
+Examples:
+
+```text
+Jake paid you £725 near your rent date. Is this their share of rent?
+[Yes, rent contribution] [Yes, bills contribution] [No, income] [No, friends/family]
+```
+
+```text
+£500 came in from Mum twice this month. Should Money Hub treat this as income, family support, or money to ignore for budgeting?
+[Income] [Family support] [Ignore from budget] [Ask me later]
+```
+
+```text
+£300 went to your savings account. Is this your own transfer?
+[Yes, own transfer] [No, spending] [Ask me later]
+```
+
+Rules:
+
+- Do not block the app while waiting for answers.
+- Use cautious defaults until answered.
+- Show confidence as “needs checking” where relevant.
+- Save answers as `transaction_rules` so future imports/syncs learn automatically.
+- Make corrections easy to reverse.
+- Never train a rule from one ambiguous transaction unless the user confirms it or the pattern is very strong.
+
+Suggested candidate types for Review/Checks:
+
+- possible shared rent contribution
+- possible shared bill contribution
+- possible family/friend support
+- possible reimbursement/refund
+- possible internal transfer
+- possible pass-through work/business money
+- possible one-off income that should not be used for monthly budget
 
 ## Recommended implementation
 
@@ -210,6 +266,16 @@ Minimum fixtures:
    - a transaction rule marks `Faster payment from Jake` as shared rent contribution
    - expected scheduled outgoings reduce even if text does not say rent
 
+8. Review/Checks candidate path:
+   - one or two ambiguous person payments near rent
+   - expected Review/Checks item is generated
+   - expected no confident income/bill adjustment until answered if pattern is weak
+
+9. Learning path:
+   - user confirms candidate as rent contribution
+   - expected transaction rule is saved
+   - future similar payments are classified automatically
+
 ## Important non-goals
 
 Do not hard-code the user's brother's name only. This must work for any user/person.
@@ -219,6 +285,8 @@ Do not blindly subtract all incoming payments from bills.
 Do not treat uncertain shared-bill money as confirmed unless the pattern is strong or the user confirms it.
 
 Do not mix shared-bill contributions into income.
+
+Do not hide uncertainty. If the model is unsure, ask.
 
 ## Documentation status
 
@@ -242,5 +310,5 @@ Run `npx supabase migration list` to confirm `202605030004_bank_feed_groundwork.
 ```text
 Read docs/CODEX_CONTEXT.md, docs/CODEX_RENT_AND_REAL_WORLD_LOGIC_AUDIT_2026-05-03.md, docs/CODEX_DEEP_AUDIT_2026-05-03_AFTER_HARDENING.md, and docs/CODEX_NEXT_PASS_PROMPT.md.
 
-Fix the shared rent/shared bill contribution logic. The app is again including the user's brother's half of rent in scheduled outgoings. Make the logic robust for messy bank statements: detect regular incoming person payments near rent/bills even when the description does not say rent, keep uncertain cases in Review/Checks, allow persistent shared-bill contribution rules, and make Home/Calendar/Coach use the user's share rather than gross household bills. Add regression tests for exact half rent, brother/Jake transfer without rent words, different payment day, variable top-up, missing month, and confirmed rule behaviour. Keep changes focused and run npm run check. Update docs so completed work is not left as pending.
+Fix the shared rent/shared bill contribution logic and the Review/Checks learning loop. The app is again including the user's brother's half of rent in scheduled outgoings. Make the logic robust for messy bank statements: detect regular incoming person payments near rent/bills even when the description does not say rent, keep uncertain cases in Review/Checks, ask the user simple questions when unsure, allow persistent shared-bill contribution rules, and make Home/Calendar/Coach use the user's share rather than gross household bills. Add regression tests for exact half rent, brother/Jake transfer without rent words, different payment day, variable top-up, missing month, confirmed rule behaviour, Review/Checks candidate generation, and learning from the user's answer. Keep changes focused and run npm run check. Update docs so completed work is not left as pending.
 ```
