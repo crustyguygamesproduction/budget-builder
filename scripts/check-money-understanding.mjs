@@ -247,9 +247,149 @@ function amounts(items) {
   });
   const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
 
-  assert.equal(appModel.monthlyBillTotal, 1450);
+  assert.equal(appModel.grossMonthlyBillTotal, 1450);
+  assert.equal(appModel.monthlyBillTotal, 725);
   assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
   assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-02-01"),
+      tx("Faster payment from Jake", 725, "2026-03-01"),
+      tx("Faster payment from Jake", 725, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-01-30"),
+      tx("Faster payment from Jake", 725, "2026-02-28"),
+      tx("Faster payment from Jake", 725, "2026-04-03"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 800, "2026-02-01"),
+      tx("Faster payment from Jake", 800, "2026-03-01"),
+      tx("Faster payment from Jake", 800, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.grossMonthlyBillTotal, 1450);
+  assert.equal(appModel.monthlyBillTotal, 725);
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-02-01"),
+      tx("Faster payment from Jake", 725, "2026-03-01"),
+      tx("Faster payment from Jake", 900, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-02-01"),
+      tx("Faster payment from Jake", 725, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Sam", 725, "2026-02-18"),
+      tx("Faster payment from Sam", 725, "2026-03-18"),
+      tx("Faster payment from Sam", 725, "2026-04-18"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 1450);
+  assert.equal(appModel.sharedBillContributions.confirmed.length, 0);
+}
+
+{
+  const transactionRules = [{
+    rule_type: "shared_bill_contribution",
+    match_text: "Jake",
+    match_amount: null,
+    category: "Shared rent contribution",
+    is_bill: false,
+    is_subscription: false,
+    is_internal_transfer: false,
+    updated_at: "2026-04-02T00:00:00Z",
+  }];
+  const understanding = buildMoneyUnderstanding({
+    transactionRules,
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-04-01"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 1450);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.ok(appModel.checksWaiting.some((check) => check.sharedContribution));
 }
 
 {

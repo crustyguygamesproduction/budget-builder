@@ -6,6 +6,26 @@ import { Section, MiniCard } from "../components/ui";
 
 const RULE_OPTIONS = [
   {
+    label: "Rent contribution",
+    category: "Shared rent contribution",
+    ruleType: "shared_bill_contribution",
+    isBill: false,
+    isSubscription: false,
+    isInternalTransfer: false,
+    matchAmount: false,
+    helper: "Use this when someone pays you their share of rent.",
+  },
+  {
+    label: "Bill contribution",
+    category: "Shared bill contribution",
+    ruleType: "shared_bill_contribution",
+    isBill: false,
+    isSubscription: false,
+    isInternalTransfer: false,
+    matchAmount: false,
+    helper: "Use this when someone pays you back for shared bills.",
+  },
+  {
     label: "Rent",
     category: "Rent",
     isBill: true,
@@ -130,7 +150,7 @@ export default function ConfidencePage({
       const { error } = await supabase.from("transaction_rules").upsert(
         {
           user_id: user.id,
-          rule_type: "confidence_check",
+          rule_type: option.ruleType || "confidence_check",
           match_text: candidate.matchText,
           match_amount: option.matchAmount ? candidate.amount : null,
           category: option.category,

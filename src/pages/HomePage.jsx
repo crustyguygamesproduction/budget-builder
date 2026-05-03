@@ -72,7 +72,7 @@ export default function HomePage({
           <HeroFact
             label="Next bill"
             value={nextBill ? `${nextBill.name}` : "None found"}
-            detail={nextBill ? `${formatCurrency(nextBill.amount)} ${nextBill.when}` : "Calendar is quiet"}
+            detail={nextBill ? getNextBillDetail(nextBill) : "Calendar is quiet"}
           />
           <HeroFact
             label="Regular income"
@@ -187,10 +187,12 @@ function getExpectedIncomeRead(appMoneyModel) {
 }
 
 function getCalendarBillRead(appMoneyModel) {
+  const sharedContributions = appMoneyModel?.sharedBillContributions?.confirmed || [];
   const items = (appMoneyModel?.calendarBills || []).map((bill) => ({
     key: bill.key,
     name: bill.name || bill.title || "Bill",
     amount: Math.abs(Number(bill.amount || 0)),
+    ...getSharedBillAmountRead(bill, sharedContributions),
     day: bill.day,
     when: bill.day ? `around day ${bill.day}` : "date learning",
   }));
@@ -199,6 +201,7 @@ function getCalendarBillRead(appMoneyModel) {
     key: bill.key,
     name: bill.name,
     amount: Math.abs(Number(bill.amount || 0)),
+    ...getSharedBillAmountRead(bill, sharedContributions),
     day: bill.day,
     daysAway: bill.daysAway,
     when: bill.daysAway === 0 ? "today" : bill.daysAway === 1 ? "tomorrow" : `in ${bill.daysAway} days`,
@@ -211,9 +214,39 @@ function getCalendarBillRead(appMoneyModel) {
   };
 }
 
+function getSharedBillAmountRead(bill, sharedContributions = []) {
+  const grossAmount = Math.abs(Number(bill?.amount || 0));
+  const billKey = String(bill?.key || "");
+  const billName = String(bill?.name || bill?.title || "");
+  const contribution = (sharedContributions || []).find((item) => {
+    const keyMatches = item.matchedBillKey && billKey && String(item.matchedBillKey) === billKey;
+    const nameMatches = item.matchedBillName && billName && normalizeForBillMatch(item.matchedBillName) === normalizeForBillMatch(billName);
+    return keyMatches || nameMatches;
+  });
+  const contributionAmount = Math.abs(Number(contribution?.appliedMonthlyAmount || 0));
+  if (!grossAmount || !contributionAmount) return {};
+  return {
+    grossAmount,
+    contributionAmount,
+    personalAmount: Math.max(grossAmount - contributionAmount, 0),
+    contributionName: contribution.name,
+  };
+}
+
+function getNextBillDetail(nextBill) {
+  if (nextBill.personalAmount != null && nextBill.personalAmount < nextBill.amount) {
+    return `${formatCurrency(nextBill.personalAmount)} your share, ${formatCurrency(nextBill.amount)} total`;
+  }
+  return `${formatCurrency(nextBill.amount)} ${nextBill.when}`;
+}
+
+function normalizeForBillMatch(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function getHomeRead({ visibleCash, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome }) {
   const hasBills = billShare.personalTotal > 0;
-  const nextBillText = nextBill ? `${nextBill.name} for ${formatCurrency(nextBill.amount)} ${nextBill.when}` : "no next bill found yet";
+  const nextBillText = nextBill ? `${nextBill.name} for ${formatCurrency(nextBill.personalAmount || nextBill.amount)} ${nextBill.when}` : "no next bill found yet";
 
   if (!dataFreshness.hasData) {
     return {

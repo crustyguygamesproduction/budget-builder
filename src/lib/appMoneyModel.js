@@ -14,6 +14,7 @@ const PASS_THROUGH_WORDS = /\b(work.?pass|pass.?through|expenses?|resale|client 
 const SAVINGS_INVESTMENT_WORDS = /\b(savings?|isa|investment|investing|vanguard|trading 212|freetrade|pension|crypto|coinbase|binance|chip|moneybox)\b/;
 const FLEXIBLE_CATEGORY_WORDS = /\b(grocer|food|takeaway|restaurant|shopping|entertainment|transport|fuel|petrol|cash|gaming|clothes|personal|spending|travel|coffee|pub|bar)\b/;
 const SHARED_BILL_WORDS = /\b(rent|house|flat|bills?|electric|electricity|gas|energy|water|council|tax|broadband|internet|wifi|phone|share|half|split|contribution)\b/;
+const SHARED_CONTRIBUTION_WORDS = /\b(shared rent contribution|shared bill contribution|rent contribution|bill contribution)\b/;
 
 export function buildAppMoneyModel({
   moneyUnderstanding,
@@ -43,7 +44,7 @@ export function buildAppMoneyModel({
     monthWindow,
   });
   const contributionSourceIds = new Set(
-    sharedBillContributions.confirmed.flatMap((contribution) => contribution.sourceIds || [])
+    [...sharedBillContributions.confirmed, ...sharedBillContributions.needsChecking].flatMap((contribution) => contribution.sourceIds || [])
   );
   const incomeTransactions = preliminaryIncomeTransactions.filter(
     (transaction) => !contributionSourceIds.has(getTransactionSourceId(transaction))
@@ -88,7 +89,8 @@ export function buildAppMoneyModel({
     incomeConfidence,
   });
 
-  const checksWaiting = moneyUnderstanding?.checks || [];
+  const sharedContributionChecks = buildSharedContributionChecks(sharedBillContributions.needsChecking);
+  const checksWaiting = [...(moneyUnderstanding?.checks || []), ...sharedContributionChecks];
   const dataFreshness = getModelFreshness(transactions);
   const confidenceWarnings = getConfidenceWarnings({
     dataFreshness,
@@ -107,7 +109,7 @@ export function buildAppMoneyModel({
     billStreams,
     recurringEvents: moneyUnderstanding?.recurringEvents || [],
     upcomingBills,
-    monthlyBillTotal: roundMoney(grossMonthlyBillTotal),
+    monthlyBillTotal: roundMoney(monthlyBillBurdenTotal),
     grossMonthlyBillTotal: roundMoney(grossMonthlyBillTotal),
     monthlyBillBurdenTotal: roundMoney(monthlyBillBurdenTotal),
     monthlyScheduledOutgoingsTotal: roundMoney(monthlyBillBurdenTotal),
@@ -268,7 +270,7 @@ function getIncomeTransactions(transactions) {
   });
 }
 
-function getSharedBillContributions({ transactions = [], calendarBills = [], monthWindow }) {
+function getSharedBillContributions({ transactions = [], calendarBills = [] }) {
   const recurringContributionKeys = recurringKeys(
     transactions.filter((transaction) => Number(transaction.amount || 0) > 0 && Math.abs(Number(transaction.amount || 0)) >= 100),
     contributionKey
@@ -287,14 +289,19 @@ function getSharedBillContributions({ transactions = [], calendarBills = [], mon
         monthKeys: new Set(),
         sourceIds: [],
         examples: [],
+        confirmedByRule: false,
+        hasSharedBillText: false,
       });
     }
     const group = map.get(key);
+    const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)} ${transaction._smart_category || ""}`);
     group.amounts.push(Math.abs(Number(transaction.amount || 0)));
     group.dates.push(date);
     group.monthKeys.add(monthKey(date));
     group.sourceIds.push(getTransactionSourceId(transaction));
     if (group.examples.length < 3) group.examples.push(transaction.description || group.name);
+    if (isConfirmedSharedContribution(transaction)) group.confirmedByRule = true;
+    if (SHARED_BILL_WORDS.test(text)) group.hasSharedBillText = true;
     return map;
   }, new Map());
 
@@ -302,7 +309,7 @@ function getSharedBillContributions({ transactions = [], calendarBills = [], mon
     const monthlyAmount = usualAmount(group.amounts);
     const day = likelyDay(group.dates);
     const match = getBestContributionBillMatch({ monthlyAmount, day, calendarBills });
-    const confidence = getContributionConfidence({ group, match, monthWindow });
+    const confidence = getContributionConfidence({ group, match });
     return {
       key: `shared-contribution:${group.key}`,
       name: group.name,
@@ -351,10 +358,11 @@ function isPossibleSharedBillContribution(transaction, recurringContributionKeys
   if (amount <= 0 || amount < 100) return false;
   if (isInternalTransferLike(transaction)) return false;
   const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
+  if (isConfirmedSharedContribution(transaction)) return true;
   if (INCOME_WORDS.test(text) || REFUND_WORDS.test(text) || PASS_THROUGH_WORDS.test(text)) return false;
   if (SAVINGS_INVESTMENT_WORDS.test(text)) return false;
   if (amount > 1800 && !SHARED_BILL_WORDS.test(text)) return false;
-  return recurringContributionKeys.has(contributionKey(transaction)) || SHARED_BILL_WORDS.test(text);
+  return recurringContributionKeys.has(contributionKey(transaction)) || SHARED_BILL_WORDS.test(text) || amount <= 1800;
 }
 
 function getBestContributionBillMatch({ monthlyAmount, day, calendarBills }) {
@@ -413,15 +421,47 @@ function applySharedBillContributionCap(candidate) {
   return { ...candidate, appliedMonthlyAmount: monthlyAmount };
 }
 
-function getContributionConfidence({ group, match, monthWindow }) {
+function getContributionConfidence({ group, match }) {
+  if (group.confirmedByRule && match) return "high";
   if (!match) return group.monthKeys.size >= 2 ? "needs_checking" : "low";
-  const enoughHistory = group.monthKeys.size >= Math.min(2, Math.max(monthWindow?.monthKeys?.length || 1, 1));
+  const enoughHistory = group.monthKeys.size >= 2;
   const closeHalf = Math.abs((match.ratio || 0) - 0.5) <= 0.12;
+  const likelyHalfWithSmallBillsTopUp = (match.ratio || 0) > 0.5 && (match.ratio || 0) <= 0.63;
   const nearBillDay = Number(match.dayDistance ?? 99) <= 10;
+  if (group.hasSharedBillText && closeHalf && nearBillDay) return "high";
   if (enoughHistory && closeHalf && nearBillDay) return "high";
+  if (enoughHistory && likelyHalfWithSmallBillsTopUp && nearBillDay) return "high";
   if (enoughHistory && closeHalf && match.score >= 0.55) return "medium";
+  if (closeHalf && nearBillDay) return "needs_checking";
   if (enoughHistory && match.score >= 0.4) return "needs_checking";
   return "low";
+}
+
+function isConfirmedSharedContribution(transaction) {
+  if (!transaction?._smart_rule_applied) return false;
+  const text = normalizeText(`${getMeaningfulCategory(transaction)} ${transaction._smart_category || ""}`);
+  return SHARED_CONTRIBUTION_WORDS.test(text);
+}
+
+function buildSharedContributionChecks(candidates = []) {
+  return (candidates || []).map((candidate) => ({
+    key: candidate.key,
+    label: candidate.name || "shared bill money",
+    matchText: candidate.name,
+    amount: Number(candidate.monthlyAmount || 0),
+    direction: "incoming",
+    count: candidate.sourceIds?.length || candidate.sourceMonths || 1,
+    monthCount: candidate.sourceMonths || 1,
+    sampleDescription: candidate.examples?.[0] || candidate.name,
+    question: candidate.matchedBillName
+      ? `Is ${candidate.name} money towards ${candidate.matchedBillName}?`
+      : `Is ${candidate.name} shared bill money?`,
+    helper: candidate.matchedBillName
+      ? `This may reduce your share of ${candidate.matchedBillName}. Confirm it so Money Hub does not overstate your bills.`
+      : "Confirm this before Money Hub relies on it for your budget.",
+    sharedContribution: true,
+    matchedBillName: candidate.matchedBillName,
+  }));
 }
 
 function dayDistance(a, b) {

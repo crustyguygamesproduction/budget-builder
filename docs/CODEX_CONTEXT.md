@@ -46,7 +46,7 @@ Important recent migrations:
   - adds GoCardless-ready provider account mapping and sync run audit tables
   - adds provider transaction columns and a provider transaction unique index
   - does not add client secrets, provider API calls, or bank-feed UI
-  - newly added in this pass; run `npx supabase db push` before relying on these tables/columns
+  - before relying on these tables remotely, run `npx supabase migration list` and confirm this migration is applied
 
 If new migrations are added, run:
 
@@ -143,6 +143,19 @@ When bank feed work starts, Codex should read `docs/BANK_FEED_GOCARDLESS_PLAN.md
 ## Recently completed high-priority hardening
 
 These items were completed on 2026-05-03 and should not be treated as pending work unless a new audit finds a regression.
+
+## Recently completed shared-rent fix
+
+Status: completed after the shared rent audit. The one-off audit file was removed after its useful details were folded into this context.
+
+Current behaviour:
+
+- Recurring incoming person payments near rent/bills can be treated as shared bill contributions even when the statement text does not say rent.
+- Confirmed shared rent/bill contribution rules are saved as `shared_bill_contribution` rules from Review.
+- Possible shared contributions are excluded from normal income while waiting for Review, so shared-bill money is not treated as spendable income.
+- Home and Calendar prefer the user's share where a matched contribution exists, while still showing gross bill context where useful.
+- `monthlyBillTotal`, `monthlyBillBurdenTotal`, and `monthlyScheduledOutgoingsTotal` are user-share/burden values after shared contributions. Use `grossMonthlyBillTotal` only when the UI explicitly needs the full household bill amount for context.
+- Regression coverage exists for half rent, person transfers without rent words, different payment days, variable top-ups, missing months, confirmed rules, and weak one-month Review candidates.
 
 ### 1. Harden `ai-coach` CORS
 

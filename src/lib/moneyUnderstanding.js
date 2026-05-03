@@ -60,6 +60,7 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
 
     return {
       transactions: smartTransactions,
+      transactionRules,
       recurringEvents,
       billStreams,
       checks,
@@ -94,6 +95,7 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
 
   return {
     transactions: smartTransactions,
+    transactionRules,
     recurringEvents,
     billStreams,
     checks,

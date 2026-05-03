@@ -115,8 +115,13 @@ Money Hub handles sensitive financial data: statements, receipts, documents, tra
 
 ## 📚 Docs
 
-- AGENTS.md → system behaviour + working rules  
-- docs/maintainer-map.md → full project structure  
+- `AGENTS.md` - coding rules for future Codex sessions
+- `docs/CODEX_CONTEXT.md` - current source-of-truth project context
+- `docs/maintainer-map.md` - file map and where to make changes
+- `docs/next-refactor-plan.md` - next safe maintainability slices
+- `docs/launch-readiness-checklist.md` - manual-upload launch checklist
+- `docs/production-readiness.md` - deployment, Supabase, Vercel and security notes
+- `docs/BANK_FEED_GOCARDLESS_PLAN.md` - future UK live bank feed plan
 
 ---
 

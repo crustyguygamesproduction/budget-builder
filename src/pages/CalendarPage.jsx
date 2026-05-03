@@ -121,6 +121,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   const summary = usingShortHistoryView ? getRollingWindowSummary(rollingHistoryWindow.days) : getMonthlyHistorySummary(activeViewDate, transactions);
   const recurringMonthEvents = recurringCalendar.days.filter((day) => day.inMonth !== false).flatMap((day) => day.events || []);
   const recurringMonthTotal = recurringMonthEvents.reduce((sum, event) => sum + Math.abs(Number(event.amount || 0)), 0);
+  const sharedContributions = appMoneyModel?.sharedBillContributions?.confirmed || [];
   const sharedBillMoney = Number(appMoneyModel?.monthlySharedContributionTotal || appMoneyModel?.sharedBillContributions?.monthlyTotal || 0);
   const personalBillTotal = sharedBillMoney > 0 ? Math.max(Number(appMoneyModel?.monthlyBillBurdenTotal || 0) || recurringMonthTotal - sharedBillMoney, 0) : recurringMonthTotal;
   const currentMonth = new Date();
@@ -357,7 +358,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   <small>Bring back things you removed</small>
 </button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
-            <MiniCard styles={styles} title="Amount" value={nextRecurringEvent ? formatCurrency(Math.abs(nextRecurringEvent.amount)) : "£0.00"} />
+            <MiniCard styles={styles} title={getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).hasShare ? "Your share" : "Amount"} value={nextRecurringEvent ? formatCurrency(getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).amount) : "£0.00"} />
           </div>
         ) : (
           <div style={getCalendarSummaryGridStyle(screenWidth)}>
@@ -369,7 +370,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
         )}
 
         {calendarMode === "recurring" && showBillsList ? (
-          <CalendarBillsPanel events={recurringMonthEvents} styles={styles} busyKey={correctionBusyKey} onNotBill={markEventNotBill} />
+          <CalendarBillsPanel events={recurringMonthEvents} styles={styles} busyKey={correctionBusyKey} onNotBill={markEventNotBill} sharedContributions={sharedContributions} />
         ) : null}
 
         {calendarMode === "recurring" && showMissingBills ? (
@@ -427,7 +428,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   );
 }
 
-function CalendarBillsPanel({ events, styles, busyKey, onNotBill }) {
+function CalendarBillsPanel({ events, styles, busyKey, onNotBill, sharedContributions = [] }) {
   const uniqueEvents = dedupeEvents(events);
   return (
     <div style={styles.calendarCorrectionPanel}>
@@ -441,7 +442,7 @@ function CalendarBillsPanel({ events, styles, busyKey, onNotBill }) {
         <div key={event.key || `${getEventMatchText(event)}-${event.amount}-${event.day}`} style={styles.calendarCorrectionRow}>
           <div>
             <strong>{event.title}</strong>
-            <p style={styles.transactionMeta}>{formatCurrency(Math.abs(event.amount))} expected around day {event.day}</p>
+            <p style={styles.transactionMeta}>{getBillPanelAmountText(event, sharedContributions)} expected around day {event.day}</p>
           </div>
           <button style={styles.secondaryInlineBtn} type="button" onClick={() => onNotBill(event)} disabled={busyKey === (event.key || getEventMatchText(event))}>
             {busyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}
@@ -450,6 +451,27 @@ function CalendarBillsPanel({ events, styles, busyKey, onNotBill }) {
       )) : <p style={styles.emptyText}>No bills found yet.</p>}
     </div>
   );
+}
+
+function getSharedAdjustedEventAmount(event, sharedContributions = []) {
+  if (!event) return { amount: 0, hasShare: false };
+  const grossAmount = Math.abs(Number(event.amount || 0));
+  const eventKey = String(event.key || "");
+  const eventName = String(event.title || event.name || "");
+  const contribution = (sharedContributions || []).find((item) => {
+    const keyMatches = item.matchedBillKey && eventKey && String(item.matchedBillKey) === eventKey;
+    const nameMatches = item.matchedBillName && eventName && normalizeText(item.matchedBillName) === normalizeText(eventName);
+    return keyMatches || nameMatches;
+  });
+  const contributionAmount = Math.abs(Number(contribution?.appliedMonthlyAmount || 0));
+  if (!grossAmount || !contributionAmount) return { amount: grossAmount, hasShare: false };
+  return { amount: Math.max(grossAmount - contributionAmount, 0), hasShare: true, grossAmount };
+}
+
+function getBillPanelAmountText(event, sharedContributions = []) {
+  const read = getSharedAdjustedEventAmount(event, sharedContributions);
+  if (read.hasShare) return `${formatCurrency(read.amount)} your share, ${formatCurrency(read.grossAmount)} total`;
+  return formatCurrency(Math.abs(Number(event.amount || 0)));
 }
 
 function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onClose }) {

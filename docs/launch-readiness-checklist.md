@@ -9,15 +9,17 @@ Goal: the app should ask simple questions instead of guessing when the answer ch
 Must pass:
 - Repeated high-value payments appear on the Checks page.
 - Cards show the payee/entity, repeated amount, count, month count, and example transactions.
-- User can tag a payment as Rent, Bill, Friend/family, Work/pass-through, Transfer, or Other.
+- User can tag a payment as Rent, Bill, Rent contribution, Bill contribution, Friend/family, Work/pass-through, Transfer, or Other.
 - Saved rules update future transaction classification.
 - Rent and bills must not leak into friends/family totals after confirmation.
+- Shared rent/bill contributions must reduce the user's bill share without being treated as income.
 - Work/pass-through payments must not be treated as normal lifestyle spending after confirmation.
 
 Manual test prompts:
 - How much money have I sent friends and family?
 - Do not include rent, bills, work payments, or transfers.
 - Is this person rent or friends/family?
+- Is this person paying their share of rent or bills?
 
 ## 2. Future Payments Calendar
 
