@@ -5,6 +5,7 @@ import {
   enforceAiUsage,
   readJsonBody,
 } from "../_shared/aiUsage.ts";
+import { buildTransactionIntelligence } from "../_shared/moneyOrganiserIntelligence.js";
 
 function isProductionRuntime() {
   const env = String(Deno.env.get("ENVIRONMENT") || Deno.env.get("DENO_ENV") || Deno.env.get("APP_ENV") || "").toLowerCase();
@@ -75,171 +76,6 @@ function normaliseTransaction(row: any) {
   };
 }
 
-function normaliseCounterparty(value: string) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/\b(card payment|card purchase|contactless|faster payment|standing order|direct debit|online banking|pos|pending)\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .split(" ")
-    .filter((token) => token.length >= 3)
-    .slice(0, 6)
-    .join(" ")
-    .trim() || "unknown";
-}
-
-function amountBucket(amount: number) {
-  const abs = Math.abs(Number(amount || 0));
-  if (abs < 10) return Math.round(abs * 2) / 2;
-  if (abs < 100) return Math.round(abs);
-  if (abs < 1000) return Math.round(abs / 5) * 5;
-  return Math.round(abs / 25) * 25;
-}
-
-function dayOfMonth(date: string) {
-  const day = Number(String(date || "").slice(8, 10));
-  return Number.isFinite(day) ? day : null;
-}
-
-function monthKey(date: string) {
-  const value = String(date || "").slice(0, 7);
-  return /^\d{4}-\d{2}$/.test(value) ? value : "unknown";
-}
-
-function compactRow(row: any) {
-  return {
-    id: row.id,
-    date: row.date,
-    description: row.description,
-    merchant: row.merchant,
-    amount: row.amount,
-    direction: row.direction,
-    category: row.category,
-    is_bill: row.is_bill,
-    is_subscription: row.is_subscription,
-    is_internal_transfer: row.is_internal_transfer,
-    is_income: row.is_income,
-  };
-}
-
-function buildTransactionIntelligence(rows: any[]) {
-  const groups = new Map<string, any>();
-  const categoryTotals = new Map<string, any>();
-  const merchantTotals = new Map<string, any>();
-
-  for (const row of rows) {
-    const counterparty = normaliseCounterparty(row.merchant || row.description);
-    const bucket = amountBucket(row.amount);
-    const key = [counterparty, row.direction || "unknown", row.category || "uncategorised", bucket, row.is_bill, row.is_subscription, row.is_internal_transfer].join("|");
-    const month = monthKey(row.date);
-    const day = dayOfMonth(row.date);
-
-    if (!groups.has(key)) {
-      groups.set(key, {
-        key,
-        counterparty,
-        direction: row.direction,
-        category: row.category,
-        amount_bucket: bucket,
-        flags: {
-          is_bill: Boolean(row.is_bill),
-          is_subscription: Boolean(row.is_subscription),
-          is_internal_transfer: Boolean(row.is_internal_transfer),
-          is_income: Boolean(row.is_income),
-        },
-        count: 0,
-        total: 0,
-        min_amount: Number(row.amount || 0),
-        max_amount: Number(row.amount || 0),
-        months: new Set<string>(),
-        days: [],
-        source_transaction_ids: [],
-        examples: [],
-      });
-    }
-
-    const group = groups.get(key);
-    const amount = Number(row.amount || 0);
-    group.count += 1;
-    group.total += amount;
-    group.min_amount = Math.min(group.min_amount, amount);
-    group.max_amount = Math.max(group.max_amount, amount);
-    group.months.add(month);
-    if (day) group.days.push(day);
-    if (group.source_transaction_ids.length < 24) group.source_transaction_ids.push(row.id);
-    if (group.examples.length < 3) group.examples.push(compactRow(row));
-
-    const categoryKey = row.category || "uncategorised";
-    if (!categoryTotals.has(categoryKey)) categoryTotals.set(categoryKey, { category: categoryKey, count: 0, total: 0 });
-    categoryTotals.get(categoryKey).count += 1;
-    categoryTotals.get(categoryKey).total += amount;
-
-    if (!merchantTotals.has(counterparty)) merchantTotals.set(counterparty, { counterparty, count: 0, total: 0, source_transaction_ids: [] });
-    const merchant = merchantTotals.get(counterparty);
-    merchant.count += 1;
-    merchant.total += amount;
-    if (merchant.source_transaction_ids.length < 12) merchant.source_transaction_ids.push(row.id);
-  }
-
-  const grouped = [...groups.values()].map((group) => ({
-    ...group,
-    month_count: group.months.size,
-    months: [...group.months].filter((month) => month !== "unknown").slice(-8),
-    usual_day: group.days.length ? Math.round(group.days.reduce((sum: number, day: number) => sum + day, 0) / group.days.length) : null,
-    average_amount: Math.round((group.total / Math.max(group.count, 1)) * 100) / 100,
-    total: Math.round(group.total * 100) / 100,
-    months_seen: undefined,
-  }));
-
-  const recurringCandidates = grouped
-    .filter((group) => group.count >= 2 && group.month_count >= 2 && !group.flags.is_internal_transfer)
-    .sort((a, b) => b.month_count - a.month_count || b.count - a.count || Math.abs(b.total) - Math.abs(a.total))
-    .slice(0, 80);
-
-  const suspiciousGroups = grouped
-    .filter((group) => {
-      const abs = Math.abs(group.average_amount || 0);
-      return !group.flags.is_internal_transfer && (abs >= 150 || group.count >= 4 || group.flags.is_bill || group.flags.is_subscription);
-    })
-    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
-    .slice(0, 80);
-
-  const largeOutgoings = rows
-    .filter((row) => Number(row.amount) < 0 && !row.is_internal_transfer)
-    .sort((a, b) => Math.abs(Number(b.amount)) - Math.abs(Number(a.amount)))
-    .slice(0, 80)
-    .map(compactRow);
-
-  const representativeRows = [
-    ...rows.slice(-120),
-    ...largeOutgoings.slice(0, 40),
-  ];
-  const seen = new Set<string>();
-
-  return {
-    total_rows: rows.length,
-    date_range: {
-      start: rows.map((row) => row.date).filter(Boolean).sort().at(0) || null,
-      end: rows.map((row) => row.date).filter(Boolean).sort().at(-1) || null,
-    },
-    category_totals: [...categoryTotals.values()]
-      .map((item) => ({ ...item, total: Math.round(item.total * 100) / 100 }))
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
-      .slice(0, 40),
-    merchant_totals: [...merchantTotals.values()]
-      .map((item) => ({ ...item, total: Math.round(item.total * 100) / 100 }))
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
-      .slice(0, 60),
-    recurring_candidates: recurringCandidates,
-    suspicious_or_high_impact_groups: suspiciousGroups,
-    large_outgoing_samples: largeOutgoings,
-    representative_raw_sample: representativeRows.filter((row) => {
-      if (!row?.id || seen.has(row.id)) return false;
-      seen.add(row.id);
-      return true;
-    }).slice(0, 160),
-  };
-}
-
 async function callOpenAI(apiKey: string, input: unknown[]) {
   const maxOutputTokens = Number(Deno.env.get("MONEY_ORGANISER_MAX_OUTPUT_TOKENS") || 3000);
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -290,7 +126,7 @@ Deno.serve(async (req) => {
     if (txError) throw txError;
 
     const rows = (transactions || []).map(normaliseTransaction);
-    const maxRows = Number(Deno.env.get("MONEY_ORGANISER_MAX_ROWS") || 5000);
+    const maxRows = Number(Deno.env.get("MONEY_ORGANISER_MAX_ROWS") || 3000);
     if (rows.length > maxRows) {
       throw new AiUsageError(
         "too_many_transactions",
@@ -330,7 +166,7 @@ You are the Money Hub statement organiser.
 You convert pre-clustered bank transaction intelligence into a saved app data layer.
 Return JSON only. No markdown. No prose outside JSON.
 
-You are NOT receiving every raw transaction. You are receiving deterministic groups, top totals, large samples, representative rows, and source transaction IDs.
+You are NOT receiving every raw transaction. You are receiving deterministic groups, top totals, large samples, representative rows, rare annual candidates, split-payment candidates, and source transaction IDs.
 Use source_transaction_ids from the supplied groups/samples. Do not invent source IDs.
 
 The app is for everyday people who are bad with money. Be conservative and useful.
@@ -339,6 +175,8 @@ Never put takeaway, restaurants, groceries, shopping, gaming, cash withdrawals, 
 
 Use real-world judgement:
 - Same provider can have multiple bill streams, split by usual amount and timing. Example: EE phone and EE broadband are separate if amounts/dates differ.
+- Review annual_or_rare_commitment_candidates for yearly insurance, licence, tax and other rare fixed commitments.
+- Review split_payment_candidates for split rent, mortgage, finance or childcare payments within the same month.
 - If provider type is unclear, name safely: "EE bill around £16" rather than guessing phone/broadband.
 - Rent may be split into early/partial payments. Use the usual monthly rent total from prior months, not one partial payment.
 - If latest amount is an outlier due to discount/credit, use the usual amount and note the outlier.
@@ -413,7 +251,7 @@ Return exactly this shape:
 
     const userPrompt = `
 Organise this deterministic transaction intelligence into the app layer.
-Prefer recurring_candidates for future bills, but check suspicious_or_high_impact_groups and large_outgoing_samples for context.
+Prefer recurring_candidates for future monthly bills, but also check annual_or_rare_commitment_candidates, split_payment_candidates, suspicious_or_high_impact_groups and large_outgoing_samples.
 Only use representative_raw_sample for examples and transaction-level corrections.
 Transaction intelligence:
 ${JSON.stringify(transactionIntelligence, null, 2)}
@@ -435,6 +273,8 @@ ${JSON.stringify(transactionIntelligence, null, 2)}
       transaction_intelligence_summary: {
         total_rows: transactionIntelligence.total_rows,
         recurring_candidate_count: transactionIntelligence.recurring_candidates.length,
+        rare_commitment_candidate_count: transactionIntelligence.annual_or_rare_commitment_candidates.length,
+        split_payment_candidate_count: transactionIntelligence.split_payment_candidates.length,
         suspicious_group_count: transactionIntelligence.suspicious_or_high_impact_groups.length,
       },
     };
