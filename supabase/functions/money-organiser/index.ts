@@ -1,4 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
+import {
+  AiUsageError,
+  byteLength,
+  enforceAiUsage,
+  readJsonBody,
+} from "../_shared/aiUsage.ts";
 
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
@@ -39,12 +45,13 @@ function normaliseTransaction(row: any) {
 }
 
 async function callOpenAI(apiKey: string, input: unknown[]) {
+  const maxOutputTokens = Number(Deno.env.get("MONEY_ORGANISER_MAX_OUTPUT_TOKENS") || 3000);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "gpt-5.1",
-      max_output_tokens: 5000,
+      max_output_tokens: Math.max(1200, Math.min(maxOutputTokens, 5000)),
       input,
     }),
   });
@@ -58,7 +65,8 @@ Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
 
   try {
-    const { force = false } = await req.json().catch(() => ({}));
+    const { body: requestBody, bytes: requestBytes } = await readJsonBody(req, 10_000);
+    const { force = false } = requestBody;
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -79,6 +87,15 @@ Deno.serve(async (req) => {
     if (txError) throw txError;
 
     const rows = (transactions || []).map(normaliseTransaction);
+    const maxRows = Number(Deno.env.get("MONEY_ORGANISER_MAX_ROWS") || 1200);
+    if (rows.length > maxRows) {
+      throw new AiUsageError(
+        "too_many_transactions",
+        `That is a lot of history to organise at once. Money Hub can organise up to ${maxRows} rows per AI pass right now.`,
+        413,
+        `money-organiser row cap exceeded: ${rows.length}/${maxRows}`
+      );
+    }
     const sourceHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(rows.map((row) => [row.id, row.date, row.description, row.amount, row.category, row.is_bill, row.is_subscription, row.is_internal_transfer]))));
     const source_hash = Array.from(new Uint8Array(sourceHash)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
@@ -92,6 +109,16 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (existing) return new Response(JSON.stringify({ snapshot: existing, reused: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
+    await enforceAiUsage(req, {
+      functionName: "money-organiser",
+      action: force ? "organise_force" : "organise",
+      inputBytes: requestBytes + byteLength(rows),
+      limits: [
+        { windowSeconds: 3600, maxRequests: 5 },
+        { windowSeconds: 86400, maxRequests: 20 },
+      ],
+    });
 
     const systemPrompt = `
 You are the Money Hub statement organiser.
@@ -220,6 +247,14 @@ ${JSON.stringify(rows, null, 2)}
 
     return new Response(JSON.stringify({ snapshot, reused: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
-    return new Response(JSON.stringify({ error: error?.message || "Money organiser failed." }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const status = error instanceof AiUsageError ? error.status : 500;
+    const publicMessage = error instanceof AiUsageError
+      ? error.publicMessage
+      : "Money organiser could not finish that read right now.";
+    console.error("money-organiser request failed", {
+      code: error instanceof AiUsageError ? error.code : "money_organiser_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return new Response(JSON.stringify({ error: publicMessage, code: error instanceof AiUsageError ? error.code : "money_organiser_failed" }), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

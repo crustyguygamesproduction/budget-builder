@@ -1,3 +1,11 @@
+import {
+  AiUsageError,
+  assertArrayLimit,
+  byteLength,
+  enforceAiUsage,
+  readJsonBody,
+} from "../_shared/aiUsage.ts";
+
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
@@ -20,7 +28,8 @@ Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
 
   try {
-    const { headers, sampleRows } = await req.json();
+    const { body, bytes: requestBytes } = await readJsonBody(req, 80_000);
+    const { headers, sampleRows = [] } = body;
     const apiKey = Deno.env.get("OPENAI_API_KEY");
 
     if (!headers || !Array.isArray(headers)) {
@@ -29,6 +38,11 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    assertArrayLimit(headers, 80, "columns");
+    assertArrayLimit(sampleRows, 10, "sample rows");
+    if (byteLength({ headers, sampleRows }) > 60_000) {
+      throw new AiUsageError("payload_too_large", "That CSV preview is too large to map in one AI read.", 413);
+    }
 
     if (!apiKey) {
       return new Response(JSON.stringify({ error: "AI service is not configured." }), {
@@ -36,6 +50,16 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    await enforceAiUsage(req, {
+      functionName: "swift-worker",
+      action: "csv_mapping",
+      inputBytes: requestBytes,
+      limits: [
+        { windowSeconds: 3600, maxRequests: 20 },
+        { windowSeconds: 86400, maxRequests: 80 },
+      ],
+    });
 
     const prompt = `
 You are mapping bank statement CSV columns for a finance app.
@@ -100,9 +124,16 @@ ${JSON.stringify(sampleRows)}
     return new Response(text, {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch {
-    return new Response(JSON.stringify({ error: "CSV mapping is unavailable right now." }), {
-      status: 500,
+  } catch (error) {
+    console.error("swift-worker request failed", {
+      code: error instanceof AiUsageError ? error.code : "swift_worker_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return new Response(JSON.stringify({
+      error: error instanceof AiUsageError ? error.publicMessage : "CSV mapping is unavailable right now.",
+      code: error instanceof AiUsageError ? error.code : "swift_worker_failed",
+    }), {
+      status: error instanceof AiUsageError ? error.status : 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

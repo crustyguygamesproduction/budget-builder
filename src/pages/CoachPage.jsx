@@ -643,7 +643,10 @@ function formatChatTime(value) {
 }
 
 async function getFunctionErrorMessage(error) {
-  const fallback = error?.message || "AI request failed.";
+  const rawMessage = String(error?.message || "");
+  const fallback = /non-2xx status code/i.test(rawMessage)
+    ? "Coach is busy right now. Try again later."
+    : rawMessage || "AI request failed.";
   try {
     const response = error?.context;
     if (response && typeof response.clone === "function") {

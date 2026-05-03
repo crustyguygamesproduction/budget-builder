@@ -4,6 +4,7 @@ import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, normalizeText, numberOrNull } from "../lib/finance";
 import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
 import { fileToDataUrl } from "../lib/calendarIntelligence";
+import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
   getInvestmentPerformanceSummary,
   getInvestmentPortfolioSnapshot,
@@ -105,7 +106,7 @@ export default function InvestmentsPage({
         },
       });
 
-      if (error) throw new Error(error.message || "AI parse failed.");
+      if (error) throw new Error(await getFunctionErrorMessage(error, "Investment AI is busy right now. Try again later."));
 
       const extracted = data?.extracted || {};
       setForm({
@@ -195,7 +196,7 @@ export default function InvestmentsPage({
         },
       });
 
-      if (error) throw new Error(error.message || "Document extraction failed.");
+      if (error) throw new Error(await getFunctionErrorMessage(error, "Investment document AI is busy right now. Try again later."));
 
       const extracted = data?.extracted || {};
       if (!hasMeaningfulExtraction(extracted)) {
@@ -264,7 +265,7 @@ export default function InvestmentsPage({
         },
       });
 
-      if (error) throw new Error(error.message || "Price refresh failed.");
+      if (error) throw new Error(await getFunctionErrorMessage(error, "Price refresh is busy right now. Try again later."));
       if (!data?.price) throw new Error("No live price came back for that symbol.");
 
       const { error: updateError } = await supabase

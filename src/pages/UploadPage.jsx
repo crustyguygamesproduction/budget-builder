@@ -19,6 +19,7 @@ import {
   getTransferSummary,
 } from "../lib/dashboardIntelligence";
 import { getGridStyle, getStatusPillStyle } from "../lib/styleHelpers";
+import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
   buildRecurringMajorPaymentCandidates,
   inferTransactionCategory,
@@ -175,11 +176,25 @@ const [uploadStatus, setUploadStatus] = useState({
       });
 
       if (error) {
+        setUploadStatus({
+          phase: "mapping-fallback",
+          step: 1,
+          tone: "warning",
+          title: "Using the built-in CSV reader",
+          body: await getFunctionErrorMessage(error, "AI column matching is busy, so Money Hub is using the built-in CSV reader instead."),
+        });
         return null;
       }
 
       return data || null;
-    } catch {
+    } catch (error) {
+      setUploadStatus({
+        phase: "mapping-fallback",
+        step: 1,
+        tone: "warning",
+        title: "Using the built-in CSV reader",
+        body: error?.message || "AI column matching is busy, so Money Hub is using the built-in CSV reader instead.",
+      });
       return null;
     }
   }

@@ -4,6 +4,7 @@ import { MiniCard, Row, Section } from "../components/ui";
 import { formatCurrency, intOrNull, normalizeText, numberOrNull } from "../lib/finance";
 import { buildPrivateStoragePath, prepareSensitiveUploadFile, validateSensitiveFile } from "../lib/security";
 import { fileToDataUrl } from "../lib/calendarIntelligence";
+import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
   getDebtPortfolioSnapshot,
   getDebtProgressSummary,
@@ -96,7 +97,7 @@ export default function DebtsPage({
         },
       });
 
-      if (error) throw new Error(error.message || "AI parse failed.");
+      if (error) throw new Error(await getFunctionErrorMessage(error, "Debt AI is busy right now. Try again later."));
 
       const extracted = data?.extracted || {};
       if (!hasMeaningfulExtraction(extracted)) {
@@ -185,7 +186,7 @@ export default function DebtsPage({
         },
       });
 
-      if (error) throw new Error(error.message || "Document extraction failed.");
+      if (error) throw new Error(await getFunctionErrorMessage(error, "Debt document AI is busy right now. Try again later."));
 
       const extracted = data?.extracted || {};
       if (!hasMeaningfulExtraction(extracted)) {

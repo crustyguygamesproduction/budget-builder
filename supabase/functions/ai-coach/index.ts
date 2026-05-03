@@ -3,6 +3,13 @@ import {
   buildCoachQueryFocus,
   isLikelyPersonalTransfer,
 } from "../_shared/coachQueryFocus.js";
+import {
+  AiUsageError,
+  assertTextLimit,
+  byteLength,
+  enforceAiUsage,
+  readJsonBody,
+} from "../_shared/aiUsage.ts";
 
 class PublicFunctionError extends Error {
   status: number;
@@ -740,7 +747,8 @@ Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
 
   try {
-    const { mode = "coach", message, context = {} } = await req.json();
+    const { body: requestBody, bytes: requestBytes } = await readJsonBody(req, 4_500_000);
+    const { mode = "coach", message, context = {} } = requestBody;
     modeForLogs = String(mode || "coach");
     const apiKey = Deno.env.get("OPENAI_API_KEY");
 
@@ -752,6 +760,7 @@ Deno.serve(async (req) => {
     }
 
     if (mode === "market_price") {
+      assertTextLimit(message, 80, "ticker");
       const assetType = String(context?.asset_type || "").toLowerCase();
       const rawSymbol = String(context?.ticker_symbol || message || "").trim();
       if (!rawSymbol) throw new Error("Missing ticker symbol.");
@@ -761,6 +770,19 @@ Deno.serve(async (req) => {
     }
 
     if (mode === "extract_debt" || mode === "extract_investment" || mode === "extract_debt_document" || mode === "extract_investment_document") {
+      assertTextLimit(message, 4000, "note");
+      if (!String(mode).endsWith("_document") && byteLength(context) > 80_000) {
+        throw new AiUsageError("payload_too_large", "That setup has too much data for one AI read. Try a shorter note.", 413);
+      }
+      await enforceAiUsage(req, {
+        functionName: "ai-coach",
+        action: String(mode),
+        inputBytes: requestBytes,
+        limits: [
+          { windowSeconds: 3600, maxRequests: 20 },
+          { windowSeconds: 86400, maxRequests: 80 },
+        ],
+      });
       const kind = mode === "extract_debt" || mode === "extract_debt_document" ? "debt" : "investment";
       const systemPrompt = buildExtractionPrompt(kind);
       const input = mode.endsWith("_document")
@@ -772,6 +794,7 @@ Deno.serve(async (req) => {
     }
 
     const safeMessage = String(message || "").trim();
+    assertTextLimit(safeMessage, 2000, "message");
     if (!safeMessage) {
       return new Response(JSON.stringify({ error: "Message is required." }), {
         status: 400,
@@ -789,6 +812,16 @@ Deno.serve(async (req) => {
     if (deterministicReply) {
       return new Response(JSON.stringify({ reply: deterministicReply, model: "app_query_focus", mode: "premium", context_source: "coach_context_snapshots", context_detail: "deterministic_query_focus", coach_check_suggestions: coachCheckSuggestions }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
+    await enforceAiUsage(req, {
+      functionName: "ai-coach",
+      action: "coach",
+      inputBytes: requestBytes,
+      limits: [
+        { windowSeconds: 3600, maxRequests: 30 },
+        { windowSeconds: 86400, maxRequests: 120 },
+      ],
+    });
 
     let contextDetail = wantsSearchableTransactions ? "searchable_compact" : "decision_compact";
     let data: any;
@@ -820,7 +853,9 @@ Deno.serve(async (req) => {
     const reply = enforceCompactReply(rawReply, safeMessage);
     return new Response(JSON.stringify({ reply, model, mode: "premium", context_source: "coach_context_snapshots", context_detail: contextDetail, coach_check_suggestions: coachCheckSuggestions }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
-    const publicError = error instanceof PublicFunctionError
+    const publicError = error instanceof AiUsageError
+      ? new PublicFunctionError(error.code, error.publicMessage, error.status, error.message)
+      : error instanceof PublicFunctionError
       ? error
       : new PublicFunctionError("ai_coach_failed", "AI request could not be completed right now.", 500, error instanceof Error ? error.message : String(error));
     console.error("ai-coach request failed", {

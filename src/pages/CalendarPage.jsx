@@ -1,6 +1,7 @@
 ﻿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { InsightCard, MiniCard, Section } from "../components/ui";
+import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
   addDays,
   formatCompactCurrency,
@@ -308,7 +309,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
         selected_day: selectedDay ? { date: toIsoDate(selectedDay.date), earned: selectedDay.earned, spent: selectedDay.spent, net: selectedDay.net, transaction_count: selectedDay.transactions?.length || 0 } : null,
       };
       const { data, error } = await supabase.functions.invoke("ai-coach", { body: { mode: "coach", message: calendarMode === "recurring" ? "Analyse the future payments calendar. Explain the next likely bills/subscriptions and point out any estimates. Keep it short and practical." : "Analyse the currently open calendar timeframe. Keep it concise, specific to the visible range, and do not claim there are multiple months unless the provided data clearly includes them.", context } });
-      if (error) throw new Error(error.message || "Calendar AI analysis failed.");
+      if (error) throw new Error(await getFunctionErrorMessage(error, "Calendar AI is busy right now. Try again later."));
       setCalendarAiText(String(data?.reply || "No calendar analysis came back."));
     } catch (error) {
       setCalendarAiError(error.message || "Could not analyse this timeframe yet.");
