@@ -2,6 +2,7 @@ import { Suspense, lazy, useState } from "react";
 import { supabase } from "../supabase";
 
 const PrivacyPage = lazy(() => import("./PrivacyPage"));
+const PRIVACY_POLICY_VERSION = "2026-05-03";
 
 export default function AuthPage({ screenWidth, styles }) {
   const [email, setEmail] = useState("");
@@ -50,16 +51,51 @@ export default function AuthPage({ screenWidth, styles }) {
       return;
     }
 
+    const acceptedAt = new Date().toISOString();
+    const consentPayload = {
+      privacy_policy_version: PRIVACY_POLICY_VERSION,
+      privacy_policy_accepted_at: acceptedAt,
+      ai_processing_acknowledged_at: acceptedAt,
+    };
+
     setBusy(true);
-    const { error } = await supabase.auth.signUp(credentials);
-    setBusy(false);
+    const { data, error } = await supabase.auth.signUp({
+      ...credentials,
+      options: {
+        data: consentPayload,
+      },
+    });
 
     if (error) {
+      setBusy(false);
       alert("Account creation did not work. Check the details and try again.");
       return;
     }
 
+    if (data?.user?.id) {
+      await persistPrivacyConsent(data.user.id, credentials.email, consentPayload);
+    }
+
+    setBusy(false);
     alert("Account created. You can now log in.");
+  }
+
+  async function persistPrivacyConsent(userId, normalizedEmail, consentPayload) {
+    const { error } = await supabase.from("profiles").upsert(
+      {
+        id: userId,
+        email: normalizedEmail,
+        privacy_policy_version: consentPayload.privacy_policy_version,
+        privacy_policy_accepted_at: consentPayload.privacy_policy_accepted_at,
+        ai_processing_acknowledged_at: consentPayload.ai_processing_acknowledged_at,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+
+    if (error) {
+      console.warn("Privacy consent could not be saved to profiles", error);
+    }
   }
 
   return (
