@@ -185,6 +185,8 @@ export default function CoachPage({
     const text = String(nextMessage ?? message).trim();
     if (!text || thinking) return;
 
+    const resolvedCoachMessage = resolveCoachFollowUp(text, baseMessages);
+
     setMessage("");
     setPendingUserMessage({
       id: `pending-${Date.now()}`,
@@ -206,12 +208,12 @@ export default function CoachPage({
         content: text,
       });
 
-      await refreshSavedCoachQueryFocus(user.id, transactions, text);
+      await refreshSavedCoachQueryFocus(user.id, transactions, resolvedCoachMessage);
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {
         body: {
           mode: "coach",
-          message: text,
+          message: resolvedCoachMessage,
         },
       });
 
@@ -589,6 +591,56 @@ async function getFunctionErrorMessage(error) {
     // Keep the original Supabase error when the response body is not JSON.
   }
   return fallback;
+}
+
+function resolveCoachFollowUp(text, messages) {
+  const timeWindow = getFollowUpTimeWindow(text);
+  if (!timeWindow) return text;
+
+  const previousLookup = [...(messages || [])]
+    .reverse()
+    .find((msg) => msg?.role === "user" && isMoneyLookupQuestion(msg.content));
+
+  if (!previousLookup?.content) return text;
+
+  return applyTimeWindowToQuestion(previousLookup.content, timeWindow);
+}
+
+function getFollowUpTimeWindow(text) {
+  const normalised = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const dayMatch = normalised.match(/^(?:and\s+|also\s+|then\s+|what\s+about\s+|same\s+for\s+)?(?:the\s+)?(?:(?:last|latest|past)\s+)?(\d{1,3})\s+days?$/);
+  if (dayMatch) return `latest ${dayMatch[1]} days of uploaded data`;
+
+  const monthMatch = normalised.match(/^(?:and\s+|also\s+|then\s+|what\s+about\s+|same\s+for\s+)?(this|last|latest)\s+month$/);
+  if (monthMatch) return `${monthMatch[1]} month in uploaded data`;
+
+  return "";
+}
+
+function isMoneyLookupQuestion(value) {
+  const text = String(value || "").toLowerCase();
+  return /\b(how much|what did i spend|spent on|spend on|spend at|spent at|paid to|paid me|sent me|send me|received|income from|total)\b/.test(text);
+}
+
+function applyTimeWindowToQuestion(question, timeWindow) {
+  const cleaned = String(question || "")
+    .replace(/\b(over|in|within|during|for)\s+(the\s+)?(latest|last|past)\s+\d+\s+days?\b/gi, "")
+    .replace(/\b(latest|last|past)\s+\d+\s+days?\b/gi, "")
+    .replace(/\b(over|in|within|during|for)\s+(this|last|latest)\s+month\b/gi, "")
+    .replace(/\b(this|last|latest)\s+month\b/gi, "")
+    .replace(/\bof\s+uploaded\s+data\b/gi, "")
+    .replace(/\buploaded\s+data\b/gi, "")
+    .replace(/\?+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return question;
+  return `${cleaned} in ${timeWindow}?`;
 }
 
 async function refreshSavedCoachQueryFocus(userId, transactions, message) {
