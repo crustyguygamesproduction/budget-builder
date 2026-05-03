@@ -67,6 +67,13 @@ export default function SettingsPage({
 
     setResetBusy(true);
     const deletionCounts = {};
+    const auditEventId = await createDeletionEvent({
+      userId,
+      actionType: "full_wipe",
+      selectedMonths: [],
+      counts: { requested: true },
+      status: "started",
+    });
 
     try {
       const { data: receipts } = await supabase
@@ -112,17 +119,28 @@ export default function SettingsPage({
         deletionCounts[table] = count || 0;
       }
 
-      await logDeletionEvent({
+      await finishDeletionEvent({
+        eventId: auditEventId,
         userId,
         actionType: "full_wipe",
         selectedMonths: [],
         counts: deletionCounts,
+        status: "completed",
       });
 
       replayOnboarding(userId);
       await onDataChange?.();
       alert("Your Money Hub data was deleted. Setup will run again.");
     } catch (error) {
+      await finishDeletionEvent({
+        eventId: auditEventId,
+        userId,
+        actionType: "full_wipe",
+        selectedMonths: [],
+        counts: deletionCounts,
+        status: "failed",
+        errorCode: getDeletionErrorCode(error),
+      });
       alert(error.message || "Could not delete all data.");
     } finally {
       setResetBusy(false);
@@ -135,16 +153,24 @@ export default function SettingsPage({
     if (!confirmed) return;
 
     setMonthDeleteBusy(true);
+    const monthsToDelete = [...selectedMonths];
     const deletionCounts = {
-      months_requested: selectedMonths.length,
+      months_requested: monthsToDelete.length,
       transactions: 0,
       statement_imports: 0,
       money_understanding_snapshots: 0,
       coach_context_snapshots: 0,
     };
+    const auditEventId = await createDeletionEvent({
+      userId,
+      actionType: "month_delete",
+      selectedMonths: monthsToDelete,
+      counts: { months_requested: monthsToDelete.length },
+      status: "started",
+    });
 
     try {
-      for (const month of selectedMonths) {
+      for (const month of monthsToDelete) {
         const { startDate, endDate } = getMonthBounds(month);
         const { count: txCount, error: txError } = await supabase
           .from("transactions")
@@ -179,17 +205,28 @@ export default function SettingsPage({
       if (coachSnapshotError) throw coachSnapshotError;
       deletionCounts.coach_context_snapshots = coachSnapshotCount || 0;
 
-      await logDeletionEvent({
+      await finishDeletionEvent({
+        eventId: auditEventId,
         userId,
         actionType: "month_delete",
-        selectedMonths,
+        selectedMonths: monthsToDelete,
         counts: deletionCounts,
+        status: "completed",
       });
 
       setSelectedMonths([]);
       await onDataChange?.();
       alert("Selected month data deleted.");
     } catch (error) {
+      await finishDeletionEvent({
+        eventId: auditEventId,
+        userId,
+        actionType: "month_delete",
+        selectedMonths: monthsToDelete,
+        counts: deletionCounts,
+        status: "failed",
+        errorCode: getDeletionErrorCode(error),
+      });
       alert(error.message || "Could not delete those months.");
     } finally {
       setMonthDeleteBusy(false);
@@ -327,17 +364,55 @@ export default function SettingsPage({
   );
 }
 
-async function logDeletionEvent({ userId, actionType, selectedMonths, counts }) {
+async function createDeletionEvent({ userId, actionType, selectedMonths, counts, status }) {
+  const { data, error } = await supabase
+    .from("data_deletion_events")
+    .insert({
+      user_id: userId,
+      action_type: actionType,
+      selected_months: selectedMonths,
+      counts,
+      status,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Deletion audit event could not be started", error);
+    return null;
+  }
+
+  return data?.id || null;
+}
+
+async function finishDeletionEvent({ eventId, userId, actionType, selectedMonths, counts, status, errorCode = null }) {
+  if (eventId) {
+    const { error } = await supabase
+      .from("data_deletion_events")
+      .update({ counts, status, error_code: errorCode })
+      .eq("id", eventId)
+      .eq("user_id", userId);
+
+    if (!error) return;
+    console.warn("Deletion audit event could not be updated", error);
+  }
+
   const { error } = await supabase.from("data_deletion_events").insert({
     user_id: userId,
     action_type: actionType,
     selected_months: selectedMonths,
     counts,
+    status,
+    error_code: errorCode,
   });
 
   if (error) {
     console.warn("Deletion audit event could not be saved", error);
   }
+}
+
+function getDeletionErrorCode(error) {
+  return String(error?.code || error?.name || "delete_failed").slice(0, 64);
 }
 
 function getMonthOptions(transactions = []) {
