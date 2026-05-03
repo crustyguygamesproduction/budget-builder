@@ -129,23 +129,25 @@ Provider decision:
 - Treat live bank feeds as a Premium feature.
 - Keep all GoCardless secrets and provider API calls inside Supabase Edge Functions.
 
-Do not start implementing bank feeds until the high-priority production hardening below is complete.
+The high-priority production hardening pass below was completed on 2026-05-03 in commit `6f10eb8`.
 
 When bank feed work starts, Codex should read `docs/BANK_FEED_GOCARDLESS_PLAN.md` first.
 
-## Remaining high-priority production hardening work
+## Recently completed high-priority hardening
 
-These are the main tasks Codex should do next.
+These items were completed on 2026-05-03 and should not be treated as pending work unless a new audit finds a regression.
 
 ### 1. Harden `ai-coach` CORS
 
+Status: completed in commit `6f10eb8`.
+
 File: `supabase/functions/ai-coach/index.ts`
 
-Problem:
+Original problem:
 
-`buildCorsHeaders()` still allows any origin when `ALLOWED_ORIGINS` is empty.
+Before commit `6f10eb8`, `buildCorsHeaders()` allowed any origin when `ALLOWED_ORIGINS` was empty.
 
-Required behaviour:
+Implemented behaviour:
 
 - Use the same fail-closed production pattern as `money-organiser` and `swift-worker`.
 - Add helpers like `isProductionRuntime()`, `isLocalOrigin()`, and `hasCorsConfigError()`.
@@ -156,13 +158,15 @@ Required behaviour:
 
 ### 2. Require auth and rate limiting for `ai-coach` market price mode
 
+Status: completed in commit `6f10eb8`.
+
 File: `supabase/functions/ai-coach/index.ts`
 
-Problem:
+Original problem:
 
 `mode === "market_price"` can currently fetch Yahoo Finance before auth/rate-limit checks.
 
-Required behaviour:
+Implemented behaviour:
 
 - Require a valid authenticated user before fetching the quote.
 - Add `enforceAiUsage()` for `market_price`.
@@ -173,13 +177,15 @@ Required behaviour:
 
 ### 3. Wire CSV content sniffing into upload
 
+Status: completed in commit `6f10eb8`.
+
 File: `src/pages/UploadPageSafe.jsx`
 
-Problem:
+Original problem:
 
-`validateStatementCsvFileContent()` exists in `src/lib/security.js`, but the upload flow still calls the older synchronous `validateStatementCsvFile()` before `Papa.parse()`.
+Before commit `6f10eb8`, `validateStatementCsvFileContent()` existed in `src/lib/security.js`, but the upload flow still called the older synchronous `validateStatementCsvFile()` before `Papa.parse()`.
 
-Required behaviour:
+Implemented behaviour:
 
 - Import `validateStatementCsvFileContent`.
 - Validate file content before `Papa.parse(file, ...)`.
@@ -190,21 +196,25 @@ Required behaviour:
 
 ### 4. Use content sniffing for debt and investment document uploads
 
+Status: completed in commit `6f10eb8`.
+
 Files:
 
 - `src/pages/DebtsPage.jsx`
 - `src/pages/InvestmentsPage.jsx`
 
-Problem:
+Original problem:
 
-These pages still use extension/MIME validation through `validateSensitiveFile()`.
+Before commit `6f10eb8`, these pages still used extension/MIME validation through `validateSensitiveFile()`.
 
-Required behaviour:
+Implemented behaviour:
 
 - Use `validateSensitiveFileContent()` on selection and immediately before upload.
 - Preserve current UX and error handling.
 
 ### 5. Add explicit user scoping to remaining sensitive writes
+
+Status: completed in commit `6f10eb8`.
 
 Known examples:
 
@@ -215,7 +225,9 @@ Add similar low-risk user scoping where the signed-in user ID is available and t
 
 ### 6. Fix Calendar monthly income wording/calculation clarity
 
-User report:
+Status: completed in commit `6f10eb8` for the bottom `Recent Months` / `This Month` section by showing month net only.
+
+Original user report:
 
 The Calendar page Recent Months card shows `In` totals that appear wrong/confusing. Example screenshot showed April 2026 `In £2519.62`, March 2026 `In £5455.44`, etc. The user asked whether these are gross before bills/spending.
 
@@ -225,12 +237,12 @@ Relevant code:
 - `getMonthlyBreakdown()`
 - `getMonthlyHistorySummary()`
 
-Current behaviour:
+Previous behaviour:
 
 - `earned` sums all positive non-internal-transfer transactions.
 - The UI labels that as `In`, which may include wages, reimbursements, refunds, transfers from other people, repayments, or pass-through money.
 
-Required improvement:
+Implemented improvement:
 
 - Do not label this as simple income unless it is true income.
 - Either rename UI copy to `Money in` / `Inflow` and explain it is before spending, or split it into `Income` and `Other money in` using existing intelligence flags where available.
@@ -246,14 +258,13 @@ These are important but should not be mixed into the same large security patch u
 
 `App.jsx` still owns auth/session, routing, data loading, viewport state, Money Hub model construction, Coach context construction, Coach snapshot saving, navigation helpers and AI refresh flow.
 
-`src/hooks/useViewport.js` exists. The low-risk next step is to wire it into `App.jsx` only.
+`src/hooks/useViewport.js` exists and is now wired into `App.jsx`.
 
 Recommended order:
 
-1. wire `useViewport()` into `App.jsx`
-2. extract `useMoneyHubData(userId)`
-3. extract `useCoachSnapshot()`
-4. keep page composition in `App.jsx`
+1. extract `useMoneyHubData(userId)`
+2. extract `useCoachSnapshot()`
+3. keep page composition in `App.jsx`
 
 Do not combine the larger data-loader extraction with production hardening unless specifically asked.
 
@@ -273,11 +284,11 @@ Later improvement: move freshness enforcement into `ai-coach` or pass a guarded 
 
 `App.jsx` uses `UploadPageSafe`, not old `UploadPage.jsx`. The old file remains and can confuse audits.
 
-After `UploadPageSafe` hardening is complete, either archive or delete old `UploadPage.jsx` if it is confirmed unused.
+`UploadPageSafe` hardening is complete. A later cleanup can archive or delete old `UploadPage.jsx` if it is confirmed unused.
 
 ## Privacy note
 
-`CoachPage.jsx` stores draft text using localStorage. For privacy on shared computers, switch Coach draft/autosend state to sessionStorage only.
+`CoachPage.jsx` and `App.jsx` now use sessionStorage for the one-shot Coach draft/autosend handoff.
 
 Do not change unrelated localStorage keys unless asked.
 

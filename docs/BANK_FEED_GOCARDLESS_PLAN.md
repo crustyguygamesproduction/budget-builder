@@ -329,7 +329,9 @@ Coach rules:
 
 ## Implementation order
 
-Do not build bank feeds until the current high-priority production hardening in `docs/CODEX_CONTEXT.md` is completed.
+The high-priority production hardening in `docs/CODEX_CONTEXT.md` was completed on 2026-05-03 in commit `6f10eb8`.
+
+Do not build bank feeds until the user explicitly asks for live bank feed implementation.
 
 Then implement in this order:
 
