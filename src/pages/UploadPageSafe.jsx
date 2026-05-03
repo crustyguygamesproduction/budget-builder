@@ -581,110 +581,135 @@ export default function UploadPageSafe({
       body: "Money Hub is checking your file. Nothing has been saved yet.",
     });
 
-    for (const file of selectedFiles) {
-      const validation = await validateStatementCsvFileContent(file);
-      if (!validation.ok) {
-        alert(`${file.name}: ${validation.message}`);
-        continue;
-      }
+    try {
+      for (const file of selectedFiles) {
+        let validation;
 
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        beforeFirstChunk(chunk) {
-          const headerIndex = detectHeaderRowIndex(chunk);
-          if (headerIndex <= 0) return chunk;
-
-          const lines = chunk.split(/\r?\n/);
-          return lines.slice(headerIndex).join("\n");
-        },
-        complete: async function (results) {
-          try {
-            const headers = Object.keys(results.data[0] || {});
-            const sampleRows = results.data.slice(0, 5);
-
-            setUploadStatus({
-              phase: "mapping",
-              step: 2,
-              tone: "working",
-              title: `Understanding ${file.name}`,
-              body: "AI is matching the bank columns to date, description and money in/out.",
-            });
-
-            const mapping = await requestCsvMapping(headers, sampleRows);
-            const normalised = results.data.map((row) => normaliseImportedRow(row, mapping));
-            const cleaned = normalised.map((item) => item.row).filter(Boolean);
-            const dateErrors = normalised
-              .map((item, index) => ({ index: index + 1, error: item.error }))
-              .filter((item) => item.error && /date/i.test(item.error));
-            const mappingMeta = summarizeMappingQuality(headers, mapping, dateErrors.length);
-
-            if (dateErrors.length > 0) {
-              const examples = dateErrors
-                .slice(0, MAX_DATE_ERRORS_TO_SHOW)
-                .map((item) => `Row ${item.index}: ${item.error}`)
-                .join("\n");
-              setUploadStatus({
-                phase: "date-error",
-                step: 2,
-                tone: "bad",
-                title: "Fix the statement dates first",
-                body: `${dateErrors.length} row${dateErrors.length === 1 ? "" : "s"} had ambiguous or unsupported dates. No rows from this file were added to the preview.`,
-              });
-              alert(`Money Hub rejected unsafe dates in ${file.name}.\n\n${examples}`);
-              return;
-            }
-
-            if (cleaned.length === 0) {
-              setUploadStatus({
-                phase: "error",
-                step: 2,
-                tone: "bad",
-                title: "Could not find usable rows",
-                body: "No rows had a safe date, description and amount. Check the file format and try again.",
-              });
-              alert(`Could not find usable rows in ${file.name}.`);
-              return;
-            }
-
-            setFiles((prev) => {
-              const nextCard = buildFileCard(file, cleaned, mappingMeta, dateErrors);
-              const withoutDuplicate = prev.filter((item) => item.id !== nextCard.id);
-              return [...withoutDuplicate, nextCard].sort((a, b) => a.fileName.localeCompare(b.fileName));
-            });
-
-            setUploadStatus({
-              phase: "ready",
-              step: 3,
-              tone: "good",
-              title: "Statement ready to import",
-              body: "Dates are saved as ISO YYYY-MM-DD and duplicate checks use normalised date, amount and description keys.",
-            });
-          } catch (error) {
-            setUploadStatus({
-              phase: "error",
-              step: 2,
-              tone: "bad",
-              title: "Could not read that statement",
-              body: error?.message || "Please check the file format and try again.",
-            });
-            alert(`Could not read ${file.name}. Please check the file format and try again.`);
-          }
-        },
-        error() {
+        try {
+          validation = await validateStatementCsvFileContent(file);
+        } catch (error) {
+          const message = error?.message || "Money Hub could not check that file. Try exporting it again as CSV.";
           setUploadStatus({
             phase: "error",
             step: 1,
             tone: "bad",
-            title: "Could not read that statement",
-            body: "Please check the file format and try again.",
+            title: "Could not check that statement",
+            body: message,
           });
-          alert(`Could not read ${file.name}. Please check the file format and try again.`);
-        },
-      });
-    }
+          alert(`${file.name}: ${message}`);
+          continue;
+        }
 
-    event.target.value = "";
+        if (!validation.ok) {
+          setUploadStatus({
+            phase: "error",
+            step: 1,
+            tone: "bad",
+            title: "That statement does not look right",
+            body: validation.message,
+          });
+          alert(`${file.name}: ${validation.message}`);
+          continue;
+        }
+
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          beforeFirstChunk(chunk) {
+            const headerIndex = detectHeaderRowIndex(chunk);
+            if (headerIndex <= 0) return chunk;
+
+            const lines = chunk.split(/\r?\n/);
+            return lines.slice(headerIndex).join("\n");
+          },
+          complete: async function (results) {
+            try {
+              const headers = Object.keys(results.data[0] || {});
+              const sampleRows = results.data.slice(0, 5);
+
+              setUploadStatus({
+                phase: "mapping",
+                step: 2,
+                tone: "working",
+                title: `Understanding ${file.name}`,
+                body: "AI is matching the bank columns to date, description and money in/out.",
+              });
+
+              const mapping = await requestCsvMapping(headers, sampleRows);
+              const normalised = results.data.map((row) => normaliseImportedRow(row, mapping));
+              const cleaned = normalised.map((item) => item.row).filter(Boolean);
+              const dateErrors = normalised
+                .map((item, index) => ({ index: index + 1, error: item.error }))
+                .filter((item) => item.error && /date/i.test(item.error));
+              const mappingMeta = summarizeMappingQuality(headers, mapping, dateErrors.length);
+
+              if (dateErrors.length > 0) {
+                const examples = dateErrors
+                  .slice(0, MAX_DATE_ERRORS_TO_SHOW)
+                  .map((item) => `Row ${item.index}: ${item.error}`)
+                  .join("\n");
+                setUploadStatus({
+                  phase: "date-error",
+                  step: 2,
+                  tone: "bad",
+                  title: "Fix the statement dates first",
+                  body: `${dateErrors.length} row${dateErrors.length === 1 ? "" : "s"} had ambiguous or unsupported dates. No rows from this file were added to the preview.`,
+                });
+                alert(`Money Hub rejected unsafe dates in ${file.name}.\n\n${examples}`);
+                return;
+              }
+
+              if (cleaned.length === 0) {
+                setUploadStatus({
+                  phase: "error",
+                  step: 2,
+                  tone: "bad",
+                  title: "Could not find usable rows",
+                  body: "No rows had a safe date, description and amount. Check the file format and try again.",
+                });
+                alert(`Could not find usable rows in ${file.name}.`);
+                return;
+              }
+
+              setFiles((prev) => {
+                const nextCard = buildFileCard(file, cleaned, mappingMeta, dateErrors);
+                const withoutDuplicate = prev.filter((item) => item.id !== nextCard.id);
+                return [...withoutDuplicate, nextCard].sort((a, b) => a.fileName.localeCompare(b.fileName));
+              });
+
+              setUploadStatus({
+                phase: "ready",
+                step: 3,
+                tone: "good",
+                title: "Statement ready to import",
+                body: "Dates are saved as ISO YYYY-MM-DD and duplicate checks use normalised date, amount and description keys.",
+              });
+            } catch (error) {
+              setUploadStatus({
+                phase: "error",
+                step: 2,
+                tone: "bad",
+                title: "Could not read that statement",
+                body: error?.message || "Please check the file format and try again.",
+              });
+              alert(`Could not read ${file.name}. Please check the file format and try again.`);
+            }
+          },
+          error() {
+            setUploadStatus({
+              phase: "error",
+              step: 1,
+              tone: "bad",
+              title: "Could not read that statement",
+              body: "Please check the file format and try again.",
+            });
+            alert(`Could not read ${file.name}. Please check the file format and try again.`);
+          },
+        });
+      }
+    } finally {
+      event.target.value = "";
+    }
   }
 
   function updateFile(id, patch) {

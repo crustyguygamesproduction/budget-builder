@@ -4,13 +4,17 @@
 
 - Edge functions used by the app:
   - `ai-coach`
+  - `money-organiser`
   - `swift-worker`
-- Both functions need `OPENAI_API_KEY` set in Supabase function secrets.
+- These functions need `OPENAI_API_KEY` set in Supabase function secrets where they call OpenAI.
+- AI usage controls require `SUPABASE_SERVICE_ROLE_KEY` server-side in Edge Function secrets. Never expose it to the browser or Vercel client env vars.
 - The app uploads documents and receipts to the `receipts` storage bucket.
-- The app reads and writes these tables from the browser:
+- The app reads and writes these user-owned tables from the browser under RLS:
   - `accounts`
   - `transactions`
   - `statement_imports`
+  - `money_understanding_snapshots`
+  - `coach_context_snapshots`
   - `money_goals`
   - `receipts`
   - `ai_messages`
@@ -18,6 +22,12 @@
   - `investments`
   - `viewer_access`
   - `financial_documents`
+  - `profiles`
+  - `subscription_profiles`
+  - `bank_connections`
+  - `transaction_rules`
+- Edge Functions write server-side operational tables such as:
+  - `ai_usage_events`
 
 ## Vercel
 
@@ -57,6 +67,7 @@
 - Treat AI context as sensitive financial data. Edge functions should avoid logging full transaction payloads in production.
 - `20260430_secure_upload_storage.sql` makes the `receipts` storage bucket private, adds user-path storage policies, and adds `file_path` columns so new uploads use short-lived signed links instead of public URLs.
 - New client uploads validate file type and size before parsing or storage. CSV statements are capped separately from receipt/document images and PDFs.
+- CSV, receipt, debt and investment uploads use content sniffing, not only filename or browser MIME type. HEIC/HEIF uploads require a real compatible `ftyp` brand.
 - Phone-camera images are resized client-side to a maximum 1600px edge and converted to WebP before upload when that reduces file size.
 - Existing public `file_url` rows should be migrated or re-uploaded before launch if the bucket was public while testing.
 - Keep signed document links short-lived. The browser should not store permanent public URLs for receipts, debts, investments, statements, or bank-feed exports.
@@ -73,8 +84,7 @@
 Run these before pushing production-facing changes:
 
 ```bash
-npm run lint
-npm run build
+npm run check
 ```
 
 ## Known Follow-Up

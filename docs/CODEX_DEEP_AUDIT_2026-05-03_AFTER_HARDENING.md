@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-03
 
-This document is the working audit for the next Codex pass. It reflects a deep review of the uploaded `budget-builder-review.zip` after commit `6f10eb8` (`Harden coach and upload flows`).
+This document is the working audit after commit `6f10eb8` (`Harden coach and upload flows`). The focused cleanup pass that followed handled stale docs, upload validation error handling, inactive upload-page removal, HEIC/HEIF sniffing, and small validation regression checks.
 
 ## How to use this document
 
@@ -118,9 +118,11 @@ The CSP is practical and should work for the current app shape, but still needs 
 
 ### 1. Update and clean stale docs
 
-Docs are now the main mismatch.
+Status: completed in the focused cleanup pass.
 
-Files that need updating:
+Docs were the main mismatch before the focused cleanup pass.
+
+Files updated:
 
 - `docs/CODEX_CONTEXT.md`
 - `docs/security-fix-notes-2026-05-03.md`
@@ -129,15 +131,15 @@ Files that need updating:
 - `docs/critical-issues-next-session.md`
 - maybe `docs/next-refactor-plan.md`
 
-Required doc fixes:
+Completed doc fixes:
 
-- Stop listing completed hardening tasks as pending.
-- Make clear that `UploadPageSafe.jsx` is the active upload page.
-- Mark old `UploadPage.jsx` as inactive or scheduled for removal.
-- Add `money-organiser` to production readiness Edge Function list.
-- Add `ai_usage_events`, `coach_context_snapshots`, `subscription_profiles`, `bank_connections`, and `transaction_rules` to table/readiness notes where relevant.
-- Mark `docs/critical-issues-next-session.md` as historical, or refresh it with only still-relevant bugs.
-- Mention that `vercel.json` now exists.
+- Stopped listing completed hardening tasks as pending.
+- Made clear that `UploadPageSafe.jsx` is the active upload page.
+- Marked old `UploadPage.jsx` as removed.
+- Added `money-organiser` to production readiness Edge Function list.
+- Added `ai_usage_events`, `coach_context_snapshots`, `subscription_profiles`, `bank_connections`, and `transaction_rules` to table/readiness notes where relevant.
+- Marked `docs/critical-issues-next-session.md` as historical.
+- Mentioned that `vercel.json` now exists.
 
 Finish criterion: a future Codex run should not get contradictory instructions from docs.
 
@@ -173,22 +175,28 @@ Confirm in Vercel:
 
 ### 3. Add small regression checks for the just-fixed paths
 
-The recent fixes are important enough to deserve regression checks.
+Status: partially completed in the focused cleanup pass.
 
-Suggested checks:
+Added `scripts/check-security-validation.mjs`, wired into `npm run check`, covering:
+
+- normal CSV accepts
+- renamed binary CSV rejects
+- real PDF signature accepts
+- fake PDF rejects
+- non-HEIC ISO media file rejects when renamed `.heic`
+- HEIC `ftyp` brand accepts
+
+Further regression checks that could still be useful later:
 
 - Calendar Recent Months renders net-only wording or at least a helper test around monthly breakdown display copy.
-- CSV content validation rejects renamed binary data.
-- CSV content validation accepts normal CSV with headers.
-- Debt/investment document validation rejects fake PDF/image content.
 - `ai-coach` CORS helper returns config error in production when `ALLOWED_ORIGINS` is empty.
 - `ai-coach` market price path uses usage enforcement before Yahoo fetch.
 
-If a full test framework is too much, add focused `scripts/check-*.mjs` tests and wire them into `npm run check` carefully.
-
 ### 4. Make `UploadPageSafe.handleFiles()` more robust
 
-Current code awaits content validation before Papa Parse, which is good. Remaining improvement:
+Status: completed in the focused cleanup pass.
+
+Before this cleanup pass, the code awaited content validation before Papa Parse:
 
 ```js
 for (const file of selectedFiles) {
@@ -197,30 +205,24 @@ for (const file of selectedFiles) {
 }
 ```
 
-If `validateStatementCsvFileContent()` throws unexpectedly, the handler can reject and leave the UI in a reading state.
+If `validateStatementCsvFileContent()` threw unexpectedly, the handler could reject and leave the UI in a reading state.
 
-Fix:
+Implemented fix:
 
 - wrap content validation in try/catch
 - set upload status to error for that file
 - clear the input reliably in a `finally`
 - keep parsing behaviour unchanged
 
-Also remove the duplicate `title: Understanding ${file.name}` line in the upload status object inside `UploadPageSafe.jsx`.
+The duplicate `title: Understanding ${file.name}` line noted in the audit was not present in the live file during this pass.
 
 ### 5. Clean up old inactive code paths
 
-`App.jsx` imports `UploadPageSafe`, not `UploadPage.jsx`. The old `src/pages/UploadPage.jsx` still contains older validation and import logic. It is inactive, but it confuses audits and future Codex runs.
+Status: completed for `src/pages/UploadPage.jsx`; archive app snapshots remain intentionally untouched.
 
-Options:
+`src/pages/UploadPage.jsx` was deleted after confirming `App.jsx` imports `UploadPageSafe`.
 
-- delete `src/pages/UploadPage.jsx`, or
-- move it out of active source to something like `docs/archive-code/UploadPage-legacy.jsx.txt`, or
-- leave it but add a strong comment at the top and exclude it from future searches/lint if appropriate.
-
-Recommendation: delete it after confirming nothing imports it.
-
-Also consider deleting or moving:
+Still consider deleting or moving in a separate cleanup:
 
 - `src/archive/App-STABLE.jsx`
 - `src/archive/App-BEFORE-SUPER-BUNDLE.jsx`
@@ -228,6 +230,8 @@ Also consider deleting or moving:
 They are useful history but contain stale patterns and make code search noisy.
 
 ### 6. Tighten HEIC/HEIF content sniffing
+
+Status: completed in the focused cleanup pass.
 
 `src/lib/security.js` currently allows `heic` / `heif`, but the magic-byte check for those formats is weak:
 
@@ -243,7 +247,7 @@ Fix options:
 - implement a real ISO BMFF `ftypheic` / `ftypheif` style check around bytes 4-12, or
 - temporarily remove HEIC/HEIF support until robust validation is implemented.
 
-For a finance app, prefer rejecting unclear files over accepting weakly validated ones.
+HEIC/HEIF validation now checks for a real ISO BMFF `ftyp` box and compatible HEIF brands instead of accepting files only because they start with null bytes.
 
 ### 7. Review `ai-coach` OpenAI key requirement for `market_price`
 

@@ -8,6 +8,7 @@ Purpose: keep `src/App.jsx` shrinking in safe, deployable slices while improving
 - Shared UI primitives live in `src/components/ui.jsx`.
 - Goal suggestions live in `src/lib/goalInsights.js`.
 - Upload guidance lives in `src/lib/uploadGuidance.js`.
+- The active upload page is `src/pages/UploadPageSafe.jsx`; the older inactive `src/pages/UploadPage.jsx` has been removed.
 - Old app snapshots are archived in `src/archive/`.
 - Supabase temp files are no longer tracked.
 
@@ -20,10 +21,9 @@ Purpose: keep `src/App.jsx` shrinking in safe, deployable slices while improving
 2. Remove the `helpers` prop from `GoalsPage`.
    - Import the helper functions directly into the page once they live in `src/lib`.
 
-3. Extract `UploadPage`.
-   - Move CSV import helpers with it.
-   - Keep the Supabase calls in the page for now.
-   - Preserve the new upload guidance UX and AI action.
+3. Continue tightening `UploadPageSafe` only when upload behaviour changes.
+   - Keep CSV import helpers close to the page unless they become shared.
+   - Preserve content sniffing, date normalisation, duplicate detection, upload guidance UX and AI mapping fallback.
 
 4. Extract one page at a time after that.
    - Best order: `ReceiptsPage`, `CoachPage`, `DebtsPage`, `InvestmentsPage`, `CalendarPage`, then `TodayPage`.

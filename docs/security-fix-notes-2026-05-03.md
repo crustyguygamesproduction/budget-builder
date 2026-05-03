@@ -16,7 +16,7 @@ git pull origin main
 npm run check
 ```
 
-`npm run check` runs lint, money-understanding checks, organiser intelligence checks and build.
+`npm run check` runs lint, money-understanding checks, organiser intelligence checks, security validation checks and build.
 
 GitHub Actions CI now exists at `.github/workflows/check.yml` and runs `npm ci` plus `npm run check` on pushes and PRs.
 
@@ -44,9 +44,9 @@ Duplicate keys now use account ID, ISO date, rounded pence amount and normalised
 - `validateSensitiveFileContent(file, options)`
 - `validateStatementCsvFileContent(file, options)`
 
-`ReceiptsPage.jsx` uses content sniffing for receipt uploads.
+`ReceiptsPage.jsx`, `UploadPageSafe.jsx`, `DebtsPage.jsx` and `InvestmentsPage.jsx` use content sniffing for user uploads.
 
-Pending: `UploadPageSafe.jsx`, `DebtsPage.jsx` and `InvestmentsPage.jsx` still need to be wired to the content-sniffing helpers. See `docs/CODEX_CONTEXT.md`.
+`src/lib/security.js` includes regression coverage through `scripts/check-security-validation.mjs`, including renamed binary CSV/PDF rejection and stricter HEIC/HEIF brand checks.
 
 ### Privacy consent persistence
 
@@ -94,29 +94,16 @@ Audit rows must store operational metadata only, not deleted financial details.
 
 `.github/workflows/check.yml` has been added.
 
-## Current high-priority pending work
+## Current production verification work
 
-The following items remain open and should be handled by Codex/local editor because the relevant files are large and the GitHub connector has truncated them previously.
+The previous high-priority hardening list was completed in commits `6f10eb8` and the follow-up cleanup pass. Do not treat those items as pending unless a new regression is found.
 
-1. `supabase/functions/ai-coach/index.ts`
-   - Make CORS fail closed in production when `ALLOWED_ORIGINS` is missing.
-   - Require auth and rate limiting for `mode === "market_price"` before Yahoo Finance fetch.
+Remaining production readiness work is mostly manual verification:
 
-2. `src/pages/UploadPageSafe.jsx`
-   - Replace old synchronous CSV validation with `await validateStatementCsvFileContent(file)` before `Papa.parse(file, ...)`.
-   - Scope `accounts.last_imported_at` update by both account ID and user ID.
-
-3. `src/pages/DebtsPage.jsx` and `src/pages/InvestmentsPage.jsx`
-   - Use `validateSensitiveFileContent()` on document selection and immediately before upload.
-
-4. `src/pages/InvestmentsPage.jsx`
-   - Scope live price row update by both investment ID and user ID.
-
-5. `src/App.jsx`
-   - Wire `useViewport()` into App only. Do not refactor data loaders in the same patch.
-
-6. `src/pages/CoachPage.jsx` and any autosend/draft owner
-   - Use sessionStorage rather than localStorage for Coach draft/autosend state.
+- confirm Supabase Edge Function deployments and secrets in the dashboard
+- confirm `ALLOWED_ORIGINS` is set for production and preview app origins
+- confirm Vercel environment variables and security headers on the deployed site
+- run smoke tests with a fake/test account
 
 ## Later maintainability work
 
@@ -124,7 +111,7 @@ These should be separate tasks after the security blockers are closed.
 
 - Extract `useMoneyHubData(userId)` from `App.jsx`.
 - Extract Coach snapshot handling into a hook or move context generation server-side.
-- Remove/archival-review old `UploadPage.jsx` after `UploadPageSafe` is fully hardened.
+- Continue shrinking `App.jsx` with `useMoneyHubData(userId)` and later `useCoachSnapshot()`.
 - Replace `CoachPageGuarded` monkey-patching with a cleaner send function or server-side freshness check.
 - Add anonymised real CSV fixtures for organiser/import regression tests.
 
@@ -144,13 +131,13 @@ Use a test account.
 - Upload `13/02/2026`, confirm it imports.
 - Upload `01/02/2026`, confirm it rejects as ambiguous.
 - Upload the same file twice, confirm duplicate handling works.
-- After content sniffing is wired, upload a renamed binary as `.csv`, confirm it rejects.
+- Upload a renamed binary as `.csv`, confirm it rejects.
 
 ### Documents
 
 - Upload a real PDF receipt.
 - Upload a fake PDF/image renamed to an allowed extension, confirm rejection.
-- Repeat for debt and investment documents after those pages are patched.
+- Repeat for debt and investment documents.
 
 ### Coach and AI
 

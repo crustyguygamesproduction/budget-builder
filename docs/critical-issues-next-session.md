@@ -1,4 +1,6 @@
-# Critical Issues For Next Session
+# Historical Critical Issues Snapshot
+
+Status: historical. This file is an older snapshot from before the May 2026 hardening and UX passes. Do not use it as the current task list without re-checking the live app and `docs/CODEX_CONTEXT.md`.
 
 Resume this list before continuing structural refactors. The app's selling point is statement upload accuracy, so data correctness comes first.
 

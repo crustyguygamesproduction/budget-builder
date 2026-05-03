@@ -27,6 +27,8 @@ Completed in that pass:
 - `vercel.json` already existed with baseline security headers.
 - `npm run check` passed.
 - Supabase `ai-coach` function was deployed.
+- The inactive old `src/pages/UploadPage.jsx` was removed after confirming `App.jsx` imports `UploadPageSafe`.
+- Security validation regression checks were added for CSV/PDF sniffing and HEIC/HEIF brand checks.
 
 ## Non-negotiables
 
@@ -42,10 +44,9 @@ Do not redo the completed hardening pass unless a new bug is found.
 
 Good next candidates:
 
-1. Decide whether to archive/delete the old unused `src/pages/UploadPage.jsx` after confirming `App.jsx` only imports `UploadPageSafe`.
-2. Continue the App maintainability split by extracting `useMoneyHubData(userId)` from `App.jsx`.
-3. Later extract `useCoachSnapshot()` from `App.jsx`.
-4. If the user asks for live bank feeds, implement from `docs/BANK_FEED_GOCARDLESS_PLAN.md` and keep GoCardless secrets server-side only.
+1. Continue the App maintainability split by extracting `useMoneyHubData(userId)` from `App.jsx`.
+2. Later extract `useCoachSnapshot()` from `App.jsx`.
+3. If the user asks for live bank feeds, implement from `docs/BANK_FEED_GOCARDLESS_PLAN.md` and keep GoCardless secrets server-side only.
 
 ## Checks
 

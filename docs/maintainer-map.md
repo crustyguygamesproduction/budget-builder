@@ -13,8 +13,8 @@ Use this first when making changes so future work does not start by rereading th
 
 ## Pages
 
-- `src/pages/TodayPage.jsx` is the home/dashboard experience and should stay focused on concise, bank-app-style money reads.
-- `src/pages/UploadPage.jsx` owns CSV statement upload, account guessing, field mapping, import preview, and saving imported transactions.
+- `src/pages/HomePage.jsx` is the active home/dashboard experience and should stay focused on concise, bank-app-style money reads.
+- `src/pages/UploadPageSafe.jsx` is the active CSV statement upload page. It owns account guessing, field mapping, content validation, import preview, and saving imported transactions.
 - `src/pages/CoachPage.jsx` owns the AI chat UX and coach context handoff.
 - `src/pages/GoalsPage.jsx` owns goals and goal-linked recommendations.
 - `src/pages/ReceiptsPage.jsx` owns receipt upload, receipt/payment matching, and receipt AI extraction fallbacks.
@@ -40,7 +40,7 @@ Use this first when making changes so future work does not start by rereading th
 1. For UX copy/layout, start in the relevant `src/pages/*Page.jsx` file.
 2. For calculations shown in several places, start in `src/lib/finance.js` or `src/lib/statementIntelligence.js`.
 3. For AI coach visibility, update `src/lib/coachContext.js` before changing the chat UI.
-4. For upload/import behaviour, update `src/pages/UploadPage.jsx` and `src/lib/importAnalysis.js`.
+4. For upload/import behaviour, update `src/pages/UploadPageSafe.jsx`, `src/lib/security.js`, and `src/lib/importAnalysis.js`.
 5. Keep `src/App.jsx` as orchestration only. Avoid adding page UI back into it.
 
 ## Current Guardrail

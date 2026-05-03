@@ -22,7 +22,7 @@ npm run check
 `npm run check` currently runs:
 
 ```text
-npm run lint && npm run test:money && npm run test:organiser && npm run build
+npm run lint && npm run test:money && npm run test:organiser && npm run test:security && npm run build
 ```
 
 GitHub Actions CI exists at `.github/workflows/check.yml` and runs `npm ci` plus `npm run check` on pushes and PRs.
@@ -147,14 +147,13 @@ Original problem:
 
 Before commit `6f10eb8`, `buildCorsHeaders()` allowed any origin when `ALLOWED_ORIGINS` was empty.
 
-Implemented behaviour:
+Current behaviour:
 
-- Use the same fail-closed production pattern as `money-organiser` and `swift-worker`.
-- Add helpers like `isProductionRuntime()`, `isLocalOrigin()`, and `hasCorsConfigError()`.
-- If `ENVIRONMENT`, `DENO_ENV`, or `APP_ENV` is `production` or `prod`, and `ALLOWED_ORIGINS` is empty, return 500 before OPTIONS handling.
-- Include header `X-CORS-Config-Error: missing_allowed_origins`.
-- In non-production, if `ALLOWED_ORIGINS` is empty, allow local origins only.
-- Do not break local development.
+- Uses the same fail-closed production pattern as `money-organiser` and `swift-worker`.
+- Includes helpers like `isProductionRuntime()`, `isLocalOrigin()`, and `hasCorsConfigError()`.
+- If `ENVIRONMENT`, `DENO_ENV`, or `APP_ENV` is `production` or `prod`, and `ALLOWED_ORIGINS` is empty, it returns 500 before OPTIONS handling.
+- Includes header `X-CORS-Config-Error: missing_allowed_origins`.
+- In non-production, if `ALLOWED_ORIGINS` is empty, it allows local origins only.
 
 ### 2. Require auth and rate limiting for `ai-coach` market price mode
 
@@ -164,13 +163,13 @@ File: `supabase/functions/ai-coach/index.ts`
 
 Original problem:
 
-`mode === "market_price"` can currently fetch Yahoo Finance before auth/rate-limit checks.
+Before commit `6f10eb8`, `mode === "market_price"` could fetch Yahoo Finance before auth/rate-limit checks.
 
-Implemented behaviour:
+Current behaviour:
 
-- Require a valid authenticated user before fetching the quote.
-- Add `enforceAiUsage()` for `market_price`.
-- Suggested limits:
+- Requires a valid authenticated user before fetching the quote.
+- Calls `enforceAiUsage()` for `market_price`.
+- Limits:
   - 60 requests per hour
   - 200 requests per day
 - Keep the existing response shape.
@@ -185,14 +184,13 @@ Original problem:
 
 Before commit `6f10eb8`, `validateStatementCsvFileContent()` existed in `src/lib/security.js`, but the upload flow still called the older synchronous `validateStatementCsvFile()` before `Papa.parse()`.
 
-Implemented behaviour:
+Current behaviour:
 
-- Import `validateStatementCsvFileContent`.
-- Validate file content before `Papa.parse(file, ...)`.
-- Make the file handler async-safe.
-- Preserve date normalisation, duplicate detection, AI mapping fallback, preview UI and save behaviour.
-- Keep messages user-friendly.
-- Scope account `last_imported_at` update by both account ID and user ID.
+- Imports `validateStatementCsvFileContent`.
+- Validates file content before `Papa.parse(file, ...)`.
+- Handles unexpected validation errors with a friendly upload status and clears the file input in a `finally`.
+- Preserves date normalisation, duplicate detection, AI mapping fallback, preview UI and save behaviour.
+- Scopes account `last_imported_at` updates by both account ID and user ID.
 
 ### 4. Use content sniffing for debt and investment document uploads
 
@@ -207,21 +205,19 @@ Original problem:
 
 Before commit `6f10eb8`, these pages still used extension/MIME validation through `validateSensitiveFile()`.
 
-Implemented behaviour:
+Current behaviour:
 
-- Use `validateSensitiveFileContent()` on selection and immediately before upload.
-- Preserve current UX and error handling.
+- Uses `validateSensitiveFileContent()` on selection and immediately before upload.
+- Preserves current UX and error handling.
 
 ### 5. Add explicit user scoping to remaining sensitive writes
 
 Status: completed in commit `6f10eb8`.
 
-Known examples:
+Current behaviour:
 
-- `InvestmentsPage.jsx` live price update should update by `.eq("id", investment.id).eq("user_id", user.id)`.
-- `UploadPageSafe.jsx` account `last_imported_at` update should include `.eq("user_id", user.id)`.
-
-Add similar low-risk user scoping where the signed-in user ID is available and the write is user-owned.
+- `InvestmentsPage.jsx` live price updates use `.eq("id", investment.id).eq("user_id", user.id)`.
+- `UploadPageSafe.jsx` account `last_imported_at` updates include `.eq("user_id", user.id)`.
 
 ### 6. Fix Calendar monthly income wording/calculation clarity
 
@@ -242,13 +238,11 @@ Previous behaviour:
 - `earned` sums all positive non-internal-transfer transactions.
 - The UI labels that as `In`, which may include wages, reimbursements, refunds, transfers from other people, repayments, or pass-through money.
 
-Implemented improvement:
+Current behaviour:
 
-- Do not label this as simple income unless it is true income.
-- Either rename UI copy to `Money in` / `Inflow` and explain it is before spending, or split it into `Income` and `Other money in` using existing intelligence flags where available.
-- For the idiot-proof version, prefer clarity: `Money in` for gross inflow, `Spent`, and `Left after spending`, plus a note if this includes refunds/transfers.
-- Calendar should not imply the user earned more than they did.
-- Add a regression check or at least a small helper test if practical.
+- The bottom `Recent Months` / `This Month` section shows month label, days used, and net only.
+- It does not show gross `In` / `Out` copy in that bottom section.
+- Day-level drilldowns can still show in/out because that is about a selected day, not a monthly income claim.
 
 ## Medium-priority maintainability work
 
@@ -282,9 +276,9 @@ Later improvement: move freshness enforcement into `ai-coach` or pass a guarded 
 
 ### Old `UploadPage.jsx`
 
-`App.jsx` uses `UploadPageSafe`, not old `UploadPage.jsx`. The old file remains and can confuse audits.
+`App.jsx` uses `UploadPageSafe`, not old `UploadPage.jsx`.
 
-`UploadPageSafe` hardening is complete. A later cleanup can archive or delete old `UploadPage.jsx` if it is confirmed unused.
+`src/pages/UploadPage.jsx` was confirmed unused and removed in the cleanup pass after commit `6f10eb8`.
 
 ## Privacy note
 
@@ -308,13 +302,13 @@ Use a test account.
 - Upload a CSV with `13/02/2026`, confirm it imports.
 - Upload a CSV with `01/02/2026`, confirm it rejects as ambiguous.
 - Upload the same file twice, confirm duplicate handling works.
-- Upload a renamed binary as `.csv`, confirm it is rejected after content sniffing is wired.
+- Upload a renamed binary as `.csv`, confirm it is rejected.
 
 ### Receipts and documents
 
 - Upload a real PDF receipt.
 - Upload a fake PDF renamed from another file, confirm it is rejected.
-- Upload debt/investment documents after switching those pages to content sniffing.
+- Upload debt/investment documents and confirm fake renamed files are rejected.
 
 ### Coach
 
@@ -326,9 +320,9 @@ Use a test account.
 
 ### Calendar
 
-- Confirm Recent Months copy makes clear that `Money in`/`Inflow` is gross incoming money before spending.
-- Confirm it does not call all positive transactions `income` unless categorised as true income.
-- Confirm monthly net/left-after-spending matches inflow minus outflow.
+- Confirm bottom Recent Months shows only month label, days used, and net.
+- Confirm no `In` / `Out` copy appears in the bottom Recent Months rows.
+- Confirm selected day drilldown still shows day-level transaction detail.
 
 ### Deletion audit
 

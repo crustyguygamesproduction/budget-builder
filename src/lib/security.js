@@ -18,9 +18,20 @@ const SENSITIVE_MAGIC_BYTES = {
   jpeg: [[0xff, 0xd8, 0xff]],
   png: [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
   webp: [[0x52, 0x49, 0x46, 0x46]],
-  heic: [[0x00, 0x00, 0x00]],
-  heif: [[0x00, 0x00, 0x00]],
 };
+
+const HEIF_COMPATIBLE_BRANDS = new Set([
+  "heic",
+  "heix",
+  "hevc",
+  "hevx",
+  "heim",
+  "heis",
+  "hevm",
+  "hevs",
+  "mif1",
+  "msf1",
+]);
 
 export function sanitizeStorageFileName(fileName) {
   const rawName = String(fileName || "upload").trim().toLowerCase();
@@ -201,7 +212,7 @@ async function readFileHead(file, length) {
 
 function matchesSensitiveMagicBytes(bytes, extension) {
   if (extension === "heic" || extension === "heif") {
-    return bytes.length >= 12 && decodeAscii(bytes.slice(4, 12)).startsWith("ftyphei");
+    return hasHeifBrand(bytes);
   }
 
   if (extension === "webp") {
@@ -210,6 +221,17 @@ function matchesSensitiveMagicBytes(bytes, extension) {
 
   const signatures = SENSITIVE_MAGIC_BYTES[extension] || [];
   return signatures.some((signature) => signature.every((value, index) => bytes[index] === value));
+}
+
+function hasHeifBrand(bytes) {
+  if (bytes.length < 16 || decodeAscii(bytes.slice(4, 8)) !== "ftyp") return false;
+
+  for (let index = 8; index + 4 <= bytes.length; index += 4) {
+    const brand = decodeAscii(bytes.slice(index, index + 4)).toLowerCase();
+    if (HEIF_COMPATIBLE_BRANDS.has(brand)) return true;
+  }
+
+  return false;
 }
 
 function hasBinarySignature(bytes) {
