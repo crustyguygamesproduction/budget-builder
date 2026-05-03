@@ -352,6 +352,27 @@ function amounts(items) {
 
   assert.equal(appModel.monthlyScheduledOutgoingsTotal, 1450);
   assert.equal(appModel.sharedBillContributions.confirmed.length, 0);
+  assert.ok(appModel.checksWaiting.some((check) => check.sharedContribution));
+  assert.equal(appModel.income.monthlyEstimate, 0);
+}
+
+{
+  const understanding = buildMoneyUnderstanding({
+    transactions: [
+      tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+      tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Faster payment from Jake", 725, "2026-02-16"),
+      tx("Faster payment from Jake", 725, "2026-03-07"),
+      tx("Faster payment from Jake", 725, "2026-04-24"),
+    ],
+  });
+  const appModel = buildAppMoneyModel({ moneyUnderstanding: understanding });
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 1450);
+  assert.equal(appModel.sharedBillContributions.confirmed.length, 0);
+  assert.ok(appModel.checksWaiting.some((check) => check.sharedContribution));
+  assert.equal(appModel.income.monthlyEstimate, 0);
 }
 
 {

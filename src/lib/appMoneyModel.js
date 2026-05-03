@@ -307,7 +307,7 @@ function getSharedBillContributions({ transactions = [], calendarBills = [] }) {
 
   const candidates = [...groups.values()].map((group) => {
     const monthlyAmount = usualAmount(group.amounts);
-    const day = likelyDay(group.dates);
+    const day = likelyContributionDay(group.dates);
     const match = getBestContributionBillMatch({ monthlyAmount, day, calendarBills });
     const confidence = getContributionConfidence({ group, match });
     return {
@@ -431,6 +431,7 @@ function getContributionConfidence({ group, match }) {
   if (group.hasSharedBillText && closeHalf && nearBillDay) return "high";
   if (enoughHistory && closeHalf && nearBillDay) return "high";
   if (enoughHistory && likelyHalfWithSmallBillsTopUp && nearBillDay) return "high";
+  if (enoughHistory && (closeHalf || likelyHalfWithSmallBillsTopUp) && match.score >= 0.3) return "needs_checking";
   if (enoughHistory && closeHalf && match.score >= 0.55) return "medium";
   if (closeHalf && nearBillDay) return "needs_checking";
   if (enoughHistory && match.score >= 0.4) return "needs_checking";
@@ -467,6 +468,15 @@ function buildSharedContributionChecks(candidates = []) {
 function dayDistance(a, b) {
   const direct = Math.abs(Number(a || 1) - Number(b || 1));
   return Math.min(direct, 31 - direct);
+}
+
+function likelyContributionDay(dates = []) {
+  const days = dates.map((date) => date.getDate()).filter(Boolean).sort((a, b) => a - b);
+  if (!days.length) return 1;
+  const counts = days.reduce((map, day) => map.set(day, (map.get(day) || 0) + 1), new Map());
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  if (ranked[0]?.[1] > 1) return ranked[0][0];
+  return days[Math.floor(days.length / 2)];
 }
 
 function cleanContributionName(transaction) {
@@ -654,13 +664,6 @@ function cleanIncomeName(transaction) {
     .replace(/\s+/g, " ")
     .trim();
   return provider ? provider.split(" ").slice(0, 4).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") : "Income";
-}
-
-function likelyDay(dates = []) {
-  const days = dates.map((date) => date.getDate()).filter(Boolean);
-  if (!days.length) return 1;
-  const counts = days.reduce((map, day) => map.set(day, (map.get(day) || 0) + 1), new Map());
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
 }
 
 function usualAmount(values = []) {
