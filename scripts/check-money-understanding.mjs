@@ -272,5 +272,30 @@ function amounts(items) {
   assert.ok(context.queryFocus.direct_match_note.includes("latest 30 days of uploaded data"));
 }
 
+{
+  const context = getStatementIntelligenceContext(
+    [
+      tx("Faster payment from Alice", 40, "2026-02-05"),
+      tx("Payment from Mum", 25, "2026-03-10"),
+      tx("Transfer from Jake", 15, "2026-04-20"),
+      tx("Payroll wages", 500, "2026-04-25", { category: "Wages" }),
+      tx("Refund from Amazon", 99, "2026-04-26", { category: "Refund" }),
+      tx("Rent to landlord", -700, "2026-04-01", { category: "Rent", is_bill: true }),
+      tx("Card purchase Tesco", -30, "2026-04-26"),
+      tx("Latest transaction", -1, "2026-04-29"),
+    ],
+    "How much have my family and friends sent me over the last few months?"
+  );
+
+  assert.equal(context.queryFocus.broad_personal_lookup, true);
+  assert.equal(context.queryFocus.direction_intent, "incoming");
+  assert.equal(context.queryFocus.time_window.matched, true);
+  assert.equal(context.queryFocus.time_window.start, "2026-01-29");
+  assert.equal(context.queryFocus.time_window.end, "2026-04-29");
+  assert.equal(context.queryFocus.relevant_match_count, 3);
+  assert.equal(context.queryFocus.relevant_money_total, 80);
+  assert.ok(context.queryFocus.direct_match_note.includes("personal payments"));
+}
+
 await server.close();
 console.log("money understanding checks passed");

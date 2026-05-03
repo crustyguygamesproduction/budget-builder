@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
-import { buildCoachQueryFocus } from "../_shared/coachQueryFocus.js";
+import {
+  buildCoachQueryFocus,
+  isLikelyPersonalTransfer,
+} from "../_shared/coachQueryFocus.js";
 
 class PublicFunctionError extends Error {
   status: number;
@@ -396,8 +399,15 @@ function buildCoachRequestBody(message: string, promptContext: Record<string, un
 function buildDeterministicLookupReply(message: string, promptContext: Record<string, unknown>) {
   if (!isCompactLookup(message)) return null;
   const queryFocus = promptContext?.query_focus as any;
-  if (!queryFocus || !Array.isArray(queryFocus.search_terms) || !queryFocus.search_terms.length) return null;
-  if (!queryFocus.direct_match_count && !queryFocus.relevant_match_count) return null;
+  if (!queryFocus || !Array.isArray(queryFocus.search_terms)) return null;
+  if (!queryFocus.search_terms.length && !queryFocus.broad_personal_lookup) return null;
+  if (!queryFocus.direct_match_count && !queryFocus.relevant_match_count) {
+    if (!queryFocus.broad_personal_lookup) return null;
+    const windowText = queryFocus.time_window?.matched
+      ? ` in ${queryFocus.time_window.label}`
+      : "";
+    return `I can't confidently spot friends/family transfers${windowText} from the labels alone. Give me a couple of names to search, or check the personal transfer suggestions in Checks.`;
+  }
 
   const amount = Number(
     queryFocus.direction_intent === "incoming"
@@ -408,9 +418,11 @@ function buildDeterministicLookupReply(message: string, promptContext: Record<st
   );
   if (!Number.isFinite(amount)) return null;
 
-  const target = queryFocus.search_terms
-    .map((term: string) => term.charAt(0).toUpperCase() + term.slice(1))
-    .join(" ");
+  const target = queryFocus.broad_personal_lookup
+    ? "people who look like friends/family"
+    : queryFocus.search_terms
+        .map((term: string) => term.charAt(0).toUpperCase() + term.slice(1))
+        .join(" ");
   const verb =
     queryFocus.direction_intent === "incoming"
       ? "received from"
@@ -421,7 +433,11 @@ function buildDeterministicLookupReply(message: string, promptContext: Record<st
     ? ` in ${queryFocus.time_window.label}`
     : "";
 
-  return `Total: ${formatGbp(Math.abs(amount))} ${verb} ${target}${windowText}.`;
+  const caveat = queryFocus.broad_personal_lookup
+    ? ` This is Money Hub's best read from ${queryFocus.relevant_match_count || queryFocus.direct_match_count} personal-looking transfers; confirm any missing names in Checks.`
+    : "";
+
+  return `Total: ${formatGbp(Math.abs(amount))} ${verb} ${target}${windowText}.${caveat}`;
 }
 
 function formatGbp(value: number) {
@@ -470,6 +486,7 @@ function buildServerQueryFocus(savedContext: any, message: string) {
     ].join(" "),
     getGroupLabel: (transaction: any) => transaction.name || transaction.description || transaction.merchant || "Transaction",
     mapTransaction: (transaction: any) => compactTransactions([transaction])[0],
+    relevantFilter: (transaction: any) => isLikelyPersonalTransfer(transaction),
     exampleLimit: 80,
     groupLimit: 12,
     noteSuffix: "Use query_focus totals before merchant_totals for this answer.",

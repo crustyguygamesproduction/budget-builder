@@ -18,6 +18,9 @@ const DEFAULT_STOP_WORDS = new Set([
   "into",
   "last",
   "latest",
+  "like",
+  "look",
+  "looks",
   "me",
   "money",
   "month",
@@ -27,6 +30,9 @@ const DEFAULT_STOP_WORDS = new Set([
   "over",
   "paid",
   "past",
+  "people",
+  "person",
+  "personal",
   "pay",
   "payment",
   "payments",
@@ -38,6 +44,7 @@ const DEFAULT_STOP_WORDS = new Set([
   "spent",
   "the",
   "them",
+  "that",
   "this",
   "to",
   "total",
@@ -68,12 +75,13 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
   const terms = getSearchTerms(query, options.stopWords, parsedQuery);
   const directionIntent = parsedQuery.directionIntent || getQueryDirectionIntent(query);
   const personalMoneyIntent = hasPersonalMoneyIntent(query) || parsedQuery.personalMoneyIntent;
+  const broadPersonalLookup = personalMoneyIntent && isBroadPersonalSearchPhrase(parsedQuery.searchPhrase, query);
   const timeWindow = getQueryTimeWindow(transactions, query, { getDate, anchorDate: options.anchorDate || options.latestTransactionDate });
   const scopedTransactions = timeWindow.matched
     ? transactions.filter((transaction) => isTransactionInTimeWindow(transaction, timeWindow, getDate))
     : transactions;
 
-  if (terms.length === 0 && !parsedQuery.searchPhrase) {
+  if (terms.length === 0 && !parsedQuery.searchPhrase && !broadPersonalLookup) {
     return {
       original_query: query,
       search_terms: terms,
@@ -98,24 +106,30 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
     };
   }
 
-  const matches = scopedTransactions
-    .map((transaction, index) => ({
-      transaction,
-      score: scoreTransactionForTerms(transaction, terms, getSearchText, parsedQuery.searchPhrase),
-      index,
-    }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => {
-      const byScore = b.score - a.score;
-      if (byScore) return byScore;
-      const byDate = String(getDate(b.transaction) || "").localeCompare(String(getDate(a.transaction) || ""));
-      return byDate || a.index - b.index;
-    })
-    .map((item) => item.transaction);
-  const directionMatches = filterByDirectionIntent(matches, directionIntent, getAmount);
-  const relevantMatches = personalMoneyIntent
-    ? directionMatches.filter((transaction) => relevantFilter(transaction, { timeWindow, scopedTransactions }))
-    : directionMatches;
+  const matchedTransactions = broadPersonalLookup
+    ? filterByDirectionIntent(scopedTransactions, directionIntent, getAmount)
+        .filter((transaction) => relevantFilter(transaction, { timeWindow, scopedTransactions }))
+    : scopedTransactions
+        .map((transaction, index) => ({
+          transaction,
+          score: scoreTransactionForTerms(transaction, terms, getSearchText, parsedQuery.searchPhrase),
+          index,
+        }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => {
+          const byScore = b.score - a.score;
+          if (byScore) return byScore;
+          const byDate = String(getDate(b.transaction) || "").localeCompare(String(getDate(a.transaction) || ""));
+          return byDate || a.index - b.index;
+        })
+        .map((item) => item.transaction);
+  const matches = matchedTransactions;
+  const directionMatches = broadPersonalLookup ? matches : filterByDirectionIntent(matches, directionIntent, getAmount);
+  const relevantMatches = broadPersonalLookup
+    ? matches
+    : personalMoneyIntent
+      ? directionMatches.filter((transaction) => relevantFilter(transaction, { timeWindow, scopedTransactions }))
+      : directionMatches;
   const moneyIn = matches
     .filter((transaction) => getAmount(transaction) > 0)
     .reduce((sum, transaction) => sum + getAmount(transaction), 0);
@@ -128,6 +142,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
     original_query: query,
     search_terms: terms,
     search_phrase: parsedQuery.searchPhrase,
+    broad_personal_lookup: broadPersonalLookup,
     direction_intent: directionIntent,
     personal_money_intent: personalMoneyIntent,
     time_window: timeWindow,
@@ -149,6 +164,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
       personalMoneyIntent,
       timeWindow,
       searchPhrase: parsedQuery.searchPhrase,
+      broadPersonalLookup,
       noteSuffix: options.noteSuffix,
     }),
   };
@@ -185,9 +201,13 @@ export function getQueryTimeWindow(transactions = [], query = "", options = {}) 
     };
   }
 
-  if (/\b(latest|last|past)\s+90\s+days?\b/.test(text) || /\bover\s+the\s+last\s+90\s+days?\b/.test(text)) {
+  if (
+    /\b(latest|last|past)\s+90\s+days?\b/.test(text) ||
+    /\bover\s+the\s+last\s+90\s+days?\b/.test(text) ||
+    /\b(over\s+the\s+)?(last|past|latest)\s+(few|couple|several)\s+months?\b/.test(text)
+  ) {
     return {
-      label: "latest 90 days of uploaded data",
+      label: "latest few months of uploaded data",
       start: toIsoDate(addDays(anchor, -90)),
       end: toIsoDate(anchor),
       matched: true,
@@ -279,6 +299,33 @@ export function roundMoney(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
+export function isLikelyPersonalTransfer(transaction, options = {}) {
+  if (transaction?.is_internal_transfer || transaction?._smart_internal_transfer) return false;
+  if (transaction?.is_bill || transaction?.is_subscription || transaction?._smart_is_bill || transaction?._smart_is_subscription) return false;
+
+  const text = normalizeText(
+    options.getSearchText
+      ? options.getSearchText(transaction)
+      : [
+          transaction?.description,
+          transaction?.name,
+          transaction?.merchant,
+          transaction?.category,
+          transaction?.account,
+        ].join(" ")
+  );
+
+  if (!text) return false;
+  if (/\b(salary|wages|payroll|employer|work|expenses?|reimburse|reimbursement|refund|hmrc|dwp|universal credit|benefit|interest|cashback|reward|paypal|stripe|sumup|trading 212|trading212|clearpay|proovia|mynextbike|nextbike|ltd|limited|plc|llp)\b/.test(text)) {
+    return false;
+  }
+  if (/\b(rent|landlord|mortgage|council tax|energy|electric|gas|water|broadband|internet|insurance|subscription|direct debit|standing order)\b/.test(text)) {
+    return false;
+  }
+
+  return /\b(faster payment|fpi|bank transfer|transfer|payment from|payment to|from | to |mobile payment|online payment|credit)\b/.test(text);
+}
+
 function parseMoneyLookupQuery(query) {
   const text = stripLookupNoise(query);
   const directionIntent = getQueryDirectionIntent(query);
@@ -346,11 +393,37 @@ function firstCapture(text, patterns) {
 function cleanupSearchPhrase(value) {
   const phrase = normalizeText(value)
     .replace(/\b(did|does|do|has|have|was|were|i|me|my|you|your|send|sent|pay|paid|transfer|transferred|give|gave|spend|spent|spending|received|from|to|on|at|with|over|last|latest|past|days|day|month|data|uploaded|money|total|how|much)\b/g, " ")
+    .replace(/\b(few|couple|several|months)\b/g, " ")
     .replace(/\b\d+\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   return phrase;
+}
+
+function isBroadPersonalSearchPhrase(searchPhrase, query) {
+  const phrase = normalizeText(searchPhrase || query);
+  if (!phrase) return false;
+  const words = phrase.split(" ").filter(Boolean);
+  if (!words.length) return false;
+  const broadWords = new Set([
+    "family",
+    "friend",
+    "friends",
+    "people",
+    "person",
+    "mate",
+    "mates",
+    "mum",
+    "mother",
+    "dad",
+    "father",
+    "brother",
+    "sister",
+    "parents",
+    "relatives",
+  ]);
+  return words.every((word) => broadWords.has(word) || word === "and");
 }
 
 function filterByDirectionIntent(transactions, directionIntent, getAmount) {
@@ -383,7 +456,7 @@ function getRelevantMoneyLabel(directionIntent) {
   return "all_matching_money_absolute";
 }
 
-function buildQueryFocusNote({ matches, relevantMatches, directionIntent, personalMoneyIntent, timeWindow, searchPhrase, noteSuffix }) {
+function buildQueryFocusNote({ matches, relevantMatches, directionIntent, personalMoneyIntent, timeWindow, searchPhrase, broadPersonalLookup, noteSuffix }) {
   const directionText =
     directionIntent === "incoming"
       ? "incoming money only because the question asks about money sent to/received by the user"
@@ -395,7 +468,11 @@ function buildQueryFocusNote({ matches, relevantMatches, directionIntent, person
   const personalText = personalMoneyIntent
     ? " Rent, bills, subscriptions, business/work payments, pass-through flows and payees with rent/bill-tagged transactions have been excluded from relevant personal-payment matches."
     : "";
-  const phraseText = searchPhrase ? ` Search phrase interpreted as '${searchPhrase}'.` : "";
+  const phraseText = broadPersonalLookup
+    ? " Broad friends/family wording was interpreted as inferred personal payments, not literal merchant text."
+    : searchPhrase
+      ? ` Search phrase interpreted as '${searchPhrase}'.`
+      : "";
   const capText =
     matches.length > relevantMatches.length || matches.length > 120 || relevantMatches.length > 120
       ? ` Showing example transactions, but totals use all direct matches${timeWindow?.matched ? ` inside ${timeWindow.label} (${timeWindow.start} to ${timeWindow.end})` : " across full uploaded history"}.`

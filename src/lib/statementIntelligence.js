@@ -1,4 +1,7 @@
-import { buildCoachQueryFocus } from "../../supabase/functions/_shared/coachQueryFocus.js";
+import {
+  buildCoachQueryFocus,
+  isLikelyPersonalTransfer,
+} from "../../supabase/functions/_shared/coachQueryFocus.js";
 
 export function getStatementIntelligenceContext(transactions, query = "") {
   const settled = transactions.filter((transaction) => !isInternalTransferLike(transaction));
@@ -92,7 +95,18 @@ function getQueryFocus(transactions, query) {
     ].join(" "),
     getGroupLabel: (transaction) => cleanEventTitle(transaction.description || "Transaction"),
     mapTransaction: toCoachTransaction,
-    relevantFilter: (transaction) => isCleanPersonalPayment(transaction, rentBillLikePersonalLabels),
+    relevantFilter: (transaction) =>
+      isLikelyPersonalTransfer(transaction, {
+        getSearchText: (item) => [
+          item.description,
+          item.merchant,
+          item.category,
+          getMeaningfulCategory(item),
+          item.accounts?.name,
+          item.account_name,
+          item.account,
+        ].join(" "),
+      }) && isCleanPersonalPayment(transaction, rentBillLikePersonalLabels),
     emptyNote:
       "No specific search terms were found in the question. Use the appropriate all-history summary groups instead, especially incoming_personal_payment_groups or outgoing_personal_payment_groups for personal money questions.",
   });
