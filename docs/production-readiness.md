@@ -25,6 +25,8 @@
   - `profiles`
   - `subscription_profiles`
   - `bank_connections`
+  - `bank_connection_accounts`
+  - `bank_sync_runs`
   - `transaction_rules`
 - Edge Functions write server-side operational tables such as:
   - `ai_usage_events`
@@ -51,6 +53,7 @@
 - Keep Plaid, TrueLayer, and Yapily as fallbacks if coverage, support, or commercial terms become better for production volumes.
 - Store provider tokens only in a trusted backend or Supabase Edge Function secret store. The browser should only see connection status, institution labels, consent expiry, and sync timestamps.
 - `bank_connections` is prepared for provider status, institution metadata, consent expiry, and last sync.
+- `bank_connection_accounts` and `bank_sync_runs` are prepared for provider account mapping and sync audit history. No GoCardless API calls or UI connection flow are implemented yet.
 - A future `bank-sync` Edge Function should:
   - create provider requisitions/link URLs,
   - exchange consent callbacks,

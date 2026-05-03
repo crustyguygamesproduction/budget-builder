@@ -786,15 +786,6 @@ Deno.serve(async (req) => {
     const { body: requestBody, bytes: requestBytes } = await readJsonBody(req, 4_500_000);
     const { mode = "coach", message, context = {} } = requestBody;
     modeForLogs = String(mode || "coach");
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
-
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: "AI service is not configured." }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     if (mode === "market_price") {
       assertTextLimit(message, 80, "ticker");
       await enforceAiUsage(req, {
@@ -812,6 +803,15 @@ Deno.serve(async (req) => {
       const symbol = assetType === "crypto" && !rawSymbol.includes("-") ? `${rawSymbol.toUpperCase()}-USD` : rawSymbol;
       const quote = await getYahooPrice(symbol);
       return new Response(JSON.stringify({ ...quote, mode }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
+
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: "AI service is not configured." }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     if (mode === "extract_debt" || mode === "extract_investment" || mode === "extract_debt_document" || mode === "extract_investment_document") {

@@ -29,6 +29,10 @@ Completed in that pass:
 - Supabase `ai-coach` function was deployed.
 - The inactive old `src/pages/UploadPage.jsx` was removed after confirming `App.jsx` imports `UploadPageSafe`.
 - Security validation regression checks were added for CSV/PDF sniffing and HEIC/HEIF brand checks.
+- `useMoneyHubData(userId)` now owns user-owned Supabase data loading and refresh orchestration.
+- `ai-coach` market price lookup no longer depends on `OPENAI_API_KEY`; OpenAI-backed modes still do.
+- `ai-coach` was redeployed after that Edge Function change.
+- Bank-feed database groundwork was added in `202605030004_bank_feed_groundwork.sql`, but no GoCardless API/UI flow has been built.
 
 ## Non-negotiables
 
@@ -44,8 +48,8 @@ Do not redo the completed hardening pass unless a new bug is found.
 
 Good next candidates:
 
-1. Continue the App maintainability split by extracting `useMoneyHubData(userId)` from `App.jsx`.
-2. Later extract `useCoachSnapshot()` from `App.jsx`.
+1. Continue the App maintainability split by extracting `useCoachSnapshot()` from `App.jsx`.
+2. Push the bank-feed groundwork migration if it has not already been applied: `npx supabase db push`.
 3. If the user asks for live bank feeds, implement from `docs/BANK_FEED_GOCARDLESS_PLAN.md` and keep GoCardless secrets server-side only.
 
 ## Checks

@@ -29,7 +29,7 @@ GitHub Actions CI exists at `.github/workflows/check.yml` and runs `npm ci` plus
 
 ## Current database state and migrations
 
-Supabase migrations have been pushed after the migration version cleanup. Migration filenames have unique versions now.
+Supabase migrations were pushed after the migration version cleanup. Migration filenames have unique versions now.
 
 Important recent migrations:
 
@@ -42,6 +42,11 @@ Important recent migrations:
   - adds `status` and `error_code` to `data_deletion_events`
 - `202605030003_deletion_audit_update_policy.sql`
   - allows users to update their own deletion audit rows, so audit events can move from `started` to `completed` or `failed`
+- `202605030004_bank_feed_groundwork.sql`
+  - adds GoCardless-ready provider account mapping and sync run audit tables
+  - adds provider transaction columns and a provider transaction unique index
+  - does not add client secrets, provider API calls, or bank-feed UI
+  - newly added in this pass; run `npx supabase db push` before relying on these tables/columns
 
 If new migrations are added, run:
 
@@ -171,6 +176,7 @@ Current behaviour:
 
 - Requires a valid authenticated user before fetching the quote.
 - Calls `enforceAiUsage()` for `market_price`.
+- Does not require `OPENAI_API_KEY` for Yahoo market price lookup.
 - Limits:
   - 60 requests per hour
   - 200 requests per day
@@ -256,11 +262,15 @@ These are important but should not be mixed into the same large security patch u
 
 `src/hooks/useViewport.js` exists and is now wired into `App.jsx`.
 
+`src/hooks/useMoneyHubData.js` now owns user-owned Supabase data state, loaders, and refresh orchestration. `App.jsx` keeps auth/session setup, routing, page composition, shared money model construction, and Coach snapshot saving.
+
+`ai-coach` was redeployed after the market-price/OpenAI-key cleanup.
+
 Recommended order:
 
-1. extract `useMoneyHubData(userId)`
-2. extract `useCoachSnapshot()`
-3. keep page composition in `App.jsx`
+1. extract `useCoachSnapshot()`
+2. keep page composition in `App.jsx`
+3. later move Coach context generation server-side as a separate architecture project
 
 Do not combine the larger data-loader extraction with production hardening unless specifically asked.
 

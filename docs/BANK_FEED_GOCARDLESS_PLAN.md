@@ -35,6 +35,8 @@ Already present:
 
 - `src/lib/bankFeeds.js` names GoCardless as the first provider and models ready/active/reconsent states.
 - `public.bank_connections` exists from `20260430_live_readiness.sql`.
+- `public.bank_connection_accounts` and `public.bank_sync_runs` are planned/applied via `202605030004_bank_feed_groundwork.sql`.
+- `public.transactions` has planned/applied provider columns via `202605030004_bank_feed_groundwork.sql`.
 - `App.jsx` selects bank connections for the signed-in user.
 - Premium copy already treats live bank feeds as a Premium feature.
 
@@ -43,7 +45,6 @@ Not yet built:
 - bank institution picker
 - provider redirect/link creation
 - open-banking callback page
-- provider account mapping
 - transaction sync worker
 - balance sync worker
 - reconsent flow
@@ -335,7 +336,7 @@ Do not build bank feeds until the user explicitly asks for live bank feed implem
 
 Then implement in this order:
 
-1. Add database migration for provider account mapping, sync runs, and transaction provider columns.
+1. Apply database migration `202605030004_bank_feed_groundwork.sql` for provider account mapping, sync runs, and transaction provider columns.
 2. Add shared provider client in `supabase/functions/_shared/gocardlessBankData.ts`.
 3. Add `bank-feed-institutions`.
 4. Add `bank-feed-create-link`.

@@ -72,6 +72,8 @@ Current limits:
 
 Small remaining improvement: move the `OPENAI_API_KEY` requirement below the `market_price` branch, because Yahoo price lookup does not use OpenAI. Keep auth/rate-limit before Yahoo fetch.
 
+Status update: completed. `market_price` now runs auth/rate-limit and Yahoo lookup before the `OPENAI_API_KEY` requirement. OpenAI-backed modes still require the key before calling OpenAI.
+
 ### CSV and document content sniffing
 
 Completed:
@@ -140,9 +142,7 @@ Known doc cleanup done:
 - `vercel.json` is documented
 - historical issue file is marked historical
 
-One stale doc was found during this audit:
-
-- `docs/next-refactor-plan.md` still referenced extracting helper functions from `App.jsx` that are no longer in `App.jsx`. It should say the next structural step is `useMoneyHubData(userId)`, not helper extraction.
+`docs/next-refactor-plan.md` has been refreshed. `useMoneyHubData(userId)` has been extracted, so the next structural step is `useCoachSnapshot()`.
 
 ## Highest-value next work
 
@@ -186,13 +186,24 @@ Best low-token task:
 
 This is small, low-risk, and meaningful.
 
-### 3. Next maintainability task when tokens are available
+### 3. Maintainability status
 
-Extract `useMoneyHubData(userId)` from `App.jsx`.
+`useMoneyHubData(userId)` has been extracted from `App.jsx`.
 
-Keep this separate from any product or bank-feed work. The goal is to move Supabase data state/loaders/refresh methods out of `App.jsx` while preserving all user scoping and refresh behaviour.
+`App.jsx` still owns page composition, auth/session setup, shared money model construction, and Coach snapshot saving. The next safe extraction is `useCoachSnapshot()`.
 
-### 4. Later architecture target
+### 4. Bank feed groundwork status
+
+Added `202605030004_bank_feed_groundwork.sql` with:
+
+- `bank_connection_accounts`
+- `bank_sync_runs`
+- provider transaction columns on `transactions`
+- provider transaction unique index
+
+No GoCardless API calls, client secrets, connection UI, or sync worker were added. The migration still needs to be pushed with `npx supabase db push`.
+
+### 5. Later architecture target
 
 Move Coach context generation server-side.
 

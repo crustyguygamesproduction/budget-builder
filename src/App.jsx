@@ -11,6 +11,7 @@ import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
 import { buildAppMoneyModel } from "./lib/appMoneyModel";
 import { buildCoachContext } from "./lib/coachContext";
 import { useViewport } from "./hooks/useViewport";
+import { useMoneyHubData } from "./hooks/useMoneyHubData";
 import {
   getDataFreshness,
   getSubscriptionSummary,
@@ -80,26 +81,41 @@ export default function App() {
   const [page, setPage] = useState("today");
   const [returnTarget, setReturnTarget] = useState(null);
 
-  const [transactions, setTransactions] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  const [goals, setGoals] = useState([]);
-  const [receipts, setReceipts] = useState([]);
-  const [aiMessages, setAiMessages] = useState([]);
-  const [debts, setDebts] = useState([]);
-  const [investments, setInvestments] = useState([]);
-  const [statementImports, setStatementImports] = useState([]);
-  const [viewerAccess, setViewerAccess] = useState([]);
-  const [financialDocuments, setFinancialDocuments] = useState([]);
-  const [subscriptionProfile, setSubscriptionProfile] = useState(null);
-  const [bankConnections, setBankConnections] = useState([]);
-  const [transactionRules, setTransactionRules] = useState([]);
-  const [moneySnapshot, setMoneySnapshot] = useState(null);
   const [viewerMode, setViewerMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("moneyhub-viewer-preview") === "true";
   });
 
   const { screenWidth, viewportHeight } = useViewport();
+  const userId = getSignedInUserId(session);
+  const {
+    transactions,
+    accounts,
+    goals,
+    receipts,
+    aiMessages,
+    debts,
+    investments,
+    statementImports,
+    viewerAccess,
+    financialDocuments,
+    subscriptionProfile,
+    bankConnections,
+    transactionRules,
+    moneySnapshot,
+    loadAllData,
+    loadAccounts,
+    loadGoals,
+    loadReceipts,
+    loadAiMessages,
+    loadDebts,
+    loadInvestments,
+    loadViewerAccess,
+    loadFinancialDocuments,
+    loadTransactionRules,
+    refreshMoneyOrganiser,
+    refreshMoneyUnderstandingAfterCorrection,
+  } = useMoneyHubData(userId);
 
   useEffect(() => {
     async function init() {
@@ -120,310 +136,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const userId = getSignedInUserId(session);
-    if (userId) {
-      loadAllData(userId);
-    } else {
-      resetUserData();
-    }
-    // loadAllData reads the current Supabase client and resets via local setters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id]);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem("moneyhub-viewer-preview", viewerMode ? "true" : "false");
   }, [viewerMode]);
-
-  function resetUserData() {
-    setTransactions([]);
-    setAccounts([]);
-    setGoals([]);
-    setReceipts([]);
-    setAiMessages([]);
-    setDebts([]);
-    setInvestments([]);
-    setStatementImports([]);
-    setViewerAccess([]);
-    setFinancialDocuments([]);
-    setSubscriptionProfile(null);
-    setBankConnections([]);
-    setTransactionRules([]);
-    setMoneySnapshot(null);
-  }
-
-  function resolveUserId(userId = getSignedInUserId(session)) {
-    return userId || null;
-  }
-
-  async function loadAllData(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      resetUserData();
-      return;
-    }
-
-    await Promise.all([
-      loadTransactions(scopedUserId),
-      loadAccounts(scopedUserId),
-      loadGoals(scopedUserId),
-      loadReceipts(scopedUserId),
-      loadAiMessages(scopedUserId),
-      loadDebts(scopedUserId),
-      loadInvestments(scopedUserId),
-      loadStatementImports(scopedUserId),
-      loadViewerAccess(scopedUserId),
-      loadFinancialDocuments(scopedUserId),
-      loadSubscriptionProfile(scopedUserId),
-      loadBankConnections(scopedUserId),
-      loadTransactionRules(scopedUserId),
-      loadMoneySnapshot(scopedUserId),
-    ]);
-  }
-
-  async function refreshMoneyOrganiser(options = {}) {
-    try {
-      const { data, error } = await supabase.functions.invoke("money-organiser", {
-        body: { force: Boolean(options.force) },
-      });
-      if (error) throw error;
-      if (data?.snapshot) setMoneySnapshot(data.snapshot);
-      return data?.snapshot || null;
-    } catch (error) {
-      console.warn("Money organiser could not run", error);
-      return null;
-    }
-  }
-
-  async function refreshMoneyUnderstandingAfterCorrection() {
-    const userId = resolveUserId();
-    if (!userId) return;
-
-    await loadTransactionRules(userId);
-    await loadTransactions(userId);
-    await refreshMoneyOrganiser({ force: true });
-    await loadMoneySnapshot(userId);
-  }
-
-  async function loadMoneySnapshot(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setMoneySnapshot(null);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("money_understanding_snapshots")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .eq("model_version", "money-organiser-ai-v1")
-      .order("interpreted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      setMoneySnapshot(null);
-      return;
-    }
-    setMoneySnapshot(data || null);
-  }
-
-  async function loadTransactions(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setTransactions([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("transactions")
-      .select("*, accounts(name, institution)")
-      .eq("user_id", scopedUserId)
-      .order("transaction_date", { ascending: false });
-
-    if (!error) setTransactions(data || []);
-  }
-
-  async function loadAccounts(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setAccounts([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("accounts")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: true });
-
-    if (!error) setAccounts(data || []);
-  }
-
-  async function loadGoals(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setGoals([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("money_goals")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("priority", { ascending: true });
-    if (!error) setGoals(data || []);
-  }
-
-  async function loadReceipts(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setReceipts([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("receipts")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    if (!error) setReceipts(data || []);
-  }
-
-  async function loadAiMessages(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setAiMessages([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("ai_messages")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: true });
-    if (!error) setAiMessages(data || []);
-  }
-
-  async function loadDebts(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setDebts([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("debts")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    if (!error) setDebts(data || []);
-  }
-
-  async function loadInvestments(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setInvestments([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("investments")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    if (!error) setInvestments(data || []);
-  }
-
-  async function loadStatementImports(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setStatementImports([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("statement_imports")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    if (!error) setStatementImports(data || []);
-  }
-
-  async function loadViewerAccess(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setViewerAccess([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("viewer_access")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    setViewerAccess(error ? [] : data || []);
-  }
-
-  async function loadFinancialDocuments(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setFinancialDocuments([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("financial_documents")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    setFinancialDocuments(error ? [] : data || []);
-  }
-
-  async function loadSubscriptionProfile(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setSubscriptionProfile(null);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("subscription_profiles")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .maybeSingle();
-    setSubscriptionProfile(error ? null : data || null);
-  }
-
-  async function loadBankConnections(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setBankConnections([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("bank_connections")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    setBankConnections(error ? [] : data || []);
-  }
-
-  async function loadTransactionRules(userId = getSignedInUserId(session)) {
-    const scopedUserId = resolveUserId(userId);
-    if (!scopedUserId) {
-      setTransactionRules([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("transaction_rules")
-      .select("*")
-      .eq("user_id", scopedUserId)
-      .order("created_at", { ascending: false });
-    setTransactionRules(error ? [] : data || []);
-  }
 
   function navigateTo(nextPage, options = {}) {
     if (options.returnToCurrent && nextPage !== page) {

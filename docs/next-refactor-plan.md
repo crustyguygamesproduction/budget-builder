@@ -8,27 +8,25 @@ Purpose: keep `src/App.jsx` shrinking in safe, deployable slices while improving
 - Shared UI primitives live in `src/components/ui.jsx`.
 - Goal suggestions live in `src/lib/goalInsights.js`.
 - Upload guidance lives in `src/lib/uploadGuidance.js`.
+- User-owned Supabase data loading lives in `src/hooks/useMoneyHubData.js`.
 - The active upload page is `src/pages/UploadPageSafe.jsx`; the older inactive `src/pages/UploadPage.jsx` has been removed.
 - Old app snapshots are archived in `src/archive/`.
 - Supabase temp files are no longer tracked.
 
 ## Resume Here
 
-1. Extract shared finance/date helpers from `App.jsx`.
-   - Start with `formatCurrency`, `numberOrNull`, `parseAppDate`, `toIsoDate`, `startOfDay`, `startOfMonth`, `isTransactionInMonth`, `isInternalTransferLike`.
-   - Put them under `src/lib/financeHelpers.js` or split into `dateHelpers.js` and `moneyHelpers.js` if it stays clean.
+1. Extract `useCoachSnapshot()`.
+   - Keep the current browser-saved Coach snapshot behaviour until the hook extraction is done safely.
+   - Do not move Coach context server-side as part of this refactor slice.
 
-2. Remove the `helpers` prop from `GoalsPage`.
-   - Import the helper functions directly into the page once they live in `src/lib`.
-
-3. Continue tightening `UploadPageSafe` only when upload behaviour changes.
+2. Continue tightening `UploadPageSafe` only when upload behaviour changes.
    - Keep CSV import helpers close to the page unless they become shared.
    - Preserve content sniffing, date normalisation, duplicate detection, upload guidance UX and AI mapping fallback.
 
-4. Extract one page at a time after that.
+3. Extract one page at a time after that.
    - Best order: `ReceiptsPage`, `CoachPage`, `DebtsPage`, `InvestmentsPage`, `CalendarPage`, then `TodayPage`.
 
-5. Keep each slice shippable.
+4. Keep each slice shippable.
    - Run `npm run check`.
    - Commit and push after each clean extraction.
 
