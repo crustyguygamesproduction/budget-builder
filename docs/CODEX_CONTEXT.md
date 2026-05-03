@@ -116,6 +116,23 @@ The update policy migration now exists.
 
 `ReceiptsPage.jsx` validates sensitive file content using magic-byte/content sniffing, not just extension/MIME.
 
+## Live bank feed plan
+
+A practical UK live bank feed integration plan now exists at:
+
+- `docs/BANK_FEED_GOCARDLESS_PLAN.md`
+
+Provider decision:
+
+- Use GoCardless Bank Account Data first.
+- Keep CSV uploads as the free/manual fallback.
+- Treat live bank feeds as a Premium feature.
+- Keep all GoCardless secrets and provider API calls inside Supabase Edge Functions.
+
+Do not start implementing bank feeds until the high-priority production hardening below is complete.
+
+When bank feed work starts, Codex should read `docs/BANK_FEED_GOCARDLESS_PLAN.md` first.
+
 ## Remaining high-priority production hardening work
 
 These are the main tasks Codex should do next.
@@ -196,6 +213,31 @@ Known examples:
 
 Add similar low-risk user scoping where the signed-in user ID is available and the write is user-owned.
 
+### 6. Fix Calendar monthly income wording/calculation clarity
+
+User report:
+
+The Calendar page Recent Months card shows `In` totals that appear wrong/confusing. Example screenshot showed April 2026 `In £2519.62`, March 2026 `In £5455.44`, etc. The user asked whether these are gross before bills/spending.
+
+Relevant code:
+
+- `src/lib/calendarIntelligence.js`
+- `getMonthlyBreakdown()`
+- `getMonthlyHistorySummary()`
+
+Current behaviour:
+
+- `earned` sums all positive non-internal-transfer transactions.
+- The UI labels that as `In`, which may include wages, reimbursements, refunds, transfers from other people, repayments, or pass-through money.
+
+Required improvement:
+
+- Do not label this as simple income unless it is true income.
+- Either rename UI copy to `Money in` / `Inflow` and explain it is before spending, or split it into `Income` and `Other money in` using existing intelligence flags where available.
+- For the idiot-proof version, prefer clarity: `Money in` for gross inflow, `Spent`, and `Left after spending`, plus a note if this includes refunds/transfers.
+- Calendar should not imply the user earned more than they did.
+- Add a regression check or at least a small helper test if practical.
+
 ## Medium-priority maintainability work
 
 These are important but should not be mixed into the same large security patch unless very small.
@@ -270,6 +312,12 @@ Use a test account.
 - Ask a compact lookup like `how much did I spend on Tesco?`.
 - Ask a hard-truth prompt.
 - Confirm no stale/empty answer.
+
+### Calendar
+
+- Confirm Recent Months copy makes clear that `Money in`/`Inflow` is gross incoming money before spending.
+- Confirm it does not call all positive transactions `income` unless categorised as true income.
+- Confirm monthly net/left-after-spending matches inflow minus outflow.
 
 ### Deletion audit
 
