@@ -1,8 +1,8 @@
-# Codex deep audit after hardening pass
+# Codex deep audit after cleanup pass
 
 Last updated: 2026-05-03
 
-This document is the working audit after commit `6f10eb8` (`Harden coach and upload flows`). The focused cleanup pass that followed handled stale docs, upload validation error handling, inactive upload-page removal, HEIC/HEIF sniffing, and small validation regression checks.
+This is the current working audit after the hardening pass (`6f10eb8`) and the follow-up cleanup pass.
 
 ## How to use this document
 
@@ -13,11 +13,11 @@ Codex should read these files in order:
 3. `docs/CODEX_NEXT_PASS_PROMPT.md`
 4. `docs/BANK_FEED_GOCARDLESS_PLAN.md` only if bank feed work is explicitly requested
 
-The previous production hardening pass is complete. Do not redo it unless a regression is found.
+Do not redo completed hardening work unless a new regression is found.
 
 ## Audit method and limits
 
-Reviewed from the uploaded project zip, including:
+Reviewed from the uploaded `budget-builder-review.zip`, including:
 
 - `src/`
 - `supabase/functions/`
@@ -27,82 +27,86 @@ Reviewed from the uploaded project zip, including:
 - `vercel.json`
 - `package.json`
 
-I could not run the full check command in the audit environment because `node_modules` was intentionally excluded from the zip and `eslint`/`vite` were not installed. The local/Codex report says `npm run check` passed. Treat that as the main check signal, but still run it again after every patch.
+The uploaded zip intentionally excluded `node_modules`, so the full `npm run check` could not be run in the audit environment. `scripts/check-security-validation.mjs` was run directly and passed. Other scripts and the build need installed dependencies, so Codex/local terminal must still run `npm run check` after any change.
 
 ## Current readiness view
 
-- Private beta: strong enough to continue testing.
-- Public production: closer, but still needs documentation cleanup, manual deployment verification, and a few smaller correctness/security follow-ups.
-- Biggest remaining risk: not one obvious blocker, but trust erosion from stale docs, old inactive files, and untested edge cases.
-
-Suggested score after this pass:
-
-- Private beta readiness: 8.4/10
-- Public production readiness: 7.7/10
-- Security posture: 8.0/10
+- Private beta readiness: 8.5/10
+- Public production readiness: 7.8/10
+- Security posture: 8.1/10
 - Data correctness: 8.0/10
-- Maintainability: 6.9/10
+- Maintainability: 7.0/10
+
+The app is much safer than at the start of the audit cycle. The largest remaining gap is no longer an obvious production blocker. It is now product trust, manual deployment verification, and maintainability.
 
 ## Completed and verified from code
 
-The following items are implemented in the zip and should be treated as complete unless a new issue is found.
+Treat these as done unless a new regression is found.
 
 ### Calendar Recent Months net-only display
 
-`src/pages/CalendarPage.jsx` bottom `Recent Months` / `This Month` section no longer shows `In` and `Out`. It shows month label, days used, and net only.
+`src/pages/CalendarPage.jsx` bottom `Recent Months` / `This Month` section now shows month label, days used, and net only. It no longer shows `In`/`Out` in that bottom monthly list.
 
-This matches the user request. Do not reintroduce `In`/`Out` in that bottom section.
+Do not reintroduce `In`/`Out` in the bottom Recent Months section. Day-level drilldowns may still show in/out because that is transaction detail, not a monthly income claim.
 
 ### `ai-coach` CORS fail-closed
 
-`supabase/functions/ai-coach/index.ts` now:
+`supabase/functions/ai-coach/index.ts` now has the same production fail-closed CORS pattern as the other Edge Functions.
 
-- has `isProductionRuntime()`
-- has `isLocalOrigin()`
-- has `hasCorsConfigError()`
-- returns a 500 JSON error when production/prod runtime has no `ALLOWED_ORIGINS`
-- handles `OPTIONS` after the CORS config check
-- allows local origins in non-production when no origins are configured
+It includes:
 
-This aligns it with `money-organiser` and `swift-worker`.
+- `isProductionRuntime()`
+- `isLocalOrigin()`
+- `hasCorsConfigError()`
+- a 500 JSON response when production/prod runtime has no `ALLOWED_ORIGINS`
+- `OPTIONS` handling after the CORS config check
 
 ### `ai-coach` market price auth/rate limiting
 
-`mode === "market_price"` now calls `enforceAiUsage()` before Yahoo Finance fetch. `enforceAiUsage()` validates the Bearer JWT and inserts an `ai_usage_events` row, so this path now requires auth and is rate-limited.
+`mode === "market_price"` now calls `enforceAiUsage()` before Yahoo Finance fetch. `enforceAiUsage()` validates the Bearer JWT and inserts an `ai_usage_events` row, so this path requires auth and is rate-limited.
 
 Current limits:
 
 - 60/hour
 - 200/day
 
-### CSV content sniffing wired into `UploadPageSafe`
+Small remaining improvement: move the `OPENAI_API_KEY` requirement below the `market_price` branch, because Yahoo price lookup does not use OpenAI. Keep auth/rate-limit before Yahoo fetch.
 
-`src/pages/UploadPageSafe.jsx` imports `validateStatementCsvFileContent()` and awaits it before `Papa.parse()`.
+### CSV and document content sniffing
 
-Account `last_imported_at` is now updated with both:
+Completed:
 
-```js
-.eq("id", accountId)
-.eq("user_id", user.id)
-```
+- `UploadPageSafe.jsx` uses `validateStatementCsvFileContent()` before `Papa.parse()`.
+- `UploadPageSafe.handleFiles()` catches validation exceptions and clears the file input in `finally`.
+- `DebtsPage.jsx`, `InvestmentsPage.jsx`, and `ReceiptsPage.jsx` use `validateSensitiveFileContent()`.
+- `src/lib/security.js` now has stricter HEIC/HEIF brand checks instead of accepting any file starting with null bytes.
+- `scripts/check-security-validation.mjs` covers CSV/PDF sniffing and HEIC/HEIF brand checks.
 
-### Debt and investment document content sniffing
+### Explicit user scoping
 
-`src/pages/DebtsPage.jsx` and `src/pages/InvestmentsPage.jsx` now use `validateSensitiveFileContent()` on selection and before upload.
+Completed:
 
-### Investment live price update scoped by user
+- Core user-owned reads in `App.jsx` include explicit `.eq("user_id", scopedUserId)` filters.
+- Upload account `last_imported_at` update is scoped by account ID and user ID.
+- Investment live price update is scoped by investment ID and user ID.
 
-`src/pages/InvestmentsPage.jsx` now fetches the signed-in user before updating live price fields and scopes the update by both investment ID and user ID.
+### `useViewport()` and Coach draft privacy
 
-### `useViewport()` wired into App
+Completed:
 
-`src/App.jsx` imports `useViewport()` and no longer keeps local resize state/effect for screen width and viewport height.
+- `src/App.jsx` uses `useViewport()`.
+- Coach draft/autosend one-shot handoff uses `sessionStorage` rather than `localStorage`.
 
-### Coach draft/autosend uses sessionStorage
+### Old inactive upload page
 
-`src/App.jsx` and `src/pages/CoachPage.jsx` use `sessionStorage` for the one-shot `COACH_DRAFT_KEY` and `COACH_AUTOSEND_KEY` handoff. Other localStorage keys are intentionally unchanged.
+Completed:
 
-### Vercel headers exist
+- `src/pages/UploadPage.jsx` was confirmed unused and removed.
+- `App.jsx` imports `UploadPageSafe` as the active upload page.
+
+Archive snapshots remain in `src/archive/`. They are not active, but they contain stale patterns and make code searches noisy.
+
+### Vercel headers
 
 `vercel.json` exists and sets:
 
@@ -112,42 +116,41 @@ Account `last_imported_at` is now updated with both:
 - `X-Frame-Options`
 - `Permissions-Policy`
 
-The CSP is practical and should work for the current app shape, but still needs deployed smoke testing.
+Needs deployed smoke testing, but the repo now has the expected file.
 
-## Highest-priority next work
+## Documentation state
 
-### 1. Update and clean stale docs
+Docs are mostly current after the cleanup pass.
 
-Status: completed in the focused cleanup pass.
-
-Docs were the main mismatch before the focused cleanup pass.
-
-Files updated:
+Current source-of-truth docs:
 
 - `docs/CODEX_CONTEXT.md`
+- this file
+- `docs/CODEX_NEXT_PASS_PROMPT.md`
 - `docs/security-fix-notes-2026-05-03.md`
-- `docs/maintainer-map.md`
 - `docs/production-readiness.md`
-- `docs/critical-issues-next-session.md`
-- maybe `docs/next-refactor-plan.md`
+- `docs/BANK_FEED_GOCARDLESS_PLAN.md`
 
-Completed doc fixes:
+Known doc cleanup done:
 
-- Stopped listing completed hardening tasks as pending.
-- Made clear that `UploadPageSafe.jsx` is the active upload page.
-- Marked old `UploadPage.jsx` as removed.
-- Added `money-organiser` to production readiness Edge Function list.
-- Added `ai_usage_events`, `coach_context_snapshots`, `subscription_profiles`, `bank_connections`, and `transaction_rules` to table/readiness notes where relevant.
-- Marked `docs/critical-issues-next-session.md` as historical.
-- Mentioned that `vercel.json` now exists.
+- completed hardening tasks are no longer treated as pending
+- active upload page is documented as `UploadPageSafe.jsx`
+- old `UploadPage.jsx` is documented as removed
+- `money-organiser` is listed in production readiness
+- `vercel.json` is documented
+- historical issue file is marked historical
 
-Finish criterion: a future Codex run should not get contradictory instructions from docs.
+One stale doc was found during this audit:
 
-### 2. Confirm hardening deployment and environment setup
+- `docs/next-refactor-plan.md` still referenced extracting helper functions from `App.jsx` that are no longer in `App.jsx`. It should say the next structural step is `useMoneyHubData(userId)`, not helper extraction.
+
+## Highest-value next work
+
+### 1. Manual production/deployment verification
 
 Code being committed is not enough for public production.
 
-Manual verification needed:
+Run locally:
 
 ```powershell
 cd C:\Users\User\Desktop\budget-builder
@@ -155,15 +158,14 @@ npm run check
 npx supabase migration list
 ```
 
-Confirm in Supabase, without revealing secret values:
+Confirm in Supabase dashboard, without exposing values:
 
-- `ai-coach` deployed after commit `6f10eb8`
-- `money-organiser` deployed
-- `swift-worker` deployed
-- `ENVIRONMENT=production` or `APP_ENV=production` is set for production functions
-- `ALLOWED_ORIGINS` is set to the production app origin
+- `ai-coach`, `money-organiser`, and `swift-worker` are deployed after the hardening commits
+- `ENVIRONMENT=production` or `APP_ENV=production` is set
+- `ALLOWED_ORIGINS` is set to production and preview origins
 - `OPENAI_API_KEY` exists
 - `SUPABASE_SERVICE_ROLE_KEY` exists
+- `receipts` storage bucket is private
 
 Confirm in Vercel:
 
@@ -171,136 +173,65 @@ Confirm in Vercel:
 - output directory is `dist`
 - `VITE_SUPABASE_URL` exists
 - `VITE_SUPABASE_PUBLISHABLE_KEY` exists
-- security headers are present on the deployed site
+- deployed responses include the security headers from `vercel.json`
 
-### 3. Add small regression checks for the just-fixed paths
+### 2. Small meaningful Codex task while tokens are low
 
-Status: partially completed in the focused cleanup pass.
+Best low-token task:
 
-Added `scripts/check-security-validation.mjs`, wired into `npm run check`, covering:
+- update `docs/next-refactor-plan.md` so it no longer tells Codex to extract helpers that are already gone from `App.jsx`
+- move the `OPENAI_API_KEY` requirement in `ai-coach` below the `market_price` branch so live price refresh is not blocked by OpenAI config
+- add a tiny comment/test note if needed
+- run `npm run check`
 
-- normal CSV accepts
-- renamed binary CSV rejects
-- real PDF signature accepts
-- fake PDF rejects
-- non-HEIC ISO media file rejects when renamed `.heic`
-- HEIC `ftyp` brand accepts
+This is small, low-risk, and meaningful.
 
-Further regression checks that could still be useful later:
+### 3. Next maintainability task when tokens are available
 
-- Calendar Recent Months renders net-only wording or at least a helper test around monthly breakdown display copy.
-- `ai-coach` CORS helper returns config error in production when `ALLOWED_ORIGINS` is empty.
-- `ai-coach` market price path uses usage enforcement before Yahoo fetch.
+Extract `useMoneyHubData(userId)` from `App.jsx`.
 
-### 4. Make `UploadPageSafe.handleFiles()` more robust
+Keep this separate from any product or bank-feed work. The goal is to move Supabase data state/loaders/refresh methods out of `App.jsx` while preserving all user scoping and refresh behaviour.
 
-Status: completed in the focused cleanup pass.
+### 4. Later architecture target
 
-Before this cleanup pass, the code awaited content validation before Papa Parse:
+Move Coach context generation server-side.
 
-```js
-for (const file of selectedFiles) {
-  const validation = await validateStatementCsvFileContent(file);
-  ...
-}
-```
-
-If `validateStatementCsvFileContent()` threw unexpectedly, the handler could reject and leave the UI in a reading state.
-
-Implemented fix:
-
-- wrap content validation in try/catch
-- set upload status to error for that file
-- clear the input reliably in a `finally`
-- keep parsing behaviour unchanged
-
-The duplicate `title: Understanding ${file.name}` line noted in the audit was not present in the live file during this pass.
-
-### 5. Clean up old inactive code paths
-
-Status: completed for `src/pages/UploadPage.jsx`; archive app snapshots remain intentionally untouched.
-
-`src/pages/UploadPage.jsx` was deleted after confirming `App.jsx` imports `UploadPageSafe`.
-
-Still consider deleting or moving in a separate cleanup:
-
-- `src/archive/App-STABLE.jsx`
-- `src/archive/App-BEFORE-SUPER-BUNDLE.jsx`
-
-They are useful history but contain stale patterns and make code search noisy.
-
-### 6. Tighten HEIC/HEIF content sniffing
-
-Status: completed in the focused cleanup pass.
-
-`src/lib/security.js` currently allows `heic` / `heif`, but the magic-byte check for those formats is weak:
-
-```js
-heic: [[0x00, 0x00, 0x00]],
-heif: [[0x00, 0x00, 0x00]],
-```
-
-That can match non-HEIC binary files that start with null bytes.
-
-Fix options:
-
-- implement a real ISO BMFF `ftypheic` / `ftypheif` style check around bytes 4-12, or
-- temporarily remove HEIC/HEIF support until robust validation is implemented.
-
-HEIC/HEIF validation now checks for a real ISO BMFF `ftyp` box and compatible HEIF brands instead of accepting files only because they start with null bytes.
-
-### 7. Review `ai-coach` OpenAI key requirement for `market_price`
-
-`ai-coach` checks `OPENAI_API_KEY` before the `market_price` branch, even though Yahoo price lookup does not use OpenAI.
-
-This is not a security issue, but it creates an unnecessary coupling. If OpenAI is misconfigured, market price refresh fails even though it could work independently.
-
-Optional improvement:
-
-- move the `OPENAI_API_KEY` requirement below `market_price`, while keeping all auth/rate-limit checks before Yahoo fetch.
-
-### 8. Server-side Coach context remains the long-term trust target
-
-The current guarded snapshot flow is better than before, but Coach context is still built/saved by browser state.
-
-Long-term ideal:
+Current snapshot guarding is useful, but the browser still builds/saves the Coach context. For a finance app, the long-term trust target is:
 
 - client sends message only
 - Edge Function validates JWT
-- Edge Function loads user data server-side
+- Edge Function loads scoped user data
 - Edge Function builds/refetches context server-side
-- client cannot be the source of truth for Coach financial context
+- Edge Function checks freshness before AI call
 
-Do not do this in a quick patch. Treat it as a planned architecture project.
+Do not do this as a tiny patch.
 
-### 9. Product-quality work for the “idiot-proof” goal
+## Product trust improvements for the idiot-proof goal
 
-The app needs to show uncertainty clearly.
+Prioritise features that prevent false confidence:
 
-High-value product improvements:
-
-- add confidence labels to major numbers
-- make `Review` / `Checks` the core loop
-- add “wrong? fix it” controls beside important insights
-- add “safe to spend today” as a plain, confidence-labelled answer
-- add a demo/sandbox account with fake data
-- add more real-world anonymised CSV fixtures
+- confidence labels beside major numbers
+- “wrong? fix it” buttons beside important insights
+- Review/Checks as the core learning loop
+- safe-to-spend copy that refuses to pretend historical statement net is cash today
+- demo/sandbox mode with fake data
+- anonymised real CSV fixtures for import and money-understanding regression checks
 
 ## Bank feed readiness
 
-`docs/BANK_FEED_GOCARDLESS_PLAN.md` is the right plan. Do not implement it until the app is stable after the hardening pass and docs are clean.
+`docs/BANK_FEED_GOCARDLESS_PLAN.md` remains the correct bank-feed plan. Do not implement GoCardless until the user explicitly asks.
 
 When bank feed work starts:
 
 - keep GoCardless secrets server-side only
 - add provider account mapping tables first
 - add sync run audit table
-- keep CSV upload as free fallback
+- keep CSV upload as free/manual fallback
 - bank feed should be Premium
-- do not silently duplicate CSV history when a bank connection first syncs
-- always show last synced time and consent expiry
+- avoid duplicating CSV-uploaded history on first sync
+- show last synced time and consent expiry everywhere relevant
 
-## Manual smoke test checklist after the next patch
+## Manual smoke test checklist
 
 Use a test account and fake/non-sensitive data.
 
@@ -315,8 +246,8 @@ Use a test account and fake/non-sensitive data.
 ### Calendar
 
 - bottom Recent Months shows only month net
-- no `In` / `Out` appears in the bottom Recent Months rows
-- selected day panel can still show day-level in/out if desired
+- no `In`/`Out` appears in the bottom Recent Months rows
+- selected day panel still shows transaction detail
 
 ### Documents
 
@@ -329,7 +260,7 @@ Use a test account and fake/non-sensitive data.
 - Coach works after fresh import
 - stale snapshot guard still works
 - `market_price` works only while signed in
-- `market_price` does not work from unauthenticated request
+- `market_price` does not depend on OpenAI config after the small cleanup task
 
 ### Production
 
@@ -338,10 +269,10 @@ Use a test account and fake/non-sensitive data.
 - Supabase Edge Function calls still work
 - receipts/documents signed URLs still render
 
-## Suggested next Codex prompt
+## Suggested short Codex prompt
 
 ```text
 Read docs/CODEX_CONTEXT.md, docs/CODEX_DEEP_AUDIT_2026-05-03_AFTER_HARDENING.md, and docs/CODEX_NEXT_PASS_PROMPT.md.
 
-Do the next cleanup/audit pass from the deep audit: update stale docs, add small regression checks where practical, harden UploadPageSafe validation error handling, remove or clearly archive the inactive old UploadPage, review HEIC/HEIF sniffing, and keep changes focused. Do not start GoCardless implementation yet. Run npm run check and report any Supabase deployment or migration step needed.
+Do the small low-token cleanup task: update docs/next-refactor-plan.md so it points to useMoneyHubData(userId) as the next App.jsx split, move ai-coach's OPENAI_API_KEY requirement below the market_price branch so Yahoo price lookup only needs auth/rate-limit, and run npm run check. Keep changes tiny and update docs if anything changes.
 ```
