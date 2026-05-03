@@ -160,10 +160,10 @@ export default function SettingsPage({
     <>
       <Section title="Setup Guide" styles={styles}>
         <p style={styles.sectionIntro}>
-          Use this if you want Money Hub to walk you through the simple rhythm again: upload statements, check Calendar, set one goal, then ask AI.
+          Use this if you want Money Hub to walk you through the simple rhythm again: upload statements, review Calendar, set one goal, then ask AI.
         </p>
         <Row name="Best first upload" value="CSV bank statements. Multiple files are fine." styles={styles} />
-        <Row name="Main check" value="Calendar checks bills, rent, subscriptions and debt payments." styles={styles} />
+        <Row name="Main review" value="Calendar finds bills, rent, subscriptions and debt payments." styles={styles} />
         <Row name="Then" value="Goals picks a safety target, AI explains the plan." styles={styles} />
         <button style={styles.ghostBtn} type="button" onClick={() => replayOnboarding(userId)}>
           Replay guided setup

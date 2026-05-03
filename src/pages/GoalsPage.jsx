@@ -188,9 +188,9 @@ export default function GoalsPage({
             Ask AI for a simple plan
           </button>
           {(appMoneyModel?.checksWaiting?.length || 0) > 0 ? (
-            <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("confidence")}>Answer Checks</button>
+            <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("confidence", { returnToCurrent: true })}>Answer Review</button>
           ) : null}
-          <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("calendar")}>Check bills</button>
+          <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("calendar", { returnToCurrent: true })}>Review bills</button>
         </div>
       </Section>
 
@@ -240,7 +240,7 @@ function getRecommendedGoals(appMoneyModel) {
       target: starterTarget,
       tone: "urgent",
       body: "A small buffer first. This stops one awkward bill turning into panic.",
-      reason: checks > 0 ? "Some money still needs checking, so start small." : "Safe saving is not clear yet.",
+      reason: checks > 0 ? "Some money still needs confirming, so start small." : "Safe saving is not clear yet.",
     });
   }
 
@@ -290,7 +290,7 @@ function getGoalReality(appMoneyModel) {
     return { mainAdvice: "I need clearer income before I can suggest a confident saving amount.", nextMove: "Upload more wages history" };
   }
   if (checks > 0) {
-    return { mainAdvice: "Answer the checks first so bills and spending do not get mixed up.", nextMove: "Clear Checks" };
+    return { mainAdvice: "Answer Review first so bills and spending do not get mixed up.", nextMove: "Open Review" };
   }
   if (safeSave <= 0) {
     return { mainAdvice: "Do not set an automatic goal yet. Keep bill money safe first.", nextMove: "Protect bills" };

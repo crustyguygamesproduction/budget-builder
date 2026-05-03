@@ -66,6 +66,8 @@ export default function ConfidencePage({
   transactionRules = [],
   moneyUnderstanding,
   onTransactionRulesChange,
+  returnTarget,
+  onBack,
   screenWidth,
   styles,
 }) {
@@ -123,7 +125,7 @@ export default function ConfidencePage({
           is_bill: Boolean(option.isBill),
           is_subscription: Boolean(option.isSubscription),
           is_internal_transfer: Boolean(option.isInternalTransfer),
-          notes: `User confirmed on Checks page: ${option.label}. ${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
+          notes: `User confirmed on Review page: ${option.label}. ${candidate.count} payments across ${candidate.monthCount} months. Example: ${candidate.sampleDescription}`,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,rule_type,match_text,match_amount" }
@@ -174,10 +176,16 @@ export default function ConfidencePage({
 
   return (
     <>
-      <Section styles={styles} title="Checks">
+      <Section styles={styles} title="Review">
         <p style={styles.sectionIntro}>
-          Answer simple questions when Money Hub is unsure. One answer can fix your bills, transfers, totals and AI advice.
+          Answer the tiny questions Money Hub cannot safely guess. One tap can fix your bills, transfers, totals and AI advice.
         </p>
+
+        {returnTarget ? (
+          <button type="button" style={getReturnButtonStyle(styles)} onClick={onBack}>
+            ← Back to {returnTarget.label}
+          </button>
+        ) : null}
 
         <div style={getStatsGridStyle(screenWidth)}>
           <MiniCard styles={styles} title="Waiting" value={`${checks.length}`} />
@@ -194,16 +202,16 @@ export default function ConfidencePage({
       </Section>
 
       {checks.length === 0 ? (
-        <Section styles={styles} title="Nothing to answer">
+        <Section styles={styles} title="Nothing to confirm">
           <div style={styles.emptyCoachState}>
-            <p style={styles.emptyCoachTitle}>No checks right now.</p>
+            <p style={styles.emptyCoachTitle}>Nothing waiting.</p>
             <p style={styles.emptyText}>
               When Money Hub is unsure about a repeated payment, it will ask here. If this page is empty, do not waste time here.
             </p>
           </div>
         </Section>
       ) : (
-        <Section styles={styles} title="Please answer these">
+        <Section styles={styles} title="Please confirm these">
           {checks.map((candidate) => (
             <ConfidenceCard
               key={candidate.key}
@@ -322,6 +330,19 @@ function getExamplesStyle(styles) {
     ...styles.inlineInfoBlock,
     marginTop: 10,
     marginBottom: 10,
+  };
+}
+
+function getReturnButtonStyle(styles) {
+  return {
+    marginTop: 12,
+    border: "1px solid rgba(37, 99, 235, 0.24)",
+    background: "#eff6ff",
+    color: styles.primary,
+    borderRadius: 999,
+    padding: "10px 12px",
+    fontWeight: 900,
+    cursor: "pointer",
   };
 }
 

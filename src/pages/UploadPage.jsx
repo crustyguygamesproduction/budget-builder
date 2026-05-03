@@ -679,7 +679,7 @@ setUploadStatus({
   step: 5,
   tone: "good",
   title: "Import complete",
-  body: `Imported ${totalSavedFiles} file${totalSavedFiles === 1 ? "" : "s"}, scanned ${totalRows} rows, and skipped ${skippedFiles} duplicate-looking file${skippedFiles === 1 ? "" : "s"}. Home and Calendar are ready to check.`,
+  body: `Imported ${totalSavedFiles} file${totalSavedFiles === 1 ? "" : "s"}, scanned ${totalRows} rows, and skipped ${skippedFiles} duplicate-looking file${skippedFiles === 1 ? "" : "s"}. Home and Calendar are ready.`,
 });
     } catch (error) {
 setUploadStatus({
@@ -900,7 +900,7 @@ alert(error.message || "Import failed.");
         </div>
         <div style={styles.inlineInfoBlock}>
           {uploadGuidance.checklist.map((item) => (
-            <Row styles={styles} key={item} name="Check" value={item} />
+            <Row styles={styles} key={item} name="Step" value={item} />
           ))}
         </div>
       </Section>
@@ -945,7 +945,7 @@ alert(error.message || "Import failed.");
           </Section>
 
           {majorPaymentCandidates.length > 0 ? (
-            <Section styles={styles} title="Payment Checks">
+            <Section styles={styles} title="Payments to confirm">
               <p style={styles.sectionIntro}>
                 These repeated payments look important. Confirm them before import and Money Hub will protect them in Goals, Calendar, spending reads, and AI advice.
               </p>

@@ -9,7 +9,7 @@ const PRIMARY_ITEMS = [
 ];
 
 const MORE_ITEMS = [
-  { key: "confidence", label: "Checks", hint: "Things to confirm" },
+  { key: "confidence", label: "Review", hint: "Things to confirm" },
   { key: "debts", label: "Debts", hint: "Cards and loans" },
   { key: "investments", label: "Invest", hint: "Keep bills safe first" },
   { key: "receipts", label: "Receipts", hint: "Proof and refunds" },

@@ -121,7 +121,7 @@ export default function OnboardingExperience({
       eyebrow: "2 minute setup",
       title: hasData ? "Let's turn this into a plan." : "Dump statements in. Get a money read.",
       body: "No budgeting homework. Upload CSVs, Money Hub finds bills and suggests the first sensible goal.",
-      bullets: ["Multiple CSVs are fine", "Duplicates get checked", "You can redo this from More"],
+      bullets: ["Multiple CSVs are fine", "Duplicates are handled", "You can redo this from More"],
       primary: hasData ? "Show my next step" : "Start with upload",
       secondary: "Skip for now",
     },
@@ -134,7 +134,7 @@ export default function OnboardingExperience({
       page: "upload",
     },
     [PHASES.CALENDAR]: {
-      eyebrow: "One quick check",
+      eyebrow: "One quick review",
       title: "Calendar is where bills become real.",
       body: "Confirm rent, bills, subs and debt payments. Mark nonsense as not a bill. That fixes Home, Goals and AI together.",
       bullets: ["Bills found", "Missing bills", "Not a bill"],
@@ -152,7 +152,7 @@ export default function OnboardingExperience({
     [PHASES.DONE]: {
       eyebrow: "That's it",
       title: "The rhythm is simple.",
-      body: "Upload. Check Calendar. Pick one goal. Ask AI when stuck.",
+      body: "Upload. Review Calendar. Pick one goal. Ask AI when stuck.",
       bullets: ["Redo from More", "Delete data anytime", "Paid bank linking later"],
       primary: "Start on Home",
       page: "today",

@@ -100,7 +100,7 @@ export default function HomePage({
           <Row name="Scheduled outgoings" value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
           <Row name="Regular income" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} a month` : expectedIncome.label} styles={styles} />
           <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
-          <Row name="Needs checking" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
+          <Row name="Needs confirming" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
         </div>
       </Section>
 
@@ -109,7 +109,7 @@ export default function HomePage({
           <Shortcut title="Calendar" body={nextBill ? `Next: ${nextBill.name}` : "Bills and dates"} onClick={() => onNavigate("calendar")} />
           <Shortcut title="Goals" body={primaryGoal ? primaryGoal.name : "Safety first"} onClick={() => onNavigate("goals")} />
           {checksWaitingCount > 0 ? (
-            <Shortcut title="Checks" body={`${appMoneyModel.checksWaiting.length} to answer`} onClick={() => onNavigate("confidence")} />
+            <Shortcut title="Review" body={`${appMoneyModel.checksWaiting.length} to answer`} onClick={() => onNavigate("confidence")} />
           ) : (
             <Shortcut title="Upload" body={dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
           )}
@@ -279,8 +279,8 @@ function getHomeRead({ visibleCash, billShare, nextBill, moneyLeft, dataFreshnes
     body: `${formatCurrency(billShare.personalTotal)} is set aside for scheduled outgoings this month.`,
     headline: moneyLeft <= 25 ? "Keep it careful" : "You have some room",
     nextMove: moneyLeft <= 25 ? "Keep spending boring for now." : "Bills look covered. Keep a little back for surprises.",
-    buttonLabel: "Check my week",
-    prompt: `Check my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${formatCurrency(billShare.personalTotal)} of bills to cover. Next bill: ${nextBillText}.`,
+    buttonLabel: "Plan my week",
+    prompt: `Plan my week. Visible balance leaves ${formatCurrency(Math.max(moneyLeft, 0))} after ${formatCurrency(billShare.personalTotal)} of bills to cover. Next bill: ${nextBillText}.`,
   };
 }
 

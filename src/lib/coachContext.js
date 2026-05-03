@@ -97,8 +97,8 @@ export function buildCoachContext({
       maths_source_of_truth: "Use money_understanding, app-calculated totals, statement_intelligence, query_focus and rules. Do not invent or re-estimate core figures.",
       shared_app_model: "For bills, income, usual spending, saving room and warnings, use app_money_model before older raw summaries. For split bills, talk about the user's scheduled outgoings to cover, not the larger gross amount passing through the account.",
       safe_to_spend: "Only treat safe-to-spend as real spendable money when live balances or explicit current balances are supplied. Statement net is historical movement, not cash today.",
-      checks_page: "If a person, bill, transfer, work payment or pass-through looks uncertain, tell the user to confirm it in Confidence Checks instead of guessing.",
-      calendar: "Future Bills only contains regular bills/subscriptions Money Hub is confident about. Unclear repeated payments belong in Checks, not Calendar.",
+      review_page: "If a person, bill, transfer, work payment or pass-through looks uncertain, tell the user to confirm it in Review instead of guessing.",
+      calendar: "Future Bills only contains regular bills/subscriptions Money Hub is confident about. Unclear repeated payments belong in Review, not Calendar.",
       answer_style: "Lead with the useful answer in simple English. Avoid accounting jargon unless the user asks for detail.",
     },
     premium_guidance:

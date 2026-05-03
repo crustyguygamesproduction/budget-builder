@@ -38,7 +38,7 @@ const UploadPage = lazy(() => import("./pages/UploadPage"));
 const PAGE_TITLES = {
   today: "Today",
   upload: "Upload",
-  confidence: "Checks",
+  confidence: "Review",
   debts: "Debts",
   investments: "Investments",
   calendar: "Calendar",
@@ -57,6 +57,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [page, setPage] = useState("today");
+  const [returnTarget, setReturnTarget] = useState(null);
 
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -251,13 +252,29 @@ export default function App() {
     setTransactionRules(error ? [] : data || []);
   }
 
+  function navigateTo(nextPage, options = {}) {
+    if (options.returnToCurrent && nextPage !== page) {
+      setReturnTarget({ page, label: PAGE_TITLES[page] || "Back" });
+    } else {
+      setReturnTarget(null);
+    }
+    setPage(nextPage);
+  }
+
+  function goBackToReturnTarget() {
+    if (!returnTarget?.page) return;
+    const target = returnTarget.page;
+    setReturnTarget(null);
+    setPage(target);
+  }
+
   function openCoachWithPrompt(prompt, options = {}) {
     if (typeof window !== "undefined") {
       localStorage.setItem(COACH_DRAFT_KEY, prompt);
       if (options.autoSend) localStorage.setItem(COACH_AUTOSEND_KEY, "true");
       else localStorage.removeItem(COACH_AUTOSEND_KEY);
     }
-    setPage("coach");
+    navigateTo("coach", options);
   }
 
   const moneyUnderstanding = useMemo(
@@ -390,24 +407,24 @@ export default function App() {
 
   return (
     <div style={styles.app}>
-      <TopBar email={session.user.email} title={PAGE_TITLES[page] || "Money Hub"} page={page} screenWidth={screenWidth} styles={styles} />
+      <TopBar email={session.user.email} title={PAGE_TITLES[page] || "Money Hub"} page={page} returnTarget={returnTarget} onBack={goBackToReturnTarget} screenWidth={screenWidth} styles={styles} />
       <main style={getMainStyle(screenWidth, page)}>
         <Suspense fallback={<div style={styles.loading}>Opening {PAGE_TITLES[page] || "Money Hub"}...</div>}>
-        {page === "today" && <TodayPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} accounts={accounts} goals={goals} debts={debts} investments={investments} statementImports={statementImports} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} screenWidth={screenWidth} styles={styles} />}
+        {page === "today" && <TodayPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} accounts={accounts} goals={goals} debts={debts} investments={investments} statementImports={statementImports} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onGoToCoach={openCoachWithPrompt} onNavigate={navigateTo} screenWidth={screenWidth} styles={styles} />}
         {page === "upload" && <UploadPage accounts={accounts} statementImports={statementImports} existingTransactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onImportDone={async () => { await loadAllData(); await refreshMoneyOrganiser({ force: true }); await loadAllData(); }} onTransactionRulesChange={loadTransactionRules} onGoToCoach={openCoachWithPrompt} screenWidth={screenWidth} styles={styles} />}
-        {page === "confidence" && <ConfidencePage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={loadTransactionRules} screenWidth={screenWidth} styles={styles} />}
+        {page === "confidence" && <ConfidencePage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} onTransactionRulesChange={loadTransactionRules} returnTarget={returnTarget} onBack={goBackToReturnTarget} screenWidth={screenWidth} styles={styles} />}
         {page === "debts" && <DebtsPage debts={debts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={debtDocuments} onChange={loadDebts} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} styles={styles} />}
         {page === "investments" && <InvestmentsPage investments={investments} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} documents={investmentDocuments} onChange={loadInvestments} onDocumentsChange={loadFinancialDocuments} viewerMode={viewerMode} styles={styles} />}
         {page === "calendar" && <CalendarPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} onTransactionRulesChange={loadTransactionRules} onRefreshMoneyUnderstanding={refreshMoneyUnderstandingAfterCorrection} screenWidth={screenWidth} styles={styles} />}
-        {page === "goals" && <GoalsPage goals={goals} accounts={accounts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onGoToCoach={openCoachWithPrompt} onNavigate={setPage} onChange={loadGoals} onAccountsChange={loadAccounts} onTransactionRulesChange={loadTransactionRules} styles={styles} />}
+        {page === "goals" && <GoalsPage goals={goals} accounts={accounts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onGoToCoach={openCoachWithPrompt} onNavigate={navigateTo} onChange={loadGoals} onAccountsChange={loadAccounts} onTransactionRulesChange={loadTransactionRules} styles={styles} />}
         {page === "receipts" && <ReceiptsPage receipts={receipts} transactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} onChange={loadReceipts} onGoToCoach={openCoachWithPrompt} styles={styles} />}
-        {page === "coach" && <CoachPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} goals={goals} debts={debts} investments={investments} aiMessages={aiMessages} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onChange={loadAiMessages} onTransactionRulesChange={loadTransactionRules} onNavigate={setPage} screenWidth={screenWidth} viewportHeight={viewportHeight} styles={styles} />}
+        {page === "coach" && <CoachPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} goals={goals} debts={debts} investments={investments} aiMessages={aiMessages} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onChange={loadAiMessages} onTransactionRulesChange={loadTransactionRules} onNavigate={navigateTo} screenWidth={screenWidth} viewportHeight={viewportHeight} styles={styles} />}
         {page === "settings" && <SettingsPage userId={session.user.id} transactions={smartTransactions} viewerAccess={viewerAccess} onViewerChange={loadViewerAccess} onDataChange={loadAllData} viewerMode={viewerMode} setViewerMode={setViewerMode} financialDocuments={financialDocuments} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} bankConnections={bankConnections} onShowPrivacy={() => setPage("privacy")} styles={styles} />}
         {page === "privacy" && <PrivacyPage onBack={() => setPage("settings")} styles={styles} />}
         </Suspense>
       </main>
-      <Suspense fallback={null}><OnboardingTutorial setPage={setPage} userId={session.user.id} screenWidth={screenWidth} transactionCount={transactions.length} accountCount={accounts.length} /></Suspense>
-      <BottomNav page={page} setPage={setPage} screenWidth={screenWidth} styles={styles} />
+      <Suspense fallback={null}><OnboardingTutorial setPage={navigateTo} userId={session.user.id} screenWidth={screenWidth} transactionCount={transactions.length} accountCount={accounts.length} /></Suspense>
+      <BottomNav page={page} setPage={navigateTo} screenWidth={screenWidth} styles={styles} />
     </div>
   );
 }

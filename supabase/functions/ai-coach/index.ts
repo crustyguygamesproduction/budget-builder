@@ -406,7 +406,7 @@ function buildDeterministicLookupReply(message: string, promptContext: Record<st
     const windowText = queryFocus.time_window?.matched
       ? ` in ${queryFocus.time_window.label}`
       : "";
-    return `I can't confidently spot friends/family transfers${windowText} from the labels alone. Give me a couple of names to search, or check the personal transfer suggestions in Checks.`;
+    return `I can't confidently spot friends/family transfers${windowText} from the labels alone. Give me a couple of names to search, or use Review to confirm the likely people-money suggestions.`;
   }
 
   const amount = Number(
@@ -434,7 +434,7 @@ function buildDeterministicLookupReply(message: string, promptContext: Record<st
     : "";
 
   const caveat = queryFocus.broad_personal_lookup
-    ? ` This is Money Hub's best read from ${queryFocus.relevant_match_count || queryFocus.direct_match_count} personal-looking transfers; confirm any missing names in Checks.`
+    ? ` This is Money Hub's best read from ${queryFocus.relevant_match_count || queryFocus.direct_match_count} personal-looking transfers; confirm any missing names in Review.`
     : "";
 
   return `Total: ${formatGbp(Math.abs(amount))} ${verb} ${target}${windowText}.${caveat}`;
@@ -669,6 +669,13 @@ Maths and trust rules:
 - Possible pass-through candidates are not confirmed exclusions. Tell the user they need confirming before being removed from personal spending.
 - Rent, bills and subscriptions stay included in real spending unless the app context explicitly says otherwise.
 
+Learning loop rules:
+- If the user asks a broad human-life question, such as friends, family, work money, lending, paying people back, shared bills, side income, or support, make the best safe read from query_focus first.
+- If labels are ambiguous, say what you can see and what needs confirming. Do not pretend certainty.
+- Ask one short follow-up question only when it would unlock a better answer, for example "Which name should I search?".
+- When Review is the right next step, say "confirm it in Review" rather than using vague language.
+- Never send the user away to do work if the answer is already in the supplied context. Give the answer, then ask for the smallest confirmation needed.
+
 Lifestyle audit rules:
 - If the user asks why they are broke, where their money is going, why they cannot save, or what lifestyle changes would help, act like a strict but useful money auditor.
 - Find the highest controllable leaks in the supplied data before giving generic advice.
@@ -761,7 +768,7 @@ Deno.serve(async (req) => {
         : [{ role: "user", content: `${systemPrompt}\n\nUser description:\n${message}\n\nSignals:\n${JSON.stringify(kind === "debt" ? context?.debt_signals || [] : context?.investment_signals || [], null, 2)}` }];
       const { data, model } = await callResponsesApiWithModels(apiKey, { input }, getOpenAIModelCandidates("OPENAI_COACH_MODEL", "OPENAI_COACH_FALLBACK_MODELS"));
       const rawReply = data.output_text || data.output?.[0]?.content?.[0]?.text || "{}";
-      return new Response(JSON.stringify({ extracted: parseJsonReply(rawReply), message: mode.endsWith("_document") ? "AI filled the form from the uploaded document. Check it before saving." : "AI filled the form. Check it before saving.", mode, model }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ extracted: parseJsonReply(rawReply), message: mode.endsWith("_document") ? "AI filled the form from the uploaded document. Review it before saving." : "AI filled the form. Review it before saving.", mode, model }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const safeMessage = String(message || "").trim();

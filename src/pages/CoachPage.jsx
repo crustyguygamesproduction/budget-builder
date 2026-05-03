@@ -52,7 +52,7 @@ export default function CoachPage({
   const [coachGeneratedChecks, setCoachGeneratedChecks] = useState(() => readCoachGeneratedChecks());
   const [coachBrainSyncStatus, setCoachBrainSyncStatus] = useState({
     state: "checking",
-    label: "Checking Coach brain...",
+    label: "Updating Coach brain...",
     helper: "Making sure Coach has the latest money read before you ask it anything.",
   });
   const [freshCutoff, setFreshCutoff] = useState(() => {
@@ -175,7 +175,7 @@ export default function CoachPage({
         if (cancelled) return;
         setCoachBrainSyncStatus({
           state: "error",
-          label: "Coach brain sync needs checking",
+          label: "Coach brain needs an update",
           helper: "Coach may use the last saved money read until sync succeeds.",
         });
       }
@@ -355,7 +355,7 @@ export default function CoachPage({
   return (
     <>
       <Section
-        title="Money check"
+        title="Money coach"
         sectionStyle={getCoachSectionStyle(viewportHeight, screenWidth, styles)}
         styles={styles}
         right={
@@ -398,7 +398,7 @@ export default function CoachPage({
             <CoachChecksPill
               count={coachGeneratedChecks.length}
               styles={styles}
-              onClick={() => onNavigate?.("confidence")}
+              onClick={() => onNavigate?.("confidence", { returnToCurrent: true })}
             />
           ) : null}
 
@@ -413,7 +413,7 @@ export default function CoachPage({
 
             {visibleMessages.length === 0 && !pendingUserMessage ? (
               <div style={getEmptyCoachStateStyle(screenWidth, styles)}>
-                <p style={styles.emptyCoachTitle}>What do you want to check?</p>
+                <p style={styles.emptyCoachTitle}>What do you want to ask?</p>
                 <p style={styles.emptyText}>
                   Ask about bills, goals, spending, debt, or whether you can afford something.
                 </p>
@@ -441,7 +441,7 @@ export default function CoachPage({
                   <span style={styles.chatRoleLabel}>Money Hub</span>
                   <span style={styles.chatTimeLabel}>now</span>
                 </div>
-                Checking your money...
+                Reading your money...
               </div>
             )}
 
@@ -498,7 +498,7 @@ function CoachBrainSyncStatus({ status, styles }) {
   return (
     <div style={getCoachBrainSyncStyle(styles, state)}>
       <span style={getCoachBrainDotStyle(isBusy, isReady, isError)}>{isBusy ? "◌" : isReady ? "✓" : "!"}</span>
-      <span style={{ fontWeight: 800 }}>{status?.label || "Checking Coach brain..."}</span>
+      <span style={{ fontWeight: 800 }}>{status?.label || "Updating Coach brain..."}</span>
       <span style={{ color: "#64748b" }}>{status?.helper || ""}</span>
     </div>
   );
@@ -508,9 +508,9 @@ function CoachChecksPill({ count, styles, onClick }) {
   return (
     <button type="button" style={getCoachChecksPillStyle(styles)} onClick={onClick}>
       <span style={getCoachChecksDotStyle()}>!</span>
-      <span style={{ fontWeight: 900 }}>You have new checks</span>
+      <span style={{ fontWeight: 900 }}>You have things to confirm</span>
       <span style={{ color: "#475569" }}>
-        {count} thing{count === 1 ? "" : "s"} Coach wants you to confirm
+        {count} answer{count === 1 ? "" : "s"} will make Coach smarter
       </span>
     </button>
   );
@@ -581,7 +581,7 @@ function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
     <div style={getModalOverlayStyle()} role="dialog" aria-modal="true">
       <div style={getCorrectionSheetStyle(styles)}>
         <div style={styles.chatMetaRow}>
-          <span style={styles.chatRoleLabel}>Quick check</span>
+          <span style={styles.chatRoleLabel}>Quick question</span>
           <span style={styles.chatTimeLabel}>keeps maths right</span>
         </div>
         <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 6 }}>
@@ -753,7 +753,7 @@ async function refreshSavedCoachQueryFocus(userId, transactions, message) {
 
 function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmentSignals }) {
   const prompts = [
-    { label: "Can I afford this?", message: "Can I afford something right now? Check my bills, goals and spending room first." },
+    { label: "Can I afford this?", message: "Can I afford something right now? Look at my bills, goals and spending room first." },
     { label: "What should I fix?", message: "What is the first thing I should fix with my money? Keep it practical." },
     { label: "Am I on track?", message: "Am I on track with my money and goals? Give me the honest version." },
     { label: "Bills due soon", message: "What bills or regular payments should I be ready for soon?" },
@@ -777,12 +777,12 @@ function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmen
     });
   } else if (debtSignals.length > 0) {
     prompts.push({
-      label: "Debt check",
-      message: "Check whether my debt-looking payments seem under control.",
+      label: "Debt review",
+      message: "Tell me whether my debt-looking payments seem under control.",
     });
   } else if (investmentSignals.length > 0) {
     prompts.push({
-      label: "Investing check",
+      label: "Investing review",
       message: "Does my investing activity look sensible?",
     });
   }
