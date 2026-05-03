@@ -365,50 +365,95 @@ export default function SettingsPage({
 }
 
 async function createDeletionEvent({ userId, actionType, selectedMonths, counts, status }) {
+  const payload = {
+    user_id: userId,
+    action_type: actionType,
+    selected_months: selectedMonths,
+    counts,
+    status,
+  };
   const { data, error } = await supabase
     .from("data_deletion_events")
-    .insert({
-      user_id: userId,
-      action_type: actionType,
-      selected_months: selectedMonths,
-      counts,
-      status,
-    })
+    .insert(payload)
     .select("id")
     .maybeSingle();
 
-  if (error) {
+  if (!error) return data?.id || null;
+  if (!isAuditSchemaMissing(error)) {
     console.warn("Deletion audit event could not be started", error);
     return null;
   }
 
-  return data?.id || null;
+  const { data: fallbackData, error: fallbackError } = await supabase
+    .from("data_deletion_events")
+    .insert(stripNewAuditFields(payload))
+    .select("id")
+    .maybeSingle();
+
+  if (fallbackError) {
+    console.warn("Deletion audit event could not be started", fallbackError);
+    return null;
+  }
+
+  return fallbackData?.id || null;
 }
 
 async function finishDeletionEvent({ eventId, userId, actionType, selectedMonths, counts, status, errorCode = null }) {
+  const updatePayload = { counts, status, error_code: errorCode };
+
   if (eventId) {
     const { error } = await supabase
       .from("data_deletion_events")
-      .update({ counts, status, error_code: errorCode })
+      .update(updatePayload)
       .eq("id", eventId)
       .eq("user_id", userId);
 
     if (!error) return;
-    console.warn("Deletion audit event could not be updated", error);
+    if (!isAuditSchemaMissing(error)) console.warn("Deletion audit event could not be updated", error);
+
+    const { error: fallbackUpdateError } = await supabase
+      .from("data_deletion_events")
+      .update({ counts })
+      .eq("id", eventId)
+      .eq("user_id", userId);
+
+    if (!fallbackUpdateError) return;
+    console.warn("Deletion audit event could not be updated", fallbackUpdateError);
   }
 
-  const { error } = await supabase.from("data_deletion_events").insert({
+  const insertPayload = {
     user_id: userId,
     action_type: actionType,
     selected_months: selectedMonths,
     counts,
     status,
     error_code: errorCode,
-  });
+  };
+  const { error } = await supabase.from("data_deletion_events").insert(insertPayload);
 
-  if (error) {
+  if (!error) return;
+  if (!isAuditSchemaMissing(error)) {
     console.warn("Deletion audit event could not be saved", error);
+    return;
   }
+
+  const { error: fallbackInsertError } = await supabase
+    .from("data_deletion_events")
+    .insert(stripNewAuditFields(insertPayload));
+
+  if (fallbackInsertError) {
+    console.warn("Deletion audit event could not be saved", fallbackInsertError);
+  }
+}
+
+function stripNewAuditFields(payload) {
+  const { status: _status, error_code: _errorCode, ...legacyPayload } = payload;
+  return legacyPayload;
+}
+
+function isAuditSchemaMissing(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return error?.code === "PGRST204" || message.includes("schema cache") || message.includes("status") || message.includes("error_code");
 }
 
 function getDeletionErrorCode(error) {
