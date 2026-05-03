@@ -66,6 +66,8 @@ export default function SettingsPage({
     if (typed !== "DELETE") return;
 
     setResetBusy(true);
+    const deletionCounts = {};
+
     try {
       const { data: receipts } = await supabase
         .from("receipts")
@@ -80,8 +82,10 @@ export default function SettingsPage({
       const paths = [...(receipts || []), ...(docs || [])]
         .map((item) => item.file_path)
         .filter(Boolean);
+      deletionCounts.storage_paths_requested = paths.length;
       if (paths.length) {
-        await supabase.storage.from("receipts").remove(paths);
+        const { error: storageError } = await supabase.storage.from("receipts").remove(paths);
+        if (storageError) throw storageError;
       }
 
       const tables = [
@@ -89,6 +93,7 @@ export default function SettingsPage({
         "financial_documents",
         "ai_messages",
         "money_understanding_snapshots",
+        "coach_context_snapshots",
         "transaction_rules",
         "debts",
         "investments",
@@ -99,9 +104,20 @@ export default function SettingsPage({
       ];
 
       for (const table of tables) {
-        const { error } = await supabase.from(table).delete().eq("user_id", userId);
+        const { count, error } = await supabase
+          .from(table)
+          .delete({ count: "exact" })
+          .eq("user_id", userId);
         if (error) throw error;
+        deletionCounts[table] = count || 0;
       }
+
+      await logDeletionEvent({
+        userId,
+        actionType: "full_wipe",
+        selectedMonths: [],
+        counts: deletionCounts,
+      });
 
       replayOnboarding(userId);
       await onDataChange?.();
@@ -119,27 +135,57 @@ export default function SettingsPage({
     if (!confirmed) return;
 
     setMonthDeleteBusy(true);
+    const deletionCounts = {
+      months_requested: selectedMonths.length,
+      transactions: 0,
+      statement_imports: 0,
+      money_understanding_snapshots: 0,
+      coach_context_snapshots: 0,
+    };
+
     try {
       for (const month of selectedMonths) {
         const { startDate, endDate } = getMonthBounds(month);
-        const { error: txError } = await supabase
+        const { count: txCount, error: txError } = await supabase
           .from("transactions")
-          .delete()
+          .delete({ count: "exact" })
           .eq("user_id", userId)
           .gte("transaction_date", startDate)
           .lte("transaction_date", endDate);
         if (txError) throw txError;
+        deletionCounts.transactions += txCount || 0;
 
-        const { error: importError } = await supabase
+        const { count: importCount, error: importError } = await supabase
           .from("statement_imports")
-          .delete()
+          .delete({ count: "exact" })
           .eq("user_id", userId)
           .lte("start_date", endDate)
           .gte("end_date", startDate);
         if (importError) throw importError;
+        deletionCounts.statement_imports += importCount || 0;
       }
 
-      await supabase.from("money_understanding_snapshots").delete().eq("user_id", userId);
+      const { count: snapshotCount, error: snapshotError } = await supabase
+        .from("money_understanding_snapshots")
+        .delete({ count: "exact" })
+        .eq("user_id", userId);
+      if (snapshotError) throw snapshotError;
+      deletionCounts.money_understanding_snapshots = snapshotCount || 0;
+
+      const { count: coachSnapshotCount, error: coachSnapshotError } = await supabase
+        .from("coach_context_snapshots")
+        .delete({ count: "exact" })
+        .eq("user_id", userId);
+      if (coachSnapshotError) throw coachSnapshotError;
+      deletionCounts.coach_context_snapshots = coachSnapshotCount || 0;
+
+      await logDeletionEvent({
+        userId,
+        actionType: "month_delete",
+        selectedMonths,
+        counts: deletionCounts,
+      });
+
       setSelectedMonths([]);
       await onDataChange?.();
       alert("Selected month data deleted.");
@@ -279,6 +325,19 @@ export default function SettingsPage({
       </Section>
     </>
   );
+}
+
+async function logDeletionEvent({ userId, actionType, selectedMonths, counts }) {
+  const { error } = await supabase.from("data_deletion_events").insert({
+    user_id: userId,
+    action_type: actionType,
+    selected_months: selectedMonths,
+    counts,
+  });
+
+  if (error) {
+    console.warn("Deletion audit event could not be saved", error);
+  }
 }
 
 function getMonthOptions(transactions = []) {
