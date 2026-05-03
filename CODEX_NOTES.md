@@ -9,6 +9,8 @@ These notes document the recent safety fixes made through ChatGPT so Codex or a 
 - `a445c6b35aac971f6f703f29d9b5e355b3f1dfd5` - Switched `src/App.jsx` to load `UploadPageSafe` for the Upload tab.
 - `830f3795a31d68743f14675f27f910b70a91673a` - Added `src/pages/CoachPageGuarded.jsx` to block Coach sends until the saved Coach brain snapshot matches the currently loaded transactions.
 - `d00bea636f087122a196990a6c5630081827e73e` - Switched `src/App.jsx` to load `CoachPageGuarded` for the Coach tab.
+- `01242d541d679d2da3c69957096020432da84fe5` - Made `swift-worker` CORS fail closed in production when `ALLOWED_ORIGINS` is missing.
+- `9e50a7ea6cebc88230fe2094da1ecc75bf5c04ba` - Made `money-organiser` CORS fail closed in production when `ALLOWED_ORIGINS` is missing.
 
 ## What changed
 
@@ -76,6 +78,18 @@ If the snapshot is missing or stale, the guard retries briefly to allow the dela
 
 This is still a client-side guard around the existing client-generated snapshot design. The best future version is to move Coach context construction fully server-side, but this commit closes the immediate race where a user imports data and asks Coach before the delayed snapshot save has caught up.
 
+### 5. Edge Function CORS now fails closed where safely patched
+
+`supabase/functions/swift-worker/index.ts` and `supabase/functions/money-organiser/index.ts` now require explicit `ALLOWED_ORIGINS` in production.
+
+The new behaviour is:
+
+- If `ENVIRONMENT`, `DENO_ENV`, or `APP_ENV` is `production` or `prod` and `ALLOWED_ORIGINS` is empty, the function returns `500` with `X-CORS-Config-Error: missing_allowed_origins`.
+- If `ALLOWED_ORIGINS` is set, only listed origins are allowed.
+- If not in production and `ALLOWED_ORIGINS` is empty, only localhost-style origins are allowed. Unknown remote origins get `Access-Control-Allow-Origin: null`.
+
+Important: `supabase/functions/ai-coach/index.ts` still needs the same fail-closed CORS patch. The GitHub connector truncated that large file, so it was not safely overwritten in this pass. Codex should apply the same helper pattern to `ai-coach` locally where the full file is available.
+
 ## Important implementation notes
 
 The original `src/pages/UploadPage.jsx` was left in place as a fallback/reference. The app currently imports:
@@ -125,5 +139,7 @@ npm run check
 - Re-upload similar rows and confirm duplicate/near-duplicate warnings behave as expected.
 - Import data, immediately open Coach, and send a question before the delayed snapshot is ready. Expected result: send is blocked with a stale Coach brain message rather than answering from old data.
 - Wait a moment after import and send the same Coach question again. Expected result: Coach sends once `coach_context_snapshots.context.transaction_count` and latest transaction date match the loaded transactions.
+- Test `swift-worker` and `money-organiser` locally with production env and no `ALLOWED_ORIGINS`. Expected result: 500 fail-closed response.
+- Apply the same fail-closed CORS helper to `supabase/functions/ai-coach/index.ts` locally, then deploy all three Edge Functions with `ALLOWED_ORIGINS` set.
 - Consider moving Coach context construction fully server-side so the browser never acts as the source of truth for AI context.
 - Consider merging `UploadPageSafe.jsx` and `CoachPageGuarded.jsx` back into the original files once verified, to avoid maintaining parallel page files.
