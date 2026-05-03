@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "npm run lint && npm run test:money && npm run test:organiser && npm run test:security && npm run build",
+    "check": "npm run lint && npm run test:money && npm run test:organiser && npm run test:security && npm run test:import && npm run build",
     "test:money": "node scripts/check-money-understanding.mjs",
     "test:organiser": "node scripts/check-money-organiser-intelligence.mjs",
     "test:security": "node scripts/check-security-validation.mjs",
+    "test:import": "node scripts/check-import-analysis.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

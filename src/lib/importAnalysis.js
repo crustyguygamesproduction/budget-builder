@@ -32,11 +32,22 @@ export function summariseRowsForImport(rows) {
   };
 }
 
-export function getImportFingerprint(fileName, rows) {
+export function getLegacyImportFingerprint(fileName, rows) {
   const summary = summariseRowsForImport(rows);
   const head = rows.slice(0, 3).map((row) => `${row.date}|${row.description}|${row.amount}`).join("||");
   const tail = rows.slice(-3).map((row) => `${row.date}|${row.description}|${row.amount}`).join("||");
   return normalizeText(`${fileName}|${rows.length}|${summary.startDate}|${summary.endDate}|${head}|${tail}`);
+}
+
+export function getImportFingerprint(rows) {
+  const summary = summariseRowsForImport(rows);
+  const normalizedRows = rows
+    .map((row) =>
+      normalizeText(`${row.date}|${Number(row.amount || 0).toFixed(2)}|${row.description}`)
+    )
+    .sort()
+    .join("||");
+  return normalizeText(`${rows.length}|${summary.startDate}|${summary.endDate}|${normalizedRows}`);
 }
 
 export function getImportOverlapSummary(rows, existingTransactions) {

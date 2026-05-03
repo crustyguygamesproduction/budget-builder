@@ -5,12 +5,13 @@ import { ActionCard, InsightCard, MiniCard, Row, Section } from "../components/u
 import {
   formatDateRange,
   getImportFingerprint,
+  getLegacyImportFingerprint,
   getImportOverlapSummary,
   getTransactionConfidence,
   summariseRowsForImport,
 } from "../lib/importAnalysis";
 import { buildUploadGuidance } from "../lib/uploadGuidance";
-import { getTotals, normalizeText } from "../lib/finance";
+import { formatCurrency, getTotals, normalizeText } from "../lib/finance";
 import { validateStatementCsvFileContent } from "../lib/security";
 import {
   enhanceTransactions,
@@ -23,6 +24,7 @@ import { getFunctionErrorMessage } from "../lib/functionErrors";
 import { inferTransactionCategory } from "../lib/transactionCategorisation";
 
 const MAX_DATE_ERRORS_TO_SHOW = 5;
+const ALREADY_IMPORTED_RATIO = 0.85;
 
 export default function UploadPageSafe({
   accounts,
@@ -512,7 +514,7 @@ export default function UploadPageSafe({
       return {
         label: "AI + fallback",
         headline: `Mapped ${matchedFields.length} useful columns cleanly`,
-        body: "Dates are normalised to ISO before preview and save, so Calendar and duplicate checks use a safe format.",
+        body: "Dates, names and amounts look readable. Money Hub can safely check this against what is already saved.",
         confidence: 0.9,
       };
     }
@@ -521,15 +523,15 @@ export default function UploadPageSafe({
       return {
         label: "Mixed confidence",
         headline: "Some key columns mapped, some will fall back",
-        body: "The app can still import this, but a few fields are being inferred from generic bank-statement fallbacks.",
+        body: "The app can still read this, but check the preview before saving.",
         confidence: 0.68,
       };
     }
 
     return {
       label: "Fallback only",
-      headline: "AI mapping was weak on this file",
-      body: "The import can still continue, but it is leaning on fallback header guesses rather than a confident mapping.",
+      headline: "Using the backup reader",
+      body: "Money Hub is using its backup reader. Check the preview before saving.",
       confidence: 0.45,
     };
   }
@@ -542,12 +544,17 @@ export default function UploadPageSafe({
         normalizeText(account.nickname) === normalizeText(guessedName)
     );
     const dateSummary = summariseRowsForImport(rows);
-    const fingerprint = getImportFingerprint(file.name, rows);
+    const fingerprint = getImportFingerprint(rows);
+    const legacyFingerprint = getLegacyImportFingerprint(file.name, rows);
     const duplicateImport = statementImports.find(
-      (item) => item.file_fingerprint && item.file_fingerprint === fingerprint
+      (item) => item.file_fingerprint && (item.file_fingerprint === fingerprint || item.file_fingerprint === legacyFingerprint)
     );
     const overlapSummary = getImportOverlapSummary(rows, existingTransactions);
     const nearDuplicateSummary = getNearDuplicateSummary(rows, existingTransactions);
+    const alreadyImported =
+      Boolean(duplicateImport) ||
+      overlapSummary.ratio >= ALREADY_IMPORTED_RATIO ||
+      (rows.length > 0 && nearDuplicateSummary.count / rows.length >= ALREADY_IMPORTED_RATIO);
 
     return {
       id: `${file.name}-${file.size}-${file.lastModified}`,
@@ -560,7 +567,9 @@ export default function UploadPageSafe({
       importMeta: {
         ...dateSummary,
         fingerprint,
+        legacyFingerprint,
         duplicateImport,
+        alreadyImported,
         overlapSummary,
         nearDuplicateSummary,
         mappingMeta,
@@ -682,7 +691,7 @@ export default function UploadPageSafe({
                 step: 3,
                 tone: "good",
                 title: "Statement ready to import",
-                body: "Dates are saved as ISO YYYY-MM-DD and duplicate checks use normalised date, amount and description keys.",
+                body: "Money Hub can read this file. Check the preview, then save it.",
               });
             } catch (error) {
               setUploadStatus({
@@ -767,7 +776,7 @@ export default function UploadPageSafe({
 
       for (const fileItem of files) {
         if (!fileItem.rows.length) continue;
-        if (fileItem.importMeta?.duplicateImport) {
+        if (fileItem.importMeta?.duplicateImport || fileItem.importMeta?.alreadyImported) {
           skippedFiles += 1;
           continue;
         }
@@ -863,15 +872,17 @@ export default function UploadPageSafe({
         totalRows += fileItem.rows.length;
       }
 
-      setUploadStatus({
-        phase: "organising",
-        step: 5,
-        tone: "working",
-        title: "Organising your money with AI",
-        body: "Finding your bills, rent, subscriptions and spending patterns for Home and Calendar.",
-      });
+      if (totalSavedFiles > 0) {
+        setUploadStatus({
+          phase: "organising",
+          step: 5,
+          tone: "working",
+          title: "Organising your money",
+          body: "Finding your bills, rent, subscriptions and spending patterns for Home and Calendar.",
+        });
 
-      await onImportDone?.();
+        await onImportDone?.();
+      }
 
       setFiles([]);
 
@@ -879,8 +890,10 @@ export default function UploadPageSafe({
         phase: "done",
         step: 5,
         tone: "good",
-        title: "Import complete",
-        body: `Imported ${totalSavedFiles} file${totalSavedFiles === 1 ? "" : "s"}, scanned ${totalRows} rows, and skipped ${skippedFiles} duplicate-looking file${skippedFiles === 1 ? "" : "s"}. Dates are ISO-normalised and duplicate keys are hardened.`,
+        title: totalSavedFiles > 0 ? "Statements saved" : "Nothing new to save",
+        body: totalSavedFiles > 0
+          ? `Saved ${totalSavedFiles} new file${totalSavedFiles === 1 ? "" : "s"} with ${totalRows} row${totalRows === 1 ? "" : "s"}. Skipped ${skippedFiles} file${skippedFiles === 1 ? "" : "s"} that looked already uploaded.`
+          : `Skipped ${skippedFiles} file${skippedFiles === 1 ? "" : "s"} because Money Hub already has them.`,
       });
     } catch (error) {
       setUploadStatus({
@@ -916,13 +929,15 @@ export default function UploadPageSafe({
   const previewHistory = getHistorySummary(previewTransactions);
   const previewRecurring = getRecurringSummary(previewTransactions);
   const previewTransfers = getTransferSummary(previewTransactions);
-  const nearDuplicateCount = files.reduce((sum, file) => sum + Number(file.importMeta?.nearDuplicateSummary?.count || 0), 0);
+  const alreadyUploadedFiles = files.filter((file) => file.importMeta?.alreadyImported);
+  const newFiles = files.filter((file) => !file.importMeta?.alreadyImported);
+  const newRowsCount = newFiles.reduce((sum, file) => sum + file.rows.length, 0);
 
   return (
     <>
       <Section
         styles={styles}
-        title="Bulk Statement Upload"
+        title="Upload Bank Statements"
         right={
           <button
             style={styles.ghostBtn}
@@ -934,7 +949,7 @@ export default function UploadPageSafe({
         }
       >
         <p style={styles.sectionIntro}>
-          Add multiple CSV statements at once. Dates are normalised to ISO before preview and save, and row duplicates use account, ISO date, amount in pence, and cleaned description.
+          Choose your bank CSVs. Money Hub reads them, spots anything you already uploaded, and only saves the new stuff.
         </p>
 
         <UploadProgressCard status={uploadStatus} styles={styles} />
@@ -988,8 +1003,8 @@ export default function UploadPageSafe({
             <strong>{saving || uploadStatus.tone === "working" ? "Working on your statement..." : "Choose CSV statements"}</strong>
             <span style={{ fontSize: 13 }}>
               {saving || uploadStatus.tone === "working"
-                ? "Keep this page open while Money Hub reads it."
-                : "Tap here, choose your file, then check the preview before importing."}
+                ? "Keep this page open for a moment."
+                : "You can pick more than one. CSV only. Duplicates are fine."}
             </span>
           </label>
         </div>
@@ -1016,7 +1031,7 @@ export default function UploadPageSafe({
           <div>
             <strong>{files.length} statement{files.length === 1 ? "" : "s"} ready</strong>
             <p style={{ ...styles.transactionMeta, margin: 0, color: "rgba(255,255,255,0.78)" }}>
-              {allPreviewRows.length} ISO-normalised rows found. Nothing has been saved yet.
+              {newFiles.length ? `${newRowsCount} new row${newRowsCount === 1 ? "" : "s"} look ready.` : "Everything here looks already uploaded."} Nothing has been saved yet.
             </p>
           </div>
 
@@ -1025,12 +1040,12 @@ export default function UploadPageSafe({
             onClick={saveAllImports}
             disabled={saving}
           >
-            {saving ? "Importing..." : "Import now"}
+            {saving ? "Importing..." : newFiles.length ? "Save new stuff" : "Skip these"}
           </button>
         </div>
       )}
 
-      <Section styles={styles} title="Upload Plan">
+      <Section styles={styles} title="What To Upload">
         <div style={styles.aiInsightGrid}>
           <InsightCard
             styles={styles}
@@ -1044,7 +1059,7 @@ export default function UploadPageSafe({
             styles={styles}
             label="Next best upload"
             headline={uploadGuidance.nextBestUpload}
-            body="This keeps setup focused so the app gets smarter without making you do needless admin."
+            body="Start with the statements that cover your normal spending. Money Hub will do the sorting."
             actionLabel="Choose CSV files"
             onClick={() => document.getElementById("statement-upload-input")?.click()}
           />
@@ -1060,28 +1075,57 @@ export default function UploadPageSafe({
         <>
           <div style={getGridStyle(screenWidth)}>
             <MiniCard styles={styles} title="Files" value={`${files.length}`} />
-            <MiniCard styles={styles} title="Rows" value={`${allPreviewRows.length}`} />
-            <MiniCard styles={styles} title="History read" value={previewHistory.label} />
-            <MiniCard styles={styles} title="Near duplicates" value={`${nearDuplicateCount}`} />
+            <MiniCard styles={styles} title="New files" value={`${newFiles.length}`} />
+            <MiniCard styles={styles} title="Already uploaded" value={`${alreadyUploadedFiles.length}`} />
+            <MiniCard styles={styles} title="Rows checked" value={`${allPreviewRows.length}`} />
           </div>
 
-          <Section styles={styles} title="Smart Import Read">
+          {alreadyUploadedFiles.length > 0 ? (
+            <Section styles={styles} title="Already Got These">
+              <p style={styles.sectionIntro}>
+                Money Hub found statement{alreadyUploadedFiles.length === 1 ? "" : "s"} that look like they are already in the app. They will be skipped so your spending does not double up.
+              </p>
+              {alreadyUploadedFiles.map((fileItem) => {
+                const matchCount =
+                  fileItem.importMeta?.nearDuplicateSummary?.count ||
+                  fileItem.importMeta?.overlapSummary?.count ||
+                  fileItem.rows.length;
+                return (
+                  <Row
+                    key={`already-${fileItem.id}`}
+                    styles={styles}
+                    name={fileItem.fileName}
+                    value={`${matchCount} matching row${matchCount === 1 ? "" : "s"}`}
+                  />
+                );
+              })}
+            </Section>
+          ) : null}
+
+          <Section styles={styles} title="What Money Hub Found">
             <div style={styles.aiInsightGrid}>
               <InsightCard
                 styles={styles}
-                label="Income preview"
-                headline={`£${previewTotals.income.toFixed(2)} income seen`}
-                body="Internal transfers are treated separately so fake income is less likely to pollute the totals."
+                label="Money in"
+                headline={`${formatCurrency(previewTotals.income)} spotted`}
+                body="This is a quick preview. Money Hub will sort wages, transfers and refunds properly after saving."
               />
-              <InsightCard styles={styles} label="History confidence" headline={previewHistory.headline} body={previewHistory.body} />
-              <InsightCard styles={styles} label="Recurring confidence" headline={previewRecurring.headline} body={previewRecurring.body} />
-              <InsightCard styles={styles} label="Transfer check" headline={previewTransfers.headline} body={previewTransfers.body} />
+              <InsightCard styles={styles} label="Dates" headline={previewHistory.headline} body={previewHistory.body} />
+              <InsightCard styles={styles} label="Bills" headline={previewRecurring.headline} body={previewRecurring.body} />
+              <InsightCard styles={styles} label="Transfers" headline={previewTransfers.headline} body={previewTransfers.body} />
             </div>
           </Section>
 
-          <Section styles={styles} title="Statements Ready To Save">
+          <Section styles={styles} title="Check Before Saving">
             {files.map((fileItem) => (
-              <div key={fileItem.id} style={styles.signalCard}>
+              <div
+                key={fileItem.id}
+                style={{
+                  ...styles.signalCard,
+                  background: fileItem.importMeta?.alreadyImported ? "#fffbeb" : styles.signalCard?.background,
+                  borderColor: fileItem.importMeta?.alreadyImported ? "rgba(245, 158, 11, 0.45)" : styles.signalCard?.borderColor,
+                }}
+              >
                 <div style={styles.signalHeader}>
                   <div>
                     <strong>{fileItem.fileName}</strong>
@@ -1094,6 +1138,15 @@ export default function UploadPageSafe({
                   </button>
                 </div>
 
+                {fileItem.importMeta?.alreadyImported ? (
+                  <div style={styles.inlineInfoBlock}>
+                    <strong>Looks already uploaded</strong>
+                    <p style={styles.transactionMeta}>
+                      Money Hub will skip this file when you save. That protects you from doubled spending and doubled income.
+                    </p>
+                  </div>
+                ) : null}
+
                 {fileItem.importMeta?.mappingMeta ? (
                   <p style={styles.signalBody}>
                     {fileItem.importMeta.mappingMeta.headline}. {fileItem.importMeta.mappingMeta.body}
@@ -1102,9 +1155,9 @@ export default function UploadPageSafe({
 
                 {fileItem.importMeta?.nearDuplicateSummary?.count > 0 ? (
                   <div style={styles.inlineInfoBlock}>
-                    <strong>Possible row duplicates found</strong>
+                    <strong>Some rows may already be here</strong>
                     <p style={styles.transactionMeta}>
-                      {fileItem.importMeta.nearDuplicateSummary.count} row{fileItem.importMeta.nearDuplicateSummary.count === 1 ? "" : "s"} look similar to existing transactions by ISO date, amount and cleaned description.
+                      {fileItem.importMeta.nearDuplicateSummary.count} row{fileItem.importMeta.nearDuplicateSummary.count === 1 ? "" : "s"} match by date, amount and description. Money Hub uses this to avoid doubling things.
                     </p>
                     {fileItem.importMeta.nearDuplicateSummary.sample.map((item) => (
                       <Row key={item} name="Example" value={item} styles={styles} />
@@ -1153,7 +1206,7 @@ export default function UploadPageSafe({
 function UploadProgressCard({ status, styles }) {
   return (
     <div style={styles.inlineInfoBlock}>
-      <Row name={`Step ${status.step || 0}`} value={status.title} styles={styles} />
+      <Row name={status.step ? `Step ${status.step}` : "Status"} value={status.title} styles={styles} />
       <p style={styles.transactionMeta}>{status.body}</p>
     </div>
   );

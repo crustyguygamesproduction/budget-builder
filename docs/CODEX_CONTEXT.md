@@ -22,7 +22,7 @@ npm run check
 `npm run check` currently runs:
 
 ```text
-npm run lint && npm run test:money && npm run test:organiser && npm run test:security && npm run build
+npm run lint && npm run test:money && npm run test:organiser && npm run test:security && npm run test:import && npm run build
 ```
 
 GitHub Actions CI exists at `.github/workflows/check.yml` and runs `npm ci` plus `npm run check` on pushes and PRs.
@@ -78,6 +78,8 @@ CSV row duplicate keys are built from:
 - normalised description tokens
 
 Preserve the existing hardened duplicate behaviour.
+
+Statement import fingerprints are content-based rather than filename-based, with legacy filename-based matching kept for old imports. Re-uploaded files with mostly matching rows are skipped so statements do not double-count.
 
 ### Privacy consent
 

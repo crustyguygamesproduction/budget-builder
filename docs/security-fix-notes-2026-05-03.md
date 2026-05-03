@@ -16,7 +16,7 @@ git pull origin main
 npm run check
 ```
 
-`npm run check` runs lint, money-understanding checks, organiser intelligence checks, security validation checks and build.
+`npm run check` runs lint, money-understanding checks, organiser intelligence checks, security validation checks, import duplicate checks and build.
 
 GitHub Actions CI now exists at `.github/workflows/check.yml` and runs `npm ci` plus `npm run check` on pushes and PRs.
 
@@ -36,6 +36,8 @@ Most user-owned reads in `App.jsx` now explicitly filter by user ID on top of Su
 - Saved transaction dates use ISO `YYYY-MM-DD` only.
 
 Duplicate keys now use account ID, ISO date, rounded pence amount and normalised description tokens.
+
+Statement-level duplicate detection now uses a content fingerprint so renaming the same CSV does not make it look new. The app also skips uploads where most rows already match existing transactions.
 
 ### File validation helpers
 
