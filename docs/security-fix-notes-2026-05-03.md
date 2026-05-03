@@ -9,6 +9,10 @@ This note records the latest safety fixes made after the audit, plus remaining c
 - `16355687b73988668f2be50918c1c7a36ebc5434` - Updated `src/pages/AuthPage.jsx` to persist privacy/AI consent on signup.
 - `98b9772227d38f1481bc79d4454fe6a9720ae4ac` - Added migration for `profiles` and `data_deletion_events` with RLS.
 - `2e282528e4640c6e64ffef4a57739a3cb3d06fbb` - Updated `src/pages/SettingsPage.jsx` to log destructive deletion events.
+- `83bd4a1848f6c1d7c285b8b1d71e958d424fd35f` - Added `src/hooks/useViewport.js` as the first low-risk App orchestration extraction.
+- `fa235c3773d2a9e3feee05acc5d7e969b2fbe6d6` - Updated `money-organiser` to send deterministic transaction intelligence to AI instead of every raw row.
+- `29b3feb54a41cf580684d62e9ff60c23213cb8d1` - Added `status` and `error_code` fields to `data_deletion_events`.
+- `2719a656470ce8f2483e602378ed0f4abc7ff377` - Updated `SettingsPage.jsx` to record deletion audit events as `started`, then `completed` or `failed`.
 
 ## 6. File validation
 
@@ -42,38 +46,48 @@ The migration also adds a trigger on `auth.users` so the `profiles` row is creat
 
 ## 8. AI cost and latency
 
-Not fully implemented in this batch. Current `money-organiser` still sends raw rows up to the configured cap.
+`money-organiser` now builds deterministic transaction intelligence before calling OpenAI.
 
-Recommended next Codex task:
+The AI now receives grouped and capped context including:
 
-- Add a deterministic pre-clustering step before the AI call in `supabase/functions/money-organiser/index.ts`.
-- Group by normalised merchant/counterparty, amount bucket, day-of-month pattern, category, direction and transfer/bill/subscription flags.
-- Send the AI grouped recurring candidates, suspicious/uncertain groups, top category totals, large transaction samples and only a capped raw sample.
-- Keep raw row IDs locally/server-side so AI results can still map back to transaction IDs.
+- category totals
+- merchant/counterparty totals
+- recurring candidates
+- suspicious or high-impact groups
+- large outgoing samples
+- a capped representative raw sample
 
-This should reduce token cost and latency compared with sending up to 1,200 raw rows.
+Raw rows are still kept server-side for hashing and snapshot metadata, but the prompt no longer dumps every transaction row into the model. This should reduce token use and latency on larger accounts while preserving source transaction IDs in groups and samples.
+
+Follow-up: test the organiser output against known statement sets to ensure recurring bill quality has not regressed.
 
 ## 9. App orchestration
 
-Not fully refactored in this batch. `App.jsx` still owns a lot of orchestration.
+`src/hooks/useViewport.js` has been added as the first low-risk extraction, but it has not yet been wired into `App.jsx` because `App.jsx` is large and currently contains critical user scoping plus Coach snapshot logic.
 
 Recommended next Codex task:
 
-- Extract data loaders into `src/hooks/useMoneyHubData.js`.
-- Extract viewport state into `src/hooks/useViewport.js`.
-- Extract Coach snapshot saving into `src/hooks/useCoachSnapshot.js`.
+- Replace `App.jsx` viewport state/effect with `useViewport()`.
+- Then extract data loaders into `src/hooks/useMoneyHubData.js`.
+- Then extract Coach snapshot saving into `src/hooks/useCoachSnapshot.js`.
 - Keep `App.jsx` responsible mainly for routing/page composition.
 
-This should be done carefully because previous safety fixes in `App.jsx` added explicit user scoping and Coach snapshot writes that should not regress.
+Do this carefully because previous safety fixes in `App.jsx` added explicit user scoping and Coach snapshot writes that should not regress.
 
 ## 10. Destructive action auditability
 
-The new migration adds `data_deletion_events` with RLS.
+The migrations add `data_deletion_events` with RLS and status fields.
 
-`SettingsPage.jsx` now logs deletion metadata after:
+`SettingsPage.jsx` now logs deletion metadata for:
 
 - full data wipe
 - selected month deletion
+
+The lifecycle is now:
+
+1. insert a `started` audit event before deletion begins
+2. update it to `completed` with operational counts on success
+3. update it to `failed` with `error_code` and partial counts on failure
 
 The audit event stores operational metadata only:
 
@@ -81,9 +95,23 @@ The audit event stores operational metadata only:
 - `action_type`
 - `selected_months`
 - `counts`
+- `status`
+- `error_code`
 - `created_at`
 
 It does not store deleted transaction details or financial content.
+
+## Remaining high-priority local patches
+
+The GitHub connector repeatedly truncated these large files, so these should be done locally with Codex where the full files are available:
+
+1. `supabase/functions/ai-coach/index.ts`
+   - Apply the same fail-closed CORS helper used by `money-organiser` and `swift-worker`.
+   - Production/prod with missing `ALLOWED_ORIGINS` should return 500 and `X-CORS-Config-Error: missing_allowed_origins`.
+
+2. `src/pages/UploadPageSafe.jsx`
+   - Replace `validateStatementCsvFile(file)` with `await validateStatementCsvFileContent(file)` before `Papa.parse(file, ...)`.
+   - Keep the existing date normalisation and duplicate detection unchanged.
 
 ## Local checks
 
@@ -95,4 +123,4 @@ git pull origin main
 npm run check
 ```
 
-Also apply the new Supabase migration before testing signup/deletion audit flows.
+Also apply the new Supabase migrations before testing signup/deletion audit flows.
