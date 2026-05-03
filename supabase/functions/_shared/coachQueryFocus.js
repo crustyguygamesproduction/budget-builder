@@ -67,7 +67,7 @@ export function buildCoachQueryFocus(transactions = [], query = "", options = {}
   const parsedQuery = parseMoneyLookupQuery(query);
   const terms = getSearchTerms(query, options.stopWords, parsedQuery);
   const directionIntent = parsedQuery.directionIntent || getQueryDirectionIntent(query);
-  const personalMoneyIntent = hasPersonalMoneyIntent(query) || directionIntent === "incoming" || directionIntent === "outgoing";
+  const personalMoneyIntent = hasPersonalMoneyIntent(query) || parsedQuery.personalMoneyIntent;
   const timeWindow = getQueryTimeWindow(transactions, query, { getDate, anchorDate: options.anchorDate || options.latestTransactionDate });
   const scopedTransactions = timeWindow.matched
     ? transactions.filter((transaction) => isTransactionInTimeWindow(transaction, timeWindow, getDate))
@@ -287,30 +287,37 @@ function parseMoneyLookupQuery(query) {
   return {
     directionIntent,
     searchPhrase: cleanupSearchPhrase(rawSearchPhrase),
+    personalMoneyIntent: isPersonalLookup(text, directionIntent),
   };
 }
 
 function getRawSearchPhrase(text, directionIntent) {
   if (directionIntent === "incoming") {
     return firstCapture(text, [
-      /(?:^|\b)(?:did|has|have)?\s*(.+?)\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:me|to me)\b/,
-      /(?:^|\b)(?:received|money in|income)\s+from\s+(.+?)\b/,
-      /(?:^|\b)from\s+(.+?)\b/,
+      /(?:^|\b)(?:did|has|have)?\s*(.+)\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:me|to me)\b/,
+      /(?:^|\b)(?:received|money in|income)\s+from\s+(.+)$/,
+      /(?:^|\b)from\s+(.+)$/,
     ]);
   }
 
   if (directionIntent === "outgoing") {
     return firstCapture(text, [
-      /(?:^|\b)(?:did\s+)?i\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:money\s+)?(?:to\s+)?(.+?)\b/,
-      /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
-      /(?:^|\b)(?:at|on|to)\s+(.+?)\b/,
+      /(?:^|\b)(?:did\s+)?i\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\s+(?:money\s+)?(?:to\s+)?(.+)$/,
+      /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+)$/,
+      /(?:^|\b)(?:at|on|to)\s+(.+)$/,
     ]);
   }
 
   return firstCapture(text, [
-    /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+?)\b/,
-    /(?:^|\b)(?:with|from|at|on|to)\s+(.+?)\b/,
+    /(?:^|\b)(?:spent|spend|spending|paid|pay)\s+(?:at|on|to)\s+(.+)$/,
+    /(?:^|\b)(?:with|from|at|on|to)\s+(.+)$/,
   ]);
+}
+
+function isPersonalLookup(text, directionIntent) {
+  if (directionIntent === "incoming") return true;
+  if (directionIntent !== "outgoing") return false;
+  return /\bi\s+(?:send|sent|pay|paid|transfer|transferred|give|gave)\b/.test(text);
 }
 
 function stripLookupNoise(query) {
