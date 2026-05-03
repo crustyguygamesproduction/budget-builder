@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+ï»¿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { InsightCard, MiniCard, Section } from "../components/ui";
 import { getFunctionErrorMessage } from "../lib/functionErrors";
@@ -128,14 +128,7 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   const isViewingCurrentRecurringMonth = activeRecurringViewDate.getMonth() === currentMonth.getMonth() && activeRecurringViewDate.getFullYear() === currentMonth.getFullYear();
   const nextRecurringEvent = recurringMonthEvents.filter((event) => !isViewingCurrentRecurringMonth || event.day >= currentMonth.getDate()).sort((a, b) => a.day - b.day)[0] || recurringMonthEvents[0] || null;
   const patternSummary = getCalendarPatternSummary(transactions, timeframe);
-  const monthlyBreakdown = useMemo(
-() => getPersonalMonthlyBreakdown({
-transactions,
-timeframe: shortTimeframe ? "1m" : timeframe,
-appMoneyModel,
-}).slice(0, 6),
-[transactions, shortTimeframe, timeframe, appMoneyModel]
-);
+  const monthlyBreakdown = getMonthlyBreakdown(transactions, shortTimeframe ? "1m" : timeframe).slice(0, 6);
   const visibleHistoryTransactions = calendarDays.flatMap((day) => day.transactions || []);
   const selectedDay = selectedDayKey ? calendarDays.find((day) => day.key === selectedDayKey) || null : null;
   const canGoPrev = usingShortHistoryView ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, -1) : calendarMode === "recurring" ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, -1) : canShiftCalendarMonth(activeViewDate, calendarBounds, -1);
@@ -365,7 +358,7 @@ appMoneyModel,
   <small>Bring back things you removed</small>
 </button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
-            <MiniCard styles={styles} title={getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).hasShare ? "Your share" : "Amount"} value={nextRecurringEvent ? formatCurrency(getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).amount) : "£0.00"} />
+            <MiniCard styles={styles} title={getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).hasShare ? "Your share" : "Amount"} value={nextRecurringEvent ? formatCurrency(getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).amount) : "Â£0.00"} />
           </div>
         ) : (
           <div style={getCalendarSummaryGridStyle(screenWidth)}>
@@ -429,114 +422,10 @@ appMoneyModel,
       </Section>
 
       <Section styles={styles} title={monthlyBreakdown.length <= 1 ? "This Month" : "Recent Months"}>
-        {monthlyBreakdown.length === 0 ? <p style={styles.emptyText}>Add more history to see month-by-month personal net totals.</p> : monthlyBreakdown.length === 1 ? <div style={styles.daySummaryCard}><strong>{monthlyBreakdown[0].label}</strong><p style={styles.transactionMeta}>Personal net estimate · Used on {monthlyBreakdown[0].activeDays} day{monthlyBreakdown[0].activeDays === 1 ? "" : "s"}.</p><p style={{ ...styles.transactionMeta, color: monthlyBreakdown[0].net >= 0 ? "#059669" : "#dc2626", marginTop: "8px" }}>Net: {monthlyBreakdown[0].net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(monthlyBreakdown[0].net))}</p></div> : monthlyBreakdown.map((month) => <div key={month.key} style={styles.monthTrendRow}><div><strong>{month.label}</strong><p style={styles.transactionMeta}>Personal net estimate · Used on {month.activeDays} day{month.activeDays === 1 ? "" : "s"}</p></div><strong style={{ color: month.net >= 0 ? "#059669" : "#dc2626" }}>{month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}</strong></div>)}
+        {monthlyBreakdown.length === 0 ? <p style={styles.emptyText}>Add more history to see month-by-month spending.</p> : monthlyBreakdown.length === 1 ? <div style={styles.daySummaryCard}><strong>{monthlyBreakdown[0].label}</strong><p style={styles.transactionMeta}>Used on {monthlyBreakdown[0].activeDays} day{monthlyBreakdown[0].activeDays === 1 ? "" : "s"}.</p><p style={{ ...styles.transactionMeta, color: monthlyBreakdown[0].net >= 0 ? "#059669" : "#dc2626", marginTop: "8px" }}>Net: {monthlyBreakdown[0].net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(monthlyBreakdown[0].net))}</p></div> : monthlyBreakdown.map((month) => <div key={month.key} style={styles.monthTrendRow}><div><strong>{month.label}</strong><p style={styles.transactionMeta}>Used on {month.activeDays} day{month.activeDays === 1 ? "" : "s"}</p></div><strong style={{ color: month.net >= 0 ? "#059669" : "#dc2626" }}>{month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}</strong></div>)}
       </Section>
     </>
   );
-}
-
-function getPersonalMonthlyBreakdown({ transactions = [], timeframe, appMoneyModel }) {
-const rows = getMonthlyBreakdown(transactions, timeframe).map((row) => ({
-...row,
-earned: Number(row.earned || 0),
-spent: Number(row.spent || 0),
-adjustments: {
-sharedContributionExcluded: 0,
-grossBillReduction: 0,
-},
-}));
-
-const rowsByKey = new Map(rows.map((row) => [row.key, row]));
-const shared = appMoneyModel?.sharedBillContributions || {};
-const confirmed = shared.confirmed || [];
-const needsChecking = shared.needsChecking || [];
-
-const sharedContributionSourceIds = new Set(
-[...confirmed, ...needsChecking]
-.flatMap((contribution) => contribution.sourceIds || [])
-.map(String)
-);
-
-for (const transaction of transactions || []) {
-const amount = Number(transaction.amount || 0);
-if (amount <= 0) continue;
-if (!sharedContributionSourceIds.has(getCalendarTransactionSourceId(transaction))) continue;
-
-```
-const key = getCalendarMonthKey(transaction);
-const row = rowsByKey.get(key);
-if (!row) continue;
-
-row.earned = Math.max(row.earned - amount, 0);
-row.adjustments.sharedContributionExcluded += amount;
-```
-
-}
-
-const appliedBillAdjustments = new Set();
-
-for (const contribution of confirmed) {
-const appliedMonthlyAmount = Math.abs(Number(contribution.appliedMonthlyAmount || contribution.monthlyAmount || 0));
-if (!appliedMonthlyAmount) continue;
-
-```
-for (const transaction of transactions || []) {
-  if (!matchesSharedBillTransaction(transaction, contribution)) continue;
-
-  const key = getCalendarMonthKey(transaction);
-  const row = rowsByKey.get(key);
-  if (!row) continue;
-
-  const adjustmentKey = `${contribution.key || contribution.name}:${key}`;
-  if (appliedBillAdjustments.has(adjustmentKey)) continue;
-
-  const reduction = Math.min(row.spent, appliedMonthlyAmount);
-  row.spent = Math.max(row.spent - reduction, 0);
-  row.adjustments.grossBillReduction += reduction;
-  appliedBillAdjustments.add(adjustmentKey);
-}
-```
-
-}
-
-return rows.map((row) => ({
-...row,
-earned: roundCalendarMoney(row.earned),
-spent: roundCalendarMoney(row.spent),
-net: roundCalendarMoney(row.earned - row.spent),
-isPersonalEstimate: true,
-isAdjusted: row.adjustments.sharedContributionExcluded > 0 || row.adjustments.grossBillReduction > 0,
-}));
-}
-
-function getCalendarMonthKey(transaction) {
-const date = parseAppDate(transaction?.transaction_date);
-if (!date) return "";
-return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function getCalendarTransactionSourceId(transaction) {
-return String(transaction?.id || `${transaction?.transaction_date || ""}:${transaction?.description || ""}:${transaction?.amount || ""}`);
-}
-
-function matchesSharedBillTransaction(transaction, contribution) {
-const amount = Number(transaction?.amount || 0);
-if (amount >= 0 || isInternalTransferLike(transaction)) return false;
-
-const absoluteAmount = Math.abs(amount);
-const matchedBillAmount = Math.abs(Number(contribution?.matchedBillAmount || 0));
-const billName = normalizeText(contribution?.matchedBillName || "");
-const text = normalizeText(`${transaction?.description || ""} ${getMeaningfulCategory(transaction)} ${transaction?._smart_category || ""}`);
-
-const textMatchesBill = billName && (text.includes(billName) || billName.includes(text));
-const amountMatchesBill = matchedBillAmount > 0 && Math.abs(absoluteAmount - matchedBillAmount) <= Math.max(5, matchedBillAmount * 0.08);
-const looksBillLike = /\b(rent|landlord|mortgage|council|tax|energy|electric|electricity|gas|water|broadband|internet|wifi|phone|mobile|insurance|bill)\b/.test(text);
-
-return Boolean(textMatchesBill || (amountMatchesBill && looksBillLike));
-}
-
-function roundCalendarMoney(value) {
-return Math.round(Number(value || 0) * 100) / 100;
 }
 
 function CalendarBillsPanel({ events, styles, busyKey, onNotBill, sharedContributions = [] }) {
@@ -680,7 +569,7 @@ function getEventMatchText(event) {
     .toLowerCase()
     .replace(/\bbill around\b/g, " ")
     .replace(/\baround\b/g, " ")
-    .replace(/£?\d+(\.\d{1,2})?/g, " ")
+    .replace(/Â£?\d+(\.\d{1,2})?/g, " ")
     .replace(/\bbill\b/g, " ")
     .replace(/\bsubscription\b/g, " ")
     .replace(/\s+/g, " ")
@@ -922,4 +811,3 @@ function scoreCalendarEvent(event) {
   const confidenceScore = confidence === "high" ? 40 : confidence === "medium" ? 25 : confidence === "estimated" ? 12 : 0;
   return confidenceScore + Number(event?.sourceMonths || 0) * 6 + Number(event?.sourceCount || 0);
 }
-
