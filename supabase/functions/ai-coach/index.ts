@@ -184,7 +184,7 @@ async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
     });
     throw new PublicFunctionError(
       "openai_request_failed",
-      "Coach had trouble reading the saved money brain. Try again in a moment.",
+      "Coach reached your saved money brain, but the AI reply failed. Try again in a moment.",
       500,
       data?.error?.message || "OpenAI request failed",
       { openai_error_kind: openAIErrorKind, openai_status: response.status, model: body?.model || null }
