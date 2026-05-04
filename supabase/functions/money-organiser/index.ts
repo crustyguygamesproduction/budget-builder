@@ -16,6 +16,10 @@ function isLocalOrigin(origin: string) {
   return /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(origin);
 }
 
+function isProjectVercelOrigin(origin: string) {
+  return /^https:\/\/budget-builder-[a-z0-9-]+-crustyguygamesproductions-projects\.vercel\.app$/i.test(origin);
+}
+
 function buildCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
   const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "").split(",").map((item) => item.trim()).filter(Boolean);
@@ -30,7 +34,7 @@ function buildCorsHeaders(req: Request) {
     };
   }
 
-  const allowOrigin = allowedOrigins.includes(origin)
+  const allowOrigin = allowedOrigins.includes(origin) || isProjectVercelOrigin(origin)
     ? origin
     : allowedOrigins.length > 0
       ? allowedOrigins[0]
