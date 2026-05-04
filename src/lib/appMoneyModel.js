@@ -68,6 +68,8 @@ export function buildAppMoneyModel({
   );
   const monthlyFlexibleSpending = flexibleSpendingTotal / monthCount;
   const flexibleSpendingConfidence = getFlexibleConfidence(flexibleTransactions, monthWindow.monthKeys);
+  const allIncomeTransactions = getIncomeTransactions(transactions);
+  const allFlexibleTransactions = getFlexibleTransactions(transactions, billStreams, billMatchKeys);
 
   const safeMonthlySaving =
     incomeConfidence === "low"
@@ -92,6 +94,19 @@ export function buildAppMoneyModel({
   const sharedContributionChecks = buildSharedContributionChecks(sharedBillContributions.needsChecking);
   const checksWaiting = [...(moneyUnderstanding?.checks || []), ...sharedContributionChecks];
   const dataFreshness = getModelFreshness(transactions);
+  const cleanMonthlyFacts = buildCleanMonthlyFacts({
+    transactions,
+    incomeTransactions: allIncomeTransactions,
+    flexibleTransactions: allFlexibleTransactions,
+    billStreams,
+    billMatchKeys,
+    monthlyBillBurdenTotal,
+    monthlyIncome,
+    incomeConfidence,
+    flexibleSpendingConfidence,
+    sharedBillContributions,
+    checksWaiting,
+  });
   const confidenceWarnings = getConfidenceWarnings({
     dataFreshness,
     checksWaiting,
@@ -99,6 +114,7 @@ export function buildAppMoneyModel({
     flexibleSpendingConfidence,
     visibleCash,
     sharedBillContributions,
+    budgetSanity: cleanMonthlyFacts.budget_sanity,
   });
 
   return {
@@ -144,6 +160,7 @@ export function buildAppMoneyModel({
       body: affordabilityTone.body,
     },
     cashPosition: visibleCash,
+    cleanMonthlyFacts,
     dataFreshness,
     confidenceWarnings,
     checksWaiting,
@@ -180,6 +197,7 @@ export function buildAppMoneyModel({
       upcoming_bills: upcomingBills.slice(0, 12),
       checks_waiting: checksWaiting.slice(0, 12),
       warnings: confidenceWarnings,
+      clean_monthly_facts: cleanMonthlyFacts,
     },
     period: {
       label: monthWindow.label,
@@ -696,10 +714,365 @@ function getFlexibleTransactions(transactions, billStreams, billMatchKeys) {
   });
 }
 
+function buildCleanMonthlyFacts({
+  transactions = [],
+  incomeTransactions = [],
+  flexibleTransactions = [],
+  billStreams = [],
+  billMatchKeys = new Set(),
+  monthlyBillBurdenTotal = 0,
+  monthlyIncome = 0,
+  incomeConfidence = "low",
+  flexibleSpendingConfidence = "low",
+  sharedBillContributions = {},
+  checksWaiting = [],
+}) {
+  const months = buildMonthlyRows({
+    transactions,
+    incomeTransactions,
+    flexibleTransactions,
+    billStreams,
+    billMatchKeys,
+    monthlyBillBurdenTotal,
+  });
+  const closedMonths = months.filter((month) => month.status !== "partial");
+  const analysisMonths = closedMonths.length >= 2 ? closedMonths : months;
+  const recentMonths = analysisMonths.slice(-3);
+  const latestFullMonth = closedMonths.at(-1) || null;
+  const previousFullMonth = closedMonths.length >= 2 ? closedMonths.at(-2) : null;
+  const recentAverage = averageMonthlyRow(recentMonths);
+  const worstRecentMonth = recentMonths.length
+    ? recentMonths.slice().sort((a, b) => b.real_spending - a.real_spending)[0]
+    : null;
+  const trend = buildSpendingTrend({ recentMonths, latestFullMonth, previousFullMonth });
+  const categoryTrend = buildCategoryTrend(recentMonths);
+  const budgetSanity = buildBudgetSanity({
+    months: recentMonths.length ? recentMonths : months.slice(-3),
+    monthlyIncome,
+    incomeConfidence,
+    flexibleSpendingConfidence,
+    sharedBillContributions,
+  });
+  const uncertaintyFlags = buildUncertaintyFlags({ budgetSanity, sharedBillContributions, checksWaiting, latestFullMonth, recentMonths });
+
+  return {
+    basis: "clean_real_money_monthly",
+    note: "Use these clean monthly facts for Coach advice. Raw statement movement is included only as a sanity check and must not be compared to monthly income.",
+    latest_full_month: compactMonthlyRow(latestFullMonth),
+    previous_full_month: compactMonthlyRow(previousFullMonth),
+    recent_monthly_average: recentAverage,
+    worst_recent_month: compactMonthlyRow(worstRecentMonth),
+    trend,
+    categories_worsening: categoryTrend.worsening,
+    categories_improving: categoryTrend.improving,
+    risky_accelerating_categories: categoryTrend.risky,
+    budget_sanity: budgetSanity,
+    uncertainty_flags: uncertaintyFlags,
+    monthly_rows: months.slice(-6).map(compactMonthlyRow).filter(Boolean),
+    raw_history_totals: getRawHistoryTotals(transactions),
+    token_policy: "Coach gets compact month rows, trend and capped examples only. Do not send or reason over all raw rows for normal advice.",
+  };
+}
+
+function buildMonthlyRows({ transactions, incomeTransactions, flexibleTransactions, billStreams, billMatchKeys, monthlyBillBurdenTotal }) {
+  const rows = new Map();
+  const ensure = (key) => {
+    if (!rows.has(key)) {
+      rows.set(key, {
+        month: key,
+        label: monthLabel(key),
+        first_day_seen: "",
+        last_day_seen: "",
+        days_seen: new Set(),
+        raw_income: 0,
+        raw_outgoings: 0,
+        real_income: 0,
+        flexible_spending: 0,
+        bill_spending_gross: 0,
+        bill_burden: 0,
+        refunds_and_reimbursements: 0,
+        transfer_like_outgoings: 0,
+        excluded_outgoings: 0,
+        real_spending: 0,
+        net_after_real_spending: 0,
+        category_totals: {},
+        transaction_count: 0,
+        status: "observed",
+      });
+    }
+    return rows.get(key);
+  };
+
+  const incomeIds = new Set(incomeTransactions.map(getTransactionSourceId));
+  const flexibleIds = new Set(flexibleTransactions.map(getTransactionSourceId));
+
+  transactions.forEach((transaction) => {
+    const date = parseAppDate(transaction.transaction_date);
+    if (!date) return;
+    const key = monthKey(date);
+    const row = ensure(key);
+    const amount = Number(transaction.amount || 0);
+    const sourceId = getTransactionSourceId(transaction);
+    row.transaction_count += 1;
+    row.days_seen.add(date.getDate());
+    row.first_day_seen = !row.first_day_seen || transaction.transaction_date < row.first_day_seen ? transaction.transaction_date : row.first_day_seen;
+    row.last_day_seen = !row.last_day_seen || transaction.transaction_date > row.last_day_seen ? transaction.transaction_date : row.last_day_seen;
+
+    if (amount > 0) row.raw_income += amount;
+    if (amount < 0) row.raw_outgoings += Math.abs(amount);
+
+    if (incomeIds.has(sourceId)) row.real_income += amount;
+    if (isExcludedOutgoing(transaction, billStreams, billMatchKeys)) {
+      row.excluded_outgoings += Math.abs(amount);
+      if (isInternalTransferLike(transaction) || isSavingsInvestmentMovement(transaction)) {
+        row.transfer_like_outgoings += Math.abs(amount);
+      }
+    }
+    if (isRefundOrReimbursement(transaction) && amount > 0) {
+      row.refunds_and_reimbursements += amount;
+    }
+    if (isBillTransaction(transaction, billStreams, billMatchKeys)) {
+      row.bill_spending_gross += Math.abs(amount);
+    }
+    if (flexibleIds.has(sourceId)) {
+      const category = getMeaningfulCategory(transaction) || "Spending";
+      const spend = Math.abs(amount);
+      row.flexible_spending += spend;
+      row.category_totals[category] = roundMoney((row.category_totals[category] || 0) + spend);
+    }
+  });
+
+  return [...rows.values()]
+    .sort((a, b) => monthIndex(a.month) - monthIndex(b.month))
+    .map((row, index, list) => {
+      const refundOffset = Math.min(row.refunds_and_reimbursements, row.flexible_spending);
+      const billBurden = row.bill_spending_gross > 0
+        ? Math.min(row.bill_spending_gross, Math.abs(Number(monthlyBillBurdenTotal || row.bill_spending_gross)))
+        : 0;
+      const realSpending = Math.max(row.flexible_spending - refundOffset, 0) + billBurden;
+      const dayCount = row.days_seen.size;
+      const latestKey = list.at(-1)?.month;
+      const latestLooksPartial = row.month === latestKey && !isMonthCompleteEnough(row);
+      return {
+        ...row,
+        days_seen: dayCount,
+        refund_offset: roundMoney(refundOffset),
+        bill_burden: roundMoney(billBurden),
+        real_spending: roundMoney(realSpending),
+        net_after_real_spending: roundMoney(row.real_income - realSpending),
+        raw_income: roundMoney(row.raw_income),
+        raw_outgoings: roundMoney(row.raw_outgoings),
+        real_income: roundMoney(row.real_income),
+        flexible_spending: roundMoney(row.flexible_spending),
+        bill_spending_gross: roundMoney(row.bill_spending_gross),
+        refunds_and_reimbursements: roundMoney(row.refunds_and_reimbursements),
+        transfer_like_outgoings: roundMoney(row.transfer_like_outgoings),
+        excluded_outgoings: roundMoney(row.excluded_outgoings),
+        category_totals: topCategoryEntries(row.category_totals, 8),
+        status: latestLooksPartial ? "partial" : "closed",
+      };
+    });
+}
+
+function isMonthCompleteEnough(row) {
+  const first = Number(String(row.first_day_seen || "").slice(-2));
+  const last = Number(String(row.last_day_seen || "").slice(-2));
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return false;
+  return last >= 25 || (first <= 7 && last >= 21) || row.days_seen.size >= 12;
+}
+
+function averageMonthlyRow(months = []) {
+  if (!months.length) {
+    return { months_used: 0, real_income: 0, real_spending: 0, flexible_spending: 0, bill_burden: 0, raw_outgoings: 0, label: "No clean monthly average yet" };
+  }
+  const sum = (field) => months.reduce((total, row) => total + Number(row?.[field] || 0), 0);
+  return {
+    months_used: months.length,
+    month_labels: months.map((row) => row.label),
+    real_income: roundMoney(sum("real_income") / months.length),
+    real_spending: roundMoney(sum("real_spending") / months.length),
+    flexible_spending: roundMoney(sum("flexible_spending") / months.length),
+    bill_burden: roundMoney(sum("bill_burden") / months.length),
+    raw_outgoings: roundMoney(sum("raw_outgoings") / months.length),
+    label: `${months.length}-month clean average`,
+  };
+}
+
+function buildSpendingTrend({ recentMonths, latestFullMonth, previousFullMonth }) {
+  if (recentMonths.length < 2 || !latestFullMonth || !previousFullMonth) {
+    return {
+      direction: "unclear",
+      confidence: "low",
+      note: "I need another month of clean data before calling this a trend.",
+    };
+  }
+  const latest = Number(latestFullMonth.real_spending || 0);
+  const previous = Number(previousFullMonth.real_spending || 0);
+  const average = averageMonthlyRow(recentMonths).real_spending;
+  const deltaVsPrevious = roundMoney(latest - previous);
+  const deltaVsAverage = roundMoney(latest - average);
+  const threshold = Math.max(50, average * 0.1);
+  const direction = deltaVsPrevious > threshold
+    ? "worsening"
+    : deltaVsPrevious < -threshold
+      ? "improving"
+      : "stable";
+
+  return {
+    direction,
+    confidence: recentMonths.length >= 3 ? "medium" : "low",
+    latest_month: latestFullMonth.label,
+    previous_month: previousFullMonth.label,
+    latest_real_spending: latest,
+    previous_real_spending: previous,
+    recent_average_real_spending: average,
+    delta_vs_previous: deltaVsPrevious,
+    delta_vs_recent_average: deltaVsAverage,
+    note: direction === "unclear"
+      ? "Not enough clean monthly data yet."
+      : `Clean real spending is ${direction}.`,
+  };
+}
+
+function buildCategoryTrend(months = []) {
+  if (months.length < 2) return { worsening: [], improving: [], risky: [] };
+  const latest = months[months.length - 1];
+  const previousMonths = months.slice(0, -1);
+  const categories = new Set([
+    ...latest.category_totals.map((item) => item.category),
+    ...previousMonths.flatMap((month) => month.category_totals.map((item) => item.category)),
+  ]);
+
+  const rows = [...categories].map((category) => {
+    const latestTotal = getCategoryTotal(latest, category);
+    const previousAverage = previousMonths.reduce((sum, month) => sum + getCategoryTotal(month, category), 0) / previousMonths.length;
+    const delta = roundMoney(latestTotal - previousAverage);
+    const pct = previousAverage > 0 ? Math.round((delta / previousAverage) * 100) : latestTotal > 0 ? 100 : 0;
+    return {
+      category,
+      latest_month: latest.label,
+      latest: roundMoney(latestTotal),
+      previous_average: roundMoney(previousAverage),
+      delta,
+      percent_change: pct,
+    };
+  }).filter((item) => Math.abs(item.delta) >= 15 || Math.abs(item.percent_change) >= 20);
+
+  const worsening = rows
+    .filter((item) => item.delta > 0)
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, 5);
+  const improving = rows
+    .filter((item) => item.delta < 0)
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 5);
+  const risky = worsening
+    .filter((item) => item.latest >= 25 && item.percent_change >= 25)
+    .slice(0, 5);
+
+  return { worsening, improving, risky };
+}
+
+function buildBudgetSanity({ months = [], monthlyIncome, incomeConfidence, flexibleSpendingConfidence, sharedBillContributions }) {
+  const average = averageMonthlyRow(months);
+  const rawOutgoings = average.raw_outgoings;
+  const cleanSpending = average.real_spending;
+  const suspectedInflation = Math.max(rawOutgoings - cleanSpending, 0);
+  const transferHeavy = months.some((month) => Number(month.transfer_like_outgoings || 0) >= Math.max(250, Number(month.raw_outgoings || 0) * 0.25));
+  const impossibleAgainstIncome = Number(monthlyIncome || 0) > 0 && rawOutgoings > Number(monthlyIncome) * 1.5 && cleanSpending <= Number(monthlyIncome) * 1.2;
+  const rawOutgoingsLikelyInflated = suspectedInflation >= 250 && (transferHeavy || impossibleAgainstIncome || sharedBillContributions?.needsChecking?.length > 0);
+
+  return {
+    raw_outgoings_likely_inflated: rawOutgoingsLikelyInflated,
+    suspected_transfer_inflation_amount: roundMoney(suspectedInflation),
+    clean_monthly_spending_used_for_advice: cleanSpending,
+    raw_monthly_outgoings_average: rawOutgoings,
+    clean_monthly_income_estimate: roundMoney(monthlyIncome),
+    confidence: rawOutgoingsLikelyInflated
+      ? transferHeavy || impossibleAgainstIncome ? "high" : "medium"
+      : incomeConfidence === "high" && flexibleSpendingConfidence !== "low" ? "medium" : "low",
+    note: rawOutgoingsLikelyInflated
+      ? "Raw outgoings likely include transfers, savings, pass-through money or shared money. Use clean spending estimates for advice."
+      : "No major raw-vs-clean spending inflation detected.",
+  };
+}
+
+function buildUncertaintyFlags({ budgetSanity, sharedBillContributions, checksWaiting, latestFullMonth, recentMonths }) {
+  const flags = [];
+  if (budgetSanity.raw_outgoings_likely_inflated) flags.push("raw_outgoings_likely_inflated");
+  if (sharedBillContributions?.needsChecking?.length > 0) flags.push("shared_or_pass_through_money_needs_review");
+  if ((checksWaiting || []).length > 0) flags.push("review_checks_waiting");
+  if (!latestFullMonth) flags.push("latest_full_month_unclear");
+  if (recentMonths.length < 3) flags.push("trend_low_confidence");
+  return flags;
+}
+
+function getRawHistoryTotals(transactions = []) {
+  const rawIncome = transactions.reduce((sum, transaction) => sum + Math.max(Number(transaction.amount || 0), 0), 0);
+  const rawOutgoings = transactions.reduce((sum, transaction) => sum + Math.abs(Math.min(Number(transaction.amount || 0), 0)), 0);
+  return {
+    income: roundMoney(rawIncome),
+    outgoings: roundMoney(rawOutgoings),
+    net: roundMoney(rawIncome - rawOutgoings),
+    warning: "All-history raw totals are not monthly figures and may include transfers, shared money, refunds and pass-through movement.",
+  };
+}
+
+function compactMonthlyRow(row) {
+  if (!row) return null;
+  return {
+    month: row.month,
+    label: row.label,
+    status: row.status,
+    real_income: row.real_income,
+    real_spending: row.real_spending,
+    flexible_spending: row.flexible_spending,
+    bill_burden: row.bill_burden,
+    raw_outgoings: row.raw_outgoings,
+    excluded_outgoings: row.excluded_outgoings,
+    transfer_like_outgoings: row.transfer_like_outgoings,
+    refunds_and_reimbursements: row.refunds_and_reimbursements,
+    category_totals: row.category_totals,
+  };
+}
+
+function isExcludedOutgoing(transaction, billStreams, billMatchKeys) {
+  const amount = Number(transaction.amount || 0);
+  if (amount >= 0) return false;
+  if (isInternalTransferLike(transaction)) return true;
+  if (isBillTransaction(transaction, billStreams, billMatchKeys)) return false;
+  const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
+  return PASS_THROUGH_WORDS.test(text) || REFUND_WORDS.test(text) || SAVINGS_INVESTMENT_WORDS.test(text);
+}
+
+function isRefundOrReimbursement(transaction) {
+  const amount = Number(transaction.amount || 0);
+  if (amount <= 0) return false;
+  const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
+  return REFUND_WORDS.test(text);
+}
+
+function isSavingsInvestmentMovement(transaction) {
+  const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
+  return SAVINGS_INVESTMENT_WORDS.test(text);
+}
+
+function topCategoryEntries(totals, limit = 8) {
+  return Object.entries(totals || {})
+    .map(([category, total]) => ({ category, total: roundMoney(total) }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
+}
+
+function getCategoryTotal(month, category) {
+  return Number((month?.category_totals || []).find((item) => item.category === category)?.total || 0);
+}
+
 function isBillTransaction(transaction, billStreams, billMatchKeys) {
   const amount = Math.abs(Number(transaction.amount || 0));
   const provider = getBillBaseName(transaction._real_merchant_name || transaction.description || "");
   const category = normalizeText(getMeaningfulCategory(transaction));
+  if (/rent|mortgage/.test(category)) return true;
   const matchesCalendarBill = billStreams.some((stream) => {
     const streamProvider = getBillBaseName(stream.name || "");
     const sameProvider = provider && streamProvider && (provider === streamProvider || provider.includes(streamProvider) || streamProvider.includes(provider));
@@ -708,7 +1081,6 @@ function isBillTransaction(transaction, billStreams, billMatchKeys) {
   });
   if (matchesCalendarBill) return true;
 
-  if (billStreams.length === 0 && /rent|mortgage/.test(category)) return true;
   return false;
 }
 
@@ -984,7 +1356,18 @@ function getMonthsUntil(dateString) {
 }
 
 function monthKey(date) {
-  return `${date.getFullYear()}-${date.getMonth() + 1}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthIndex(key) {
+  const [year, month] = String(key || "").split("-").map(Number);
+  return Number(year || 0) * 12 + Number(month || 0);
+}
+
+function monthLabel(key) {
+  const [year, month] = String(key || "").split("-").map(Number);
+  if (!year || !month) return String(key || "");
+  return new Date(year, month - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 }
 
 function sumAmounts(transactions) {

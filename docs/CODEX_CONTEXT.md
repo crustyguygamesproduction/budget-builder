@@ -59,6 +59,33 @@ Do not run destructive Supabase commands without asking the user.
 
 ## Important safety improvements already made
 
+### Coach brain number discipline
+
+Status: completed on 2026-05-04.
+
+Relevant files:
+
+- `src/lib/appMoneyModel.js`
+- `src/lib/coachContext.js`
+- `supabase/functions/ai-coach/index.ts`
+- `docs/COACH_BRAIN_NUMBERS_AND_TRENDS.md`
+
+Current behaviour:
+
+- Coach is not the primary bank-statement parser.
+- `appMoneyModel` builds `cleanMonthlyFacts`, exposed to Coach as `clean_monthly_facts`.
+- Clean facts include latest full month, previous full month, recent monthly average, worst recent month, trend direction, worsening/improving categories, risky accelerating categories, budget sanity flags, uncertainty flags, capped monthly rows and raw all-history totals with a warning.
+- Internal transfers, savings/investment movements, pass-through/work money, shared bill contributions, refunds and reimbursements are excluded from clean spending/income before Coach sees the context.
+- Raw statement outgoings can set `budget_sanity.raw_outgoings_likely_inflated`, telling Coach to use clean spending estimates and ask for Review checks instead of shaming the user on raw movement.
+- Review/Coach confirmation options now include shared rent/bill contribution, friend/family, work/pass-through, refund/reimbursement, own transfer and ignore-from-budget answers.
+- `ai-coach` prompt rules forbid comparing all-history totals to monthly income and require timeframe-labelled figures.
+
+Preserve this flow:
+
+```text
+CSV or bank feed -> import parser -> money understanding / statement intelligence -> app money model -> compact Coach context -> AI Coach advice
+```
+
 ### User scoping
 
 Most user-owned reads in `App.jsx` now explicitly filter by user ID on top of RLS. Preserve this.
@@ -292,7 +319,7 @@ Do not combine the larger data-loader extraction with production hardening unles
 
 `App.jsx` still saves `coach_context_snapshots` from browser state. `CoachPageGuarded.jsx` helps reduce stale snapshot use, but a stronger long-term architecture is server-side Coach context construction.
 
-This should be a later project.
+This should be a later project. Do not work around it by dumping more raw transactions into `ai-coach`; keep improving the deterministic money model and compact context.
 
 ### `CoachPageGuarded` monkey-patches Supabase invoke
 

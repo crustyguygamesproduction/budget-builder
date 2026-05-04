@@ -587,12 +587,16 @@ function formatRelativeSyncTime(value) {
 
 function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
   const rules = [
+    { label: "Rent contribution", category: "Shared rent contribution", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
+    { label: "Bill contribution", category: "Shared bill contribution", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
     { label: "Rent", category: "Rent", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
     { label: "Bill", category: "Major bill", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
     { label: "Subscription", category: "Subscription", isBill: false, isSubscription: true, isInternalTransfer: false, matchAmount: true },
     { label: "Friend/family", category: "Personal payment", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
     { label: "Work/pass-through", category: "Work / pass-through", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
+    { label: "Refund/reimbursement", category: "Refund", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
     { label: "Transfer", category: "Internal Transfer", isBill: false, isSubscription: false, isInternalTransfer: true, matchAmount: false },
+    { label: "Ignore from budget", category: "Internal Transfer", isBill: false, isSubscription: false, isInternalTransfer: true, matchAmount: false },
   ];
 
   return (

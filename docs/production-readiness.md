@@ -30,6 +30,11 @@
   - `transaction_rules`
 - Edge Functions write server-side operational tables such as:
   - `ai_usage_events`
+- `ai-coach` consumes compact saved Coach snapshots. After changing `supabase/functions/ai-coach/index.ts`, redeploy it with:
+
+```bash
+npx supabase functions deploy ai-coach --project-ref itayxahonejogrnkhlkp
+```
 
 ## Vercel
 
@@ -68,6 +73,8 @@
 - The Supabase publishable key is safe to ship only when RLS policies are correct. Never expose service-role keys in Vite, Vercel client env vars, or browser code.
 - Keep document and receipt storage buckets private unless each object path is protected by user-specific storage policies.
 - Treat AI context as sensitive financial data. Edge functions should avoid logging full transaction payloads in production.
+- Coach context should stay compact. The pre-Coach layers should calculate clean monthly facts, transfer/pass-through exclusions, trend direction and uncertainty flags before the Edge Function calls OpenAI.
+- Do not solve Coach accuracy by sending all raw transaction history to OpenAI. Use `clean_monthly_facts`, `query_focus`, capped examples and Review checks.
 - `20260430_secure_upload_storage.sql` makes the `receipts` storage bucket private, adds user-path storage policies, and adds `file_path` columns so new uploads use short-lived signed links instead of public URLs.
 - New client uploads validate file type and size before parsing or storage. CSV statements are capped separately from receipt/document images and PDFs.
 - CSV, receipt, debt and investment uploads use content sniffing, not only filename or browser MIME type. HEIC/HEIF uploads require a real compatible `ftyp` brand.
@@ -96,3 +103,4 @@ npm run check
 - Vite warns that the main JavaScript chunk is over 500 KB. Code-splitting pages will address this.
 - Confirm Supabase Auth email settings, password policy, and allowed redirect URLs before public launch.
 - Apply `20260430_live_readiness.sql` before enabling paid mode or bank feed UI for real users.
+- A larger future architecture improvement is server-side Coach snapshot construction. The current production path is browser-built snapshots with deterministic clean-money facts and server-side prompt compaction.

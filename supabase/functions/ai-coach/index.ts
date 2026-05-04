@@ -377,6 +377,7 @@ function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
     monthly_flexible_spending: compactFlexibleSpending(savedContext?.monthly_flexible_spending),
     savings_capacity: compactSavingsCapacity(savedContext?.savings_capacity),
     cash_position: compactCashPosition(savedContext?.cash_position),
+    clean_monthly_facts: compactCleanMonthlyFacts(savedContext?.clean_monthly_facts || savedContext?.app_money_model?.clean_monthly_facts),
     confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 8),
     next_best_actions: compactActionList(savedContext?.next_best_actions || []).slice(0, 6),
     top_categories: (savedContext?.top_categories || []).slice(0, 12),
@@ -424,6 +425,7 @@ function buildMinimalCoachBrainForPrompt(savedContext: any, message = "") {
     monthly_flexible_spending: compactFlexibleSpending(savedContext?.monthly_flexible_spending),
     savings_capacity: compactSavingsCapacity(savedContext?.savings_capacity),
     cash_position: compactCashPosition(savedContext?.cash_position),
+    clean_monthly_facts: compactCleanMonthlyFacts(savedContext?.clean_monthly_facts || savedContext?.app_money_model?.clean_monthly_facts),
     confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 6),
     next_best_actions: compactActionList(savedContext?.next_best_actions || []).slice(0, 5),
     top_categories: (savedContext?.top_categories || []).slice(0, 8),
@@ -679,9 +681,60 @@ function compactAppMoneyModel(context: any) {
     stretch_monthly_saving_amount: context.stretch_monthly_saving_amount ?? null,
     current_cash: context.current_cash ?? null,
     cash_basis: context.cash_basis || null,
+    clean_monthly_facts: compactCleanMonthlyFacts(context.clean_monthly_facts),
     upcoming_bills: compactBills(safeArray(context.upcoming_bills)).slice(0, 12),
     checks_waiting: compactChecks(safeArray(context.checks_waiting)).slice(0, 12),
     warnings: safeArray(context.warnings).slice(0, 8),
+  };
+}
+
+function compactCleanMonthlyFacts(context: any) {
+  if (!context) return null;
+  return {
+    basis: context.basis || "clean_real_money_monthly",
+    note: context.note || null,
+    latest_full_month: compactCleanMonth(context.latest_full_month),
+    previous_full_month: compactCleanMonth(context.previous_full_month),
+    recent_monthly_average: context.recent_monthly_average
+      ? {
+          months_used: context.recent_monthly_average.months_used ?? null,
+          month_labels: safeArray(context.recent_monthly_average.month_labels).slice(-3),
+          real_income: context.recent_monthly_average.real_income ?? null,
+          real_spending: context.recent_monthly_average.real_spending ?? null,
+          flexible_spending: context.recent_monthly_average.flexible_spending ?? null,
+          bill_burden: context.recent_monthly_average.bill_burden ?? null,
+          raw_outgoings: context.recent_monthly_average.raw_outgoings ?? null,
+          label: context.recent_monthly_average.label || null,
+        }
+      : null,
+    worst_recent_month: compactCleanMonth(context.worst_recent_month),
+    trend: context.trend || null,
+    categories_worsening: safeArray(context.categories_worsening).slice(0, 5),
+    categories_improving: safeArray(context.categories_improving).slice(0, 5),
+    risky_accelerating_categories: safeArray(context.risky_accelerating_categories).slice(0, 5),
+    budget_sanity: context.budget_sanity || null,
+    uncertainty_flags: safeArray(context.uncertainty_flags).slice(0, 8),
+    monthly_rows: safeArray(context.monthly_rows).slice(-6).map(compactCleanMonth).filter(Boolean),
+    raw_history_totals: context.raw_history_totals || null,
+    token_policy: context.token_policy || null,
+  };
+}
+
+function compactCleanMonth(month: any) {
+  if (!month) return null;
+  return {
+    month: month.month || null,
+    label: month.label || null,
+    status: month.status || null,
+    real_income: month.real_income ?? null,
+    real_spending: month.real_spending ?? null,
+    flexible_spending: month.flexible_spending ?? null,
+    bill_burden: month.bill_burden ?? null,
+    raw_outgoings: month.raw_outgoings ?? null,
+    excluded_outgoings: month.excluded_outgoings ?? null,
+    transfer_like_outgoings: month.transfer_like_outgoings ?? null,
+    refunds_and_reimbursements: month.refunds_and_reimbursements ?? null,
+    category_totals: safeArray(month.category_totals).slice(0, 8),
   };
 }
 
@@ -811,6 +864,7 @@ ${hardTruthMode ? "ON" : "OFF"}
 - If hard truth mode is ON, answer in 6 short lines or fewer.
 - If hard truth mode is ON, do not include positives unless the user directly asks.
 - If hard truth mode is ON, do not explain every category. Pick the biggest 2 or 3 leaks.
+- If hard truth mode is ON for "what should I fix" or similar, structure the answer as decision first, clean timeframe-labelled evidence, trend, one practical cap/rule, and one uncertainty warning only if the data needs it.
 - If hard truth mode is ON, end with one strict rule for the next 7 days.
 - If hard truth mode is ON, no cosy follow-up offer.
 
@@ -827,16 +881,24 @@ Output rules:
 Maths and trust rules:
 - The maths is the product. Treat it as safety-critical.
 - Use only the supplied server-saved financial context from coach_context_snapshots.
+- You consume precomputed money intelligence. Do not parse all raw statements yourself or do basic arithmetic live when clean_monthly_facts/app_money_model/query_focus already gives the answer.
 - Never invent totals, surplus, rent, bills, pass-throughs, reimbursements, debt balances, investment values, or safe-to-spend numbers.
-- Prefer app_money_model, statement_intelligence, money_understanding, query_focus, monthly_breakdown_all and saved checks over raw examples.
+- Every money figure needs a timeframe: latest full month, recent monthly average, worst month, next 30 days, or all uploaded history.
+- Never compare all-history totals to monthly income. If you mention all uploaded history, explicitly say it is not a monthly figure.
+- For coaching/advice, use clean_monthly_facts first: query_focus for direct lookups, then latest_full_month, recent_monthly_average, trend, worst_recent_month, worsening/improving categories and uncertainty_flags.
+- Prefer app_money_model, clean_monthly_facts, statement_intelligence, money_understanding, query_focus and saved checks over raw examples.
 - For "how much did I spend/receive on X in latest/last/this month" questions, use query_focus.relevant_money_total, query_focus.direct_money_out, query_focus.direct_money_in and query_focus.time_window before merchant_totals or category_totals.
 - If query_focus.time_window.matched is true, say the answer is for that uploaded-data window only. Do not use all-history merchant totals for that answer.
 - If pass_through_analysis is present, use its standard_view and known_pass_through_view exactly. Do not recalculate those numbers in prose.
+- If clean_monthly_facts.budget_sanity.raw_outgoings_likely_inflated is true, do not shame the user using raw outgoings. Say raw movement likely includes transfers, pass-through money, shared money, refunds or savings moves, and use clean real spending for advice.
+- Never treat internal transfers, savings/investment moves, pass-through/work/client money, shared rent/bill contributions, family/friend support, refunds, reversals, cashback or reimbursements as real income/spending unless the app context explicitly says they are real budget money.
 - Do not say the user is ahead, up, in surplus, or fine unless that exact claim is supported by an app-calculated field.
 - Always distinguish historical statement net from current cash available today.
 - If current balances are not supplied, say you cannot verify current cash exactly from statements alone.
 - Possible pass-through candidates are not confirmed exclusions. Tell the user they need confirming before being removed from personal spending.
 - Rent, bills and subscriptions stay included in real spending unless the app context explicitly says otherwise.
+- If figures conflict or look impossible, say so plainly. Do not force a confident judgement out of bad totals.
+- Brutality is allowed for behaviour, not uncertain maths.
 
 Learning loop rules:
 - If the user asks a broad human-life question, such as friends, family, work money, lending, paying people back, shared bills, side income, or support, make the best safe read from query_focus first.

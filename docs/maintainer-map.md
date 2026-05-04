@@ -30,8 +30,9 @@ Use this first when making changes so future work does not start by rereading th
 - `src/lib/finance.js` owns general money/date/transaction helpers. Put shared transaction classification and currency/date formatting here.
 - `src/lib/moneyUnderstanding.js` owns the shared interpreted money layer: smart transactions, bills, recurring events, checks, summary, and AI context.
 - `src/lib/appMoneyModel.js` owns page-friendly reads derived from `moneyUnderstanding`: Calendar bill totals, income, usual spending, safe saving amount, warnings, and next actions.
+- `src/lib/appMoneyModel.js` also owns `cleanMonthlyFacts`, the compact monthly money brain Coach uses for latest full month, recent average, trend, worst month, raw-vs-clean sanity checks and uncertainty flags.
 - `src/lib/statementIntelligence.js` owns statement-derived intelligence.
-- `src/lib/coachContext.js` builds the AI coach context. If the coach needs to understand more data, start here.
+- `src/lib/coachContext.js` builds the AI coach context. If the coach needs better numbers, start in `appMoneyModel` or `statementIntelligence`, then pass compact facts here.
 - `src/lib/importAnalysis.js` owns upload-specific import metadata: date ranges, duplicate fingerprints, overlap checks, and row confidence.
 - `src/lib/uploadGuidance.js` owns upload guidance copy and next-best-upload recommendations.
 

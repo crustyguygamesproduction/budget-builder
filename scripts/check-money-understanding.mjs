@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "vite";
 
 const server = await createServer({
@@ -11,6 +12,7 @@ const server = await createServer({
 const { buildMoneyUnderstanding } = await server.ssrLoadModule("/src/lib/moneyUnderstanding.js");
 const { buildAppMoneyModel } = await server.ssrLoadModule("/src/lib/appMoneyModel.js");
 const { getStatementIntelligenceContext } = await server.ssrLoadModule("/src/lib/statementIntelligence.js");
+const { buildCoachContext } = await server.ssrLoadModule("/src/lib/coachContext.js");
 
 let nextId = 1;
 
@@ -30,6 +32,19 @@ function tx(description, amount, date, extra = {}) {
 
 function amounts(items) {
   return items.map((item) => Number(item.amount.toFixed(2))).sort((a, b) => a - b);
+}
+
+function buildModel(transactions, options = {}) {
+  const understanding = buildMoneyUnderstanding({ transactions, transactionRules: options.transactionRules || [] });
+  return {
+    understanding,
+    appModel: buildAppMoneyModel({
+      moneyUnderstanding: understanding,
+      goals: options.goals || [],
+      debts: options.debts || [],
+      investments: options.investments || [],
+    }),
+  };
 }
 
 {
@@ -457,6 +472,143 @@ function amounts(items) {
   assert.equal(context.queryFocus.relevant_match_count, 3);
   assert.equal(context.queryFocus.relevant_money_total, 80);
   assert.ok(context.queryFocus.direct_match_note.includes("personal payments"));
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Payroll wages", 1700, "2026-01-01", { category: "Wages" }),
+    tx("Payroll wages", 1700, "2026-02-01", { category: "Wages" }),
+    tx("Payroll wages", 1700, "2026-03-01", { category: "Wages" }),
+    tx("Gaming Jan", -200, "2026-01-28", { category: "Gaming" }),
+    tx("Gaming Feb", -300, "2026-02-28", { category: "Gaming" }),
+    tx("Gaming Mar", -400, "2026-03-28", { category: "Gaming" }),
+  ]);
+  const facts = appModel.cleanMonthlyFacts;
+
+  assert.equal(facts.raw_history_totals.outgoings, 900);
+  assert.equal(facts.recent_monthly_average.real_spending, 300);
+  assert.equal(facts.latest_full_month.real_spending, 400);
+  assert.equal(facts.worst_recent_month.real_spending, 400);
+  assert.ok(readFileSync("supabase/functions/ai-coach/index.ts", "utf8").includes("Never compare all-history totals to monthly income"));
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Payroll wages", 1739, "2026-04-01", { category: "Wages" }),
+    tx("Transfer to savings pot", -1000, "2026-04-02", { category: "Internal Transfer" }),
+    tx("Own account transfer", -800, "2026-04-03", { category: "Internal Transfer" }),
+    tx("Gaming", -80, "2026-04-10", { category: "Gaming" }),
+    tx("Food shop", -250, "2026-04-12", { category: "Groceries" }),
+    tx("Rent bill", -700, "2026-04-28", { category: "Rent", is_bill: true }),
+  ]);
+  const facts = appModel.cleanMonthlyFacts;
+
+  assert.equal(facts.latest_full_month.real_spending, 1030);
+  assert.equal(facts.latest_full_month.raw_outgoings, 2830);
+  assert.equal(facts.latest_full_month.transfer_like_outgoings, 1800);
+  assert.equal(facts.budget_sanity.raw_outgoings_likely_inflated, true);
+  assert.ok(facts.uncertainty_flags.includes("raw_outgoings_likely_inflated"));
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-04-28", { category: "Rent", is_bill: true }),
+    tx("Housemate rent contribution", 725, "2026-02-01"),
+    tx("Housemate rent contribution", 725, "2026-03-01"),
+    tx("Housemate rent contribution", 725, "2026-04-28"),
+  ]);
+
+  assert.equal(appModel.grossMonthlyBillTotal, 1450);
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.equal(appModel.cleanMonthlyFacts.latest_full_month.bill_burden, 725);
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+    tx("Faster payment from housemate", 725, "2026-03-30"),
+  ]);
+  const march = appModel.cleanMonthlyFacts.monthly_rows.find((row) => row.month === "2026-03");
+  const april = appModel.cleanMonthlyFacts.monthly_rows.find((row) => row.month === "2026-04");
+
+  assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.equal(march.real_income, 0);
+  assert.equal(april.bill_burden, 1450);
+  assert.ok(appModel.checksWaiting.some((check) => check.sharedContribution));
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Shop purchase", -200, "2026-04-01", { category: "Shopping" }),
+    tx("Shop refund", 200, "2026-04-28", { category: "Refund" }),
+  ]);
+
+  assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.equal(appModel.cleanMonthlyFacts.latest_full_month.refunds_and_reimbursements, 200);
+  assert.equal(appModel.cleanMonthlyFacts.latest_full_month.real_spending, 0);
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Gaming Jan", -50, "2026-01-28", { category: "Gaming" }),
+    tx("Gaming Feb", -120, "2026-02-28", { category: "Gaming" }),
+    tx("Gaming Mar", -240, "2026-03-28", { category: "Gaming" }),
+  ]);
+
+  assert.equal(appModel.cleanMonthlyFacts.trend.direction, "worsening");
+  assert.ok(appModel.cleanMonthlyFacts.risky_accelerating_categories.some((item) => item.category === "Gaming"));
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Eating out Jan", -300, "2026-01-28", { category: "Eating out" }),
+    tx("Eating out Feb", -180, "2026-02-28", { category: "Eating out" }),
+    tx("Eating out Mar", -90, "2026-03-28", { category: "Eating out" }),
+  ]);
+
+  assert.equal(appModel.cleanMonthlyFacts.trend.direction, "improving");
+  assert.ok(appModel.cleanMonthlyFacts.categories_improving.some((item) => item.category === "Eating out"));
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Only month food", -90, "2026-04-28", { category: "Groceries" }),
+  ]);
+
+  assert.equal(appModel.cleanMonthlyFacts.trend.direction, "unclear");
+}
+
+{
+  const manyTransactions = Array.from({ length: 1000 }, (_, index) =>
+    tx(`Tesco shop ${index}`, -5, `2026-04-${String((index % 28) + 1).padStart(2, "0")}`, { category: "Groceries" })
+  );
+  const { understanding, appModel } = buildModel(manyTransactions);
+  const context = buildCoachContext({
+    transactions: understanding.transactions,
+    debts: [],
+    investments: [],
+    debtSignals: [],
+    investmentSignals: [],
+    totals: { income: 0, spending: 0, bills: 0 },
+    topCategories: [],
+    subscriptionSummary: {},
+    dataFreshness: appModel.dataFreshness,
+    baseMessages: [],
+    userMessage: "What should I fix?",
+    subscriptionStatus: "free",
+    bankFeedReadiness: {},
+    moneyUnderstanding: understanding,
+    appMoneyModel: appModel,
+  });
+
+  assert.ok(context.clean_monthly_facts.latest_full_month);
+  assert.ok(context.clean_monthly_facts.recent_monthly_average);
+  assert.ok(context.searchable_transactions.length <= 350);
+  assert.ok(context.recent_transactions.length <= 20);
+  assert.equal(context.clean_monthly_facts.monthly_rows.length, 1);
 }
 
 await server.close();

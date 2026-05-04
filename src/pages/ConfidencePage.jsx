@@ -80,6 +80,15 @@ const RULE_OPTIONS = [
     helper: "Use this for expenses, resale, client money or reimbursement that is not really yours to spend.",
   },
   {
+    label: "Refund/reimbursement",
+    category: "Refund",
+    isBill: false,
+    isSubscription: false,
+    isInternalTransfer: false,
+    matchAmount: false,
+    helper: "Use this for refunds, chargebacks, cashback or money returned after spending.",
+  },
+  {
     label: "My own transfer",
     category: "Internal Transfer",
     isBill: false,
@@ -87,6 +96,15 @@ const RULE_OPTIONS = [
     isInternalTransfer: true,
     matchAmount: false,
     helper: "Use this for moving your own money between accounts or pots.",
+  },
+  {
+    label: "Ignore from budget",
+    category: "Internal Transfer",
+    isBill: false,
+    isSubscription: false,
+    isInternalTransfer: true,
+    matchAmount: false,
+    helper: "Use this when the payment should not count as income, spending or a bill.",
   },
 ];
 
@@ -135,7 +153,7 @@ export default function ConfidencePage({
   );
 
   const completedCount = transactionRules.filter((rule) =>
-    ["coach_confirmation", "recurring_major_payment", "confidence_check"].includes(rule.rule_type)
+    ["coach_confirmation", "recurring_major_payment", "confidence_check", "shared_bill_contribution"].includes(rule.rule_type)
   ).length;
 
   async function saveRule(candidate, option) {

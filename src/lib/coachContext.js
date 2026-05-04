@@ -72,6 +72,7 @@ export function buildCoachContext({
     monthly_flexible_spending: appMoneyModel?.flexibleSpending || null,
     savings_capacity: appMoneyModel?.savingsCapacity || null,
     cash_position: appMoneyModel?.cashPosition || null,
+    clean_monthly_facts: appMoneyModel?.cleanMonthlyFacts || null,
     confidence_warnings: appMoneyModel?.confidenceWarnings || [],
     next_best_actions: appMoneyModel?.nextBestActions || [],
     top_categories: topCategories.slice(0, 5),
@@ -95,7 +96,9 @@ export function buildCoachContext({
     launch_safety_rules: {
       audience: "People who feel bad with money and need plain, trustworthy guidance.",
       maths_source_of_truth: "Use money_understanding, app-calculated totals, statement_intelligence, query_focus and rules. Do not invent or re-estimate core figures.",
+      monthly_number_discipline: "For coaching, use clean_monthly_facts: latest_full_month, recent_monthly_average, trend and worst_recent_month. Never compare all-history totals with monthly income.",
       shared_app_model: "For bills, income, usual spending, saving room and warnings, use app_money_model before older raw summaries. For split bills, talk about the user's scheduled outgoings to cover, not the larger gross amount passing through the account.",
+      raw_movement_warning: "If clean_monthly_facts.budget_sanity.raw_outgoings_likely_inflated is true, treat raw outgoings as transfer/pass-through inflated and ask for Review checks instead of shaming the user on raw movement.",
       safe_to_spend: "Only treat safe-to-spend as real spendable money when live balances or explicit current balances are supplied. Statement net is historical movement, not cash today.",
       review_page: "If a person, bill, transfer, work payment or pass-through looks uncertain, tell the user to confirm it in Review instead of guessing.",
       calendar: "Future Bills only contains regular bills/subscriptions Money Hub is confident about. Unclear repeated payments belong in Review, not Calendar.",
