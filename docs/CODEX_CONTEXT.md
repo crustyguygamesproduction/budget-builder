@@ -1,6 +1,6 @@
 # Codex context for Budget Builder / Money Hub
 
-Last updated: 2026-05-03
+Last updated: 2026-05-04
 
 This file is intended to give Codex enough context to work safely on the project without needing the chat history.
 
@@ -275,15 +275,16 @@ These are important but should not be mixed into the same large security patch u
 
 `src/hooks/useViewport.js` exists and is now wired into `App.jsx`.
 
-`src/hooks/useMoneyHubData.js` now owns user-owned Supabase data state, loaders, and refresh orchestration. `App.jsx` keeps auth/session setup, routing, page composition, shared money model construction, and Coach snapshot saving.
+`src/hooks/useMoneyHubData.js` now owns user-owned Supabase data state, loaders, and refresh orchestration.
+
+`src/hooks/useCoachSnapshot.js` now owns browser-side Coach context construction, snapshot hashing, and saving to `coach_context_snapshots`. `App.jsx` keeps auth/session setup, routing, page composition, and shared money model construction.
 
 `ai-coach` was redeployed after the market-price/OpenAI-key cleanup.
 
 Recommended order:
 
-1. extract `useCoachSnapshot()`
-2. keep page composition in `App.jsx`
-3. later move Coach context generation server-side as a separate architecture project
+1. keep page composition in `App.jsx`
+2. later move Coach context generation server-side as a separate architecture project
 
 Do not combine the larger data-loader extraction with production hardening unless specifically asked.
 

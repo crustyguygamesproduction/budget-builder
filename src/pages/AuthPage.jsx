@@ -117,6 +117,11 @@ export default function AuthPage({ screenWidth, styles }) {
           Upload statements, let the app do the hard bit, and get a cleaner
           money setup without spreadsheet energy.
         </p>
+        <div style={getTrustGridStyle(screenWidth)}>
+          <TrustPoint title="Private by design" body="Your financial data is for your money read, not ads." />
+          <TrustPoint title="Plain-English help" body="Bills, spending and next steps without finance jargon." />
+          <TrustPoint title="You stay in control" body="Replay setup, delete uploads, or wipe your data from Settings." />
+        </div>
         <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
 
         <form
@@ -197,11 +202,32 @@ const linkStyle = {
   cursor: "pointer",
 };
 
+function TrustPoint({ title, body }) {
+  return (
+    <div style={trustPointStyle}>
+      <strong>{title}</strong>
+      <span>{body}</span>
+    </div>
+  );
+}
+
 function getHeroCardStyle(screenWidth, styles) {
   return {
     ...styles.heroCard,
+    width: screenWidth <= 480 ? "calc(100vw - 40px)" : "min(720px, 100%)",
+    maxWidth: "720px",
+    minWidth: 0,
     padding: screenWidth <= 480 ? "20px" : "24px",
     borderRadius: screenWidth <= 480 ? "26px" : "32px",
+  };
+}
+
+function getTrustGridStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+    margin: "0 0 16px",
   };
 }
 
@@ -211,3 +237,15 @@ function getHeroTitleStyle(screenWidth, styles) {
     fontSize: screenWidth <= 480 ? "32px" : screenWidth <= 768 ? "36px" : "40px",
   };
 }
+
+const trustPointStyle = {
+  display: "grid",
+  gap: 5,
+  padding: 12,
+  borderRadius: 16,
+  background: "#f8fbff",
+  border: "1px solid #e2e8f0",
+  color: "#0f172a",
+  fontSize: 13,
+  lineHeight: 1.4,
+};

@@ -23,6 +23,8 @@
     padding: "20px",
     display: "flex",
     alignItems: "center",
+    justifyContent: "center",
+    overflowX: "hidden",
   },
 
   heroCard: {
@@ -832,6 +834,46 @@
     gap: "10px",
     flexWrap: "wrap",
     marginBottom: "14px",
+  },
+
+  calendarModeChip: {
+    border: "1px solid #dbe4f0",
+    background: "#ffffff",
+    color: "#334155",
+    borderRadius: "999px",
+    padding: "10px 12px",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+
+  calendarModeChipActive: {
+    background: "#0f172a",
+    borderColor: "#0f172a",
+    color: "#ffffff",
+    boxShadow: "0 10px 22px rgba(15, 23, 42, 0.18)",
+  },
+
+  calendarTimeframeChip: {
+    border: "1px solid #dbe4f0",
+    background: "#f8fbff",
+    color: "#475569",
+    borderRadius: "999px",
+    padding: "9px 10px",
+    minWidth: "44px",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+
+  calendarTimeframeChipActive: {
+    background: "#dbeafe",
+    borderColor: "#93c5fd",
+    color: "#1d4ed8",
+  },
+
+  calendarGridViewport: {
+    margin: "0 -4px",
+    padding: "0 4px 4px",
+    scrollbarWidth: "thin",
   },
 
   calendarSummaryAction: {

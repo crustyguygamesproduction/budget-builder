@@ -1,6 +1,7 @@
 ﻿import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { InsightCard, MiniCard, Section } from "../components/ui";
+import SetupEmptyState from "../components/SetupEmptyState";
 import { getFunctionErrorMessage } from "../lib/functionErrors";
 import {
   addDays,
@@ -43,7 +44,7 @@ import { getDataFreshness } from "../lib/dashboardIntelligence";
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-export default function CalendarPage({ transactions, transactionRules = [], moneyUnderstanding, appMoneyModel, onTransactionRulesChange, onRefreshMoneyUnderstanding, screenWidth, styles }) {
+export default function CalendarPage({ transactions, transactionRules = [], moneyUnderstanding, appMoneyModel, onTransactionRulesChange, onRefreshMoneyUnderstanding, onNavigate, screenWidth, styles }) {
   const [viewDate, setViewDate] = useState(() => new Date());
   const [selectedDayKey, setSelectedDayKey] = useState("");
   const [calendarMode, setCalendarMode] = useState("recurring");
@@ -317,6 +318,32 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     } finally {
       setCalendarAiBusy(false);
     }
+  }
+
+  if (!transactions.length) {
+    return (
+      <SetupEmptyState
+        title="Calendar"
+        label="Future bills"
+        headline="Upload statements to build your bill calendar"
+        body="Money Hub needs real statement history before it can predict rent, bills, subscriptions and quiet days without guessing."
+        primaryAction={{ label: "Upload statements", onClick: () => onNavigate?.("upload") }}
+        secondaryAction={{ label: "Open Review", onClick: () => onNavigate?.("confidence") }}
+        cards={[
+          {
+            label: "First unlock",
+            headline: "One month gives a first read",
+            body: "The calendar can start showing real spending days and obvious regular payments.",
+          },
+          {
+            label: "Best unlock",
+            headline: "Three months makes it useful",
+            body: "Repeated bills, income rhythm and subscriptions become much easier to trust.",
+          },
+        ]}
+        styles={styles}
+      />
+    );
   }
 
   return (

@@ -45,6 +45,10 @@ export default function HomePage({
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const unlinkedInvestmentSignals = investmentSignals.filter((signal) => !hasMatchingInvestment(signal, investments));
   const latestTransactions = transactions.slice(0, 3);
+  const dataConfidence = useMemo(
+    () => getDataConfidenceRead({ dataFreshness, statementCoverage, checksWaitingCount }),
+    [dataFreshness, statementCoverage, checksWaitingCount]
+  );
 
   return (
     <>
@@ -82,27 +86,52 @@ export default function HomePage({
         </div>
       </section>
 
-      <Section title="Today" styles={styles}>
-        <div style={getNowCardStyle(homeRead.tone)}>
-          <strong>{homeRead.headline}</strong>
-          <span>{homeRead.nextMove}</span>
-          <button
-            type="button"
-            style={styles.primaryBtn}
-            onClick={() => onGoToCoach(homeRead.prompt, { autoSend: true })}
-          >
-            {homeRead.buttonLabel}</button>
-        </div>
-      </Section>
+      {!dataFreshness.hasData ? (
+        <HomeSetupPath onNavigate={onNavigate} onGoToCoach={onGoToCoach} screenWidth={screenWidth} styles={styles} />
+      ) : (
+        <>
+          <Section title="Today" styles={styles}>
+            <div style={getNowCardStyle(homeRead.tone)}>
+              <strong>{homeRead.headline}</strong>
+              <span>{homeRead.nextMove}</span>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={() => onGoToCoach(homeRead.prompt, { autoSend: true })}
+              >
+                {homeRead.buttonLabel}</button>
+            </div>
+          </Section>
 
-      <Section title="Your Next 30 Days" styles={styles}>
-        <div style={styles.inlineInfoBlock}>
-          <Row name="Scheduled outgoings" value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
-          <Row name="Regular income" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} a month` : expectedIncome.label} styles={styles} />
-          <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
-          <Row name="Needs confirming" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
-        </div>
-      </Section>
+          <Section title="Your Next 30 Days" styles={styles}>
+            <div style={styles.inlineInfoBlock}>
+              <Row name="Scheduled outgoings" value={`${formatCurrency(billShare.personalTotal)} this month`} styles={styles} />
+              <Row name="Regular income" value={expectedIncome.hasExpectedIncome ? `${formatCurrency(expectedIncome.amount)} a month` : expectedIncome.label} styles={styles} />
+              <Row name="Next thing to pay" value={nextBill ? `${nextBill.name} ${nextBill.when}` : "Nothing found yet"} styles={styles} />
+              <Row name="Needs confirming" value={checksWaitingCount ? `${checksWaitingCount} item${checksWaitingCount === 1 ? "" : "s"}` : "Nothing urgent"} styles={styles} />
+            </div>
+          </Section>
+
+          <Section
+            title="Data Confidence"
+            right={<button type="button" style={styles.ghostBtn} onClick={() => onNavigate("upload")}>Improve</button>}
+            styles={styles}
+          >
+            <div style={getDataConfidenceHeroStyle(dataConfidence.tone)}>
+              <div>
+                <strong>{dataConfidence.headline}</strong>
+                <p style={styles.transactionMeta}>{dataConfidence.body}</p>
+              </div>
+              <span style={getDataConfidenceBadgeStyle(dataConfidence.tone)}>{dataConfidence.badge}</span>
+            </div>
+            <div style={getDataConfidenceGridStyle(screenWidth)}>
+              <DataConfidenceFact label="History" value={statementCoverage.monthCountLabel} detail={statementCoverage.rangeLabel} />
+              <DataConfidenceFact label="Freshness" value={dataFreshness.needsUpload ? "Needs latest" : "Current"} detail={dataFreshness.latestDateLabel || "No date"} />
+              <DataConfidenceFact label="Review" value={checksWaitingCount ? `${checksWaitingCount} waiting` : "Clear"} detail={checksWaitingCount ? "Answer to improve maths" : "No urgent checks"} />
+            </div>
+          </Section>
+        </>
+      )}
 
       <Section title="Useful Shortcuts" styles={styles}>
         <div style={getShortcutGridStyle()}>
@@ -111,19 +140,25 @@ export default function HomePage({
           {checksWaitingCount > 0 ? (
             <Shortcut title="Review" body={`${appMoneyModel.checksWaiting.length} to answer`} onClick={() => onNavigate("confidence")} />
           ) : (
-            <Shortcut title="Upload" body={dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
+            <Shortcut title="Upload" body={!dataFreshness.hasData ? "First CSV" : dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
           )}
-          <Shortcut title="Lower bills" body="Find easy wins" onClick={() => onGoToCoach("Look at my bills and subscriptions. Find realistic ways to lower them without a lecture.", { autoSend: true })} />
-          <Shortcut title="AI plan" body="What should I do today?" onClick={() => onGoToCoach("Look at my current balance, bills, expected income and recent spending. Tell me what I should do today in plain English.", { autoSend: true })} />
+          {dataFreshness.hasData ? (
+            <>
+              <Shortcut title="Lower bills" body="Find easy wins" onClick={() => onGoToCoach("Look at my bills and subscriptions. Find realistic ways to lower them without a lecture.", { autoSend: true })} />
+              <Shortcut title="AI plan" body="What should I do today?" onClick={() => onGoToCoach("Look at my current balance, bills, expected income and recent spending. Tell me what I should do today in plain English.", { autoSend: true })} />
+            </>
+          ) : (
+            <Shortcut title="Coach" body="Setup help" onClick={() => onGoToCoach("Help me set up Money Hub from scratch. Keep it short and tell me the next button to press.", { autoSend: true })} />
+          )}
           {unlinkedDebtSignals.length || debts.length ? <Shortcut title="Debts" body="Repayments" onClick={() => onNavigate("debts")} /> : null}
           {unlinkedInvestmentSignals.length || investments.length ? <Shortcut title="Invest" body="Keep safe first" onClick={() => onNavigate("investments")} /> : null}
           {!subscriptionStatus?.isPremium && bankFeedReadiness ? <Shortcut title="More" body="Settings" onClick={() => onNavigate("settings")} /> : null}
         </div>
       </Section>
 
-      <Section title="Latest Uploaded" styles={styles}>
-        {latestTransactions.length > 0 ? (
-          latestTransactions.map((transaction) => (
+      {latestTransactions.length > 0 ? (
+        <Section title="Latest Uploaded" styles={styles}>
+          {latestTransactions.map((transaction) => (
             <TransactionRow
               key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`}
               name={transaction._real_merchant_name || transaction.description || "Transaction"}
@@ -131,13 +166,222 @@ export default function HomePage({
               amount={Number(transaction.amount || 0)}
               styles={styles}
             />
-          ))
-        ) : (
-          <p style={styles.emptyText}>Upload a statement and this page will stop being empty.</p>
-        )}
-      </Section>
+          ))}
+        </Section>
+      ) : null}
     </>
   );
+}
+
+function HomeSetupPath({ onNavigate, onGoToCoach, screenWidth, styles }) {
+  return (
+    <Section
+      title="Start With One Statement"
+      right={<button type="button" style={styles.ghostBtn} onClick={() => onNavigate("upload")}>Upload</button>}
+      styles={styles}
+    >
+      <div style={getSetupIntroStyle()}>
+        <strong>Get from blank page to useful money read in about two minutes.</strong>
+        <p style={styles.transactionMeta}>One CSV gives a first read. Three months makes bills, income rhythm and Coach answers much smarter.</p>
+      </div>
+
+      <div style={getSetupStepGridStyle(screenWidth)}>
+        <SetupStep
+          number="1"
+          title="Upload"
+          body="Start with your main current account CSV."
+          action="Choose file"
+          onClick={() => onNavigate("upload")}
+        />
+        <SetupStep
+          number="2"
+          title="Review"
+          body="Answer anything uncertain before trusting the maths."
+          action="Open Review"
+          onClick={() => onNavigate("confidence")}
+        />
+        <SetupStep
+          number="3"
+          title="Calendar"
+          body="Check rent, bills and subscriptions before spending."
+          action="See bills"
+          onClick={() => onNavigate("calendar")}
+        />
+        <SetupStep
+          number="4"
+          title="Coach"
+          body="Ask for the plain-English next move."
+          action="Ask Coach"
+          onClick={() => onGoToCoach("I am setting up Money Hub. Give me the simplest next steps after my first statement upload.", { autoSend: true })}
+        />
+      </div>
+    </Section>
+  );
+}
+
+function SetupStep({ number, title, body, action, onClick }) {
+  return (
+    <button type="button" style={getSetupStepStyle()} onClick={onClick}>
+      <span style={getStepNumberStyle()}>{number}</span>
+      <strong>{title}</strong>
+      <span>{body}</span>
+      <small>{action}</small>
+    </button>
+  );
+}
+
+function DataConfidenceFact({ label, value, detail }) {
+  return (
+    <div style={getDataConfidenceFactStyle()}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function getDataConfidenceRead({ dataFreshness, statementCoverage, checksWaitingCount }) {
+  if (statementCoverage.hasCoverageGap) {
+    return {
+      tone: "bad",
+      badge: "Check upload",
+      headline: statementCoverage.headline,
+      body: statementCoverage.nextUnlock,
+    };
+  }
+
+  if (dataFreshness.needsUpload) {
+    return {
+      tone: "warn",
+      badge: "Needs latest",
+      headline: "Today's view may be stale",
+      body: dataFreshness.latestMonthLabel
+        ? `Latest visible activity is ${dataFreshness.latestMonthLabel}. Add the newest CSV before relying on spending-room advice.`
+        : "Upload a statement so Money Hub can stop guessing.",
+    };
+  }
+
+  if (checksWaitingCount > 0) {
+    return {
+      tone: "warn",
+      badge: "Review",
+      headline: "A few answers will sharpen the maths",
+      body: "Confirm uncertain payments so rent, bills, transfers and pass-through money land in the right place.",
+    };
+  }
+
+  return {
+    tone: "good",
+    badge: "Good",
+    headline: statementCoverage.headline,
+    body: statementCoverage.nextUnlock,
+  };
+}
+
+function getSetupIntroStyle() {
+  return {
+    padding: 14,
+    borderRadius: 18,
+    background: "#f8fbff",
+    border: "1px solid #e2e8f0",
+    marginBottom: 12,
+  };
+}
+
+function getSetupStepGridStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 520 ? "1fr" : "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+  };
+}
+
+function getSetupStepStyle() {
+  return {
+    display: "grid",
+    gridTemplateColumns: "38px 1fr",
+    gap: "4px 10px",
+    alignItems: "start",
+    textAlign: "left",
+    border: "1px solid rgba(148, 163, 184, 0.24)",
+    borderRadius: 18,
+    padding: 14,
+    background: "#ffffff",
+    color: "#0f172a",
+    cursor: "pointer",
+  };
+}
+
+function getStepNumberStyle() {
+  return {
+    gridRow: "span 3",
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    display: "grid",
+    placeItems: "center",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontWeight: 900,
+  };
+}
+
+function getDataConfidenceHeroStyle(tone) {
+  const picked = tone === "bad"
+    ? { bg: "#fef2f2", border: "#fecaca" }
+    : tone === "warn"
+    ? { bg: "#fffbeb", border: "#fde68a" }
+    : { bg: "#f0fdf4", border: "#bbf7d0" };
+
+  return {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: 14,
+    borderRadius: 18,
+    background: picked.bg,
+    border: `1px solid ${picked.border}`,
+    marginBottom: 10,
+  };
+}
+
+function getDataConfidenceBadgeStyle(tone) {
+  const picked = tone === "bad"
+    ? { bg: "#fee2e2", color: "#991b1b" }
+    : tone === "warn"
+    ? { bg: "#fef3c7", color: "#92400e" }
+    : { bg: "#dcfce7", color: "#166534" };
+
+  return {
+    flexShrink: 0,
+    borderRadius: 999,
+    padding: "7px 10px",
+    background: picked.bg,
+    color: picked.color,
+    fontSize: 12,
+    fontWeight: 900,
+  };
+}
+
+function getDataConfidenceGridStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 520 ? "1fr" : "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+  };
+}
+
+function getDataConfidenceFactStyle() {
+  return {
+    display: "grid",
+    gap: 3,
+    padding: 12,
+    borderRadius: 16,
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    minWidth: 0,
+  };
 }
 
 function getVisibleCash(appMoneyModel, accounts) {

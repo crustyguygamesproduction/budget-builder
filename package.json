@@ -4,15 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite --configLoader native",
+    "build": "vite build --configLoader native",
     "check": "npm run lint && npm run test:money && npm run test:organiser && npm run test:security && npm run test:import && npm run build",
     "test:money": "node scripts/check-money-understanding.mjs",
     "test:organiser": "node scripts/check-money-organiser-intelligence.mjs",
     "test:security": "node scripts/check-security-validation.mjs",
     "test:import": "node scripts/check-import-analysis.mjs",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview --configLoader native"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

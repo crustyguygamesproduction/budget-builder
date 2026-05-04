@@ -9,24 +9,21 @@ Purpose: keep `src/App.jsx` shrinking in safe, deployable slices while improving
 - Goal suggestions live in `src/lib/goalInsights.js`.
 - Upload guidance lives in `src/lib/uploadGuidance.js`.
 - User-owned Supabase data loading lives in `src/hooks/useMoneyHubData.js`.
+- Browser-side Coach snapshot construction/saving lives in `src/hooks/useCoachSnapshot.js`.
 - The active upload page is `src/pages/UploadPageSafe.jsx`; the older inactive `src/pages/UploadPage.jsx` has been removed.
 - Old app snapshots are archived in `src/archive/`.
 - Supabase temp files are no longer tracked.
 
 ## Resume Here
 
-1. Extract `useCoachSnapshot()`.
-   - Keep the current browser-saved Coach snapshot behaviour until the hook extraction is done safely.
-   - Do not move Coach context server-side as part of this refactor slice.
-
-2. Continue tightening `UploadPageSafe` only when upload behaviour changes.
+1. Continue tightening `UploadPageSafe` only when upload behaviour changes.
    - Keep CSV import helpers close to the page unless they become shared.
    - Preserve content sniffing, date normalisation, duplicate detection, upload guidance UX and AI mapping fallback.
 
-3. Extract one page at a time after that.
+2. Extract one page at a time after that.
    - Best order: `ReceiptsPage`, `CoachPage`, `DebtsPage`, `InvestmentsPage`, `CalendarPage`, then `TodayPage`.
 
-4. Keep each slice shippable.
+3. Keep each slice shippable.
    - Run `npm run check`.
    - Commit and push after each clean extraction.
 
