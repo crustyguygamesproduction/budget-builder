@@ -33,7 +33,7 @@
 - `ai-coach` consumes compact saved Coach snapshots. After changing `supabase/functions/ai-coach/index.ts`, redeploy it with:
 
 ```bash
-npx supabase functions deploy ai-coach --project-ref itayxahonejogrnkhlkp
+npx supabase functions deploy ai-coach --project-ref itayxahonejogrnkhllp
 ```
 
 ## Vercel

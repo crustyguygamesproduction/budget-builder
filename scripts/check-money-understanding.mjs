@@ -523,6 +523,23 @@ function buildModel(transactions, options = {}) {
   assert.equal(appModel.grossMonthlyBillTotal, 1450);
   assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
   assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.equal(appModel.cleanMonthlyFacts.latest_full_month.real_income, 0);
+  assert.equal(appModel.cleanMonthlyFacts.latest_full_month.bill_burden, 725);
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-04-28", { category: "Rent", is_bill: true }),
+    tx("Brother rent contribution", 725, "2026-02-01"),
+    tx("Brother rent contribution", 725, "2026-03-01"),
+    tx("Brother rent contribution", 725, "2026-04-28"),
+  ]);
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.equal(appModel.cleanMonthlyFacts.latest_full_month.real_income, 0);
   assert.equal(appModel.cleanMonthlyFacts.latest_full_month.bill_burden, 725);
 }
 

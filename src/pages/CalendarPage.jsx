@@ -129,7 +129,12 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   const isViewingCurrentRecurringMonth = activeRecurringViewDate.getMonth() === currentMonth.getMonth() && activeRecurringViewDate.getFullYear() === currentMonth.getFullYear();
   const nextRecurringEvent = recurringMonthEvents.filter((event) => !isViewingCurrentRecurringMonth || event.day >= currentMonth.getDate()).sort((a, b) => a.day - b.day)[0] || recurringMonthEvents[0] || null;
   const patternSummary = getCalendarPatternSummary(transactions, timeframe);
-  const monthlyBreakdown = getMonthlyBreakdown(transactions, shortTimeframe ? "1m" : timeframe).slice(0, 6);
+  const rawMonthlyBreakdown = getMonthlyBreakdown(transactions, shortTimeframe ? "1m" : timeframe).slice(0, 6);
+  const monthlyBreakdown = getDisplayMonthlyBreakdown({
+    cleanRows: appMoneyModel?.cleanMonthlyFacts?.monthly_rows,
+    rawRows: rawMonthlyBreakdown,
+    timeframe: shortTimeframe ? "1m" : timeframe,
+  });
   const visibleHistoryTransactions = calendarDays.flatMap((day) => day.transactions || []);
   const selectedDay = selectedDayKey ? calendarDays.find((day) => day.key === selectedDayKey) || null : null;
   const canGoPrev = usingShortHistoryView ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, -1) : calendarMode === "recurring" ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, -1) : canShiftCalendarMonth(activeViewDate, calendarBounds, -1);
@@ -449,10 +454,64 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
       </Section>
 
       <Section styles={styles} title={monthlyBreakdown.length <= 1 ? "This Month" : "Recent Months"}>
-        {monthlyBreakdown.length === 0 ? <p style={styles.emptyText}>Add more history to see month-by-month spending.</p> : monthlyBreakdown.length === 1 ? <div style={styles.daySummaryCard}><strong>{monthlyBreakdown[0].label}</strong><p style={styles.transactionMeta}>Used on {monthlyBreakdown[0].activeDays} day{monthlyBreakdown[0].activeDays === 1 ? "" : "s"}.</p><p style={{ ...styles.transactionMeta, color: monthlyBreakdown[0].net >= 0 ? "#059669" : "#dc2626", marginTop: "8px" }}>Net: {monthlyBreakdown[0].net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(monthlyBreakdown[0].net))}</p></div> : monthlyBreakdown.map((month) => <div key={month.key} style={styles.monthTrendRow}><div><strong>{month.label}</strong><p style={styles.transactionMeta}>Used on {month.activeDays} day{month.activeDays === 1 ? "" : "s"}</p></div><strong style={{ color: month.net >= 0 ? "#059669" : "#dc2626" }}>{month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}</strong></div>)}
+        {monthlyBreakdown.length === 0 ? <p style={styles.emptyText}>Add more history to see month-by-month spending.</p> : monthlyBreakdown.length === 1 ? <MonthSummaryCard month={monthlyBreakdown[0]} styles={styles} /> : monthlyBreakdown.map((month) => <MonthTrendRow key={month.key} month={month} styles={styles} />)}
       </Section>
     </>
   );
+}
+
+function MonthSummaryCard({ month, styles }) {
+  return (
+    <div style={styles.daySummaryCard}>
+      <strong>{month.label}</strong>
+      <p style={styles.transactionMeta}>{month.detailLabel}</p>
+      <p style={{ ...styles.transactionMeta, color: month.net >= 0 ? "#059669" : "#dc2626", marginTop: "8px" }}>
+        {month.valueLabel}: {month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}
+      </p>
+    </div>
+  );
+}
+
+function MonthTrendRow({ month, styles }) {
+  return (
+    <div style={styles.monthTrendRow}>
+      <div>
+        <strong>{month.label}</strong>
+        <p style={styles.transactionMeta}>{month.detailLabel}</p>
+      </div>
+      <strong style={{ color: month.net >= 0 ? "#059669" : "#dc2626" }}>
+        {month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}
+      </strong>
+    </div>
+  );
+}
+
+function getDisplayMonthlyBreakdown({ cleanRows, rawRows, timeframe }) {
+  const clean = Array.isArray(cleanRows)
+    ? cleanRows
+        .filter((row) => row?.month && row?.label)
+        .slice()
+        .sort((a, b) => String(b.month).localeCompare(String(a.month)))
+    : [];
+
+  if (clean.length > 0) {
+    const count = timeframe === "all" ? 6 : Math.min(Math.max(getTimeframeMonthCount(timeframe), 1), 6);
+    return clean.slice(0, count).map((row) => ({
+      key: `clean:${row.month}`,
+      label: row.label,
+      net: Number(row.real_income || 0) - Number(row.real_spending || 0),
+      valueLabel: "Personal net estimate",
+      detailLabel: `${row.status === "partial" ? "Partial clean month" : "Clean month"} - Personal net estimate`,
+    }));
+  }
+
+  return (rawRows || []).map((row) => ({
+    key: `raw:${row.key}`,
+    label: row.label,
+    net: Number(row.net || 0),
+    valueLabel: "Raw bank movement",
+    detailLabel: `Raw bank movement - used on ${row.activeDays} day${row.activeDays === 1 ? "" : "s"}`,
+  }));
 }
 
 function CalendarBillsPanel({ events, styles, busyKey, onNotBill, sharedContributions = [] }) {

@@ -68,7 +68,9 @@ export function buildAppMoneyModel({
   );
   const monthlyFlexibleSpending = flexibleSpendingTotal / monthCount;
   const flexibleSpendingConfidence = getFlexibleConfidence(flexibleTransactions, monthWindow.monthKeys);
-  const allIncomeTransactions = getIncomeTransactions(transactions);
+  const allIncomeTransactions = getIncomeTransactions(transactions).filter(
+    (transaction) => !contributionSourceIds.has(getTransactionSourceId(transaction))
+  );
   const allFlexibleTransactions = getFlexibleTransactions(transactions, billStreams, billMatchKeys);
 
   const safeMonthlySaving =
