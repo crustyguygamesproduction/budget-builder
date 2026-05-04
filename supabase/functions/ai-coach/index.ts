@@ -188,7 +188,7 @@ async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
     });
     throw new PublicFunctionError(
       "openai_request_failed",
-      "Coach reached your saved money brain, but the AI reply failed. Try again in a moment.",
+      getOpenAIPublicMessage(response.status, openAIErrorKind),
       500,
       data?.error?.message || "OpenAI request failed",
       { openai_error_kind: openAIErrorKind, openai_status: response.status, model: body?.model || null }
@@ -216,6 +216,23 @@ async function callResponsesApiWithModels(apiKey: string, body: Record<string, u
 
 function uniqueStrings(items: string[]) {
   return Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function getOpenAIPublicMessage(status: number, errorKind: string) {
+  const kind = String(errorKind || "").toLowerCase();
+  if (status === 401 || kind.includes("invalid_api_key")) {
+    return "Coach reached your saved money brain, but the AI key needs updating.";
+  }
+  if (status === 403 || kind.includes("insufficient_quota") || kind.includes("billing")) {
+    return "Coach reached your saved money brain, but the AI account needs billing or access attention.";
+  }
+  if (status === 429) {
+    return "Coach reached your saved money brain, but the AI service is rate limited right now.";
+  }
+  if (kind.includes("context_length") || kind.includes("too_large")) {
+    return "Coach reached your saved money brain, but the AI request was too large. I am trimming it and improving this path.";
+  }
+  return "Coach reached your saved money brain, but the AI reply failed. Try again in a moment.";
 }
 
 function getOpenAIModelCandidates(primaryEnvName: string, fallbackEnvName: string, defaultPrimary = "gpt-5.1") {
@@ -353,15 +370,15 @@ function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
     transaction_count: savedContext?.transaction_count || 0,
     query_focus: queryFocus,
     statement_intelligence: compactStatementIntelligence(savedContext?.statement_intelligence),
-    app_money_model: savedContext?.app_money_model || null,
-    monthly_income_estimate: savedContext?.monthly_income_estimate || null,
+    app_money_model: compactAppMoneyModel(savedContext?.app_money_model),
+    monthly_income_estimate: compactIncomeEstimate(savedContext?.monthly_income_estimate),
     monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
     monthly_bills_from_calendar_gross: savedContext?.monthly_bills_from_calendar_gross ?? null,
-    monthly_flexible_spending: savedContext?.monthly_flexible_spending || null,
-    savings_capacity: savedContext?.savings_capacity || null,
-    cash_position: savedContext?.cash_position || null,
-    confidence_warnings: savedContext?.confidence_warnings || [],
-    next_best_actions: savedContext?.next_best_actions || [],
+    monthly_flexible_spending: compactFlexibleSpending(savedContext?.monthly_flexible_spending),
+    savings_capacity: compactSavingsCapacity(savedContext?.savings_capacity),
+    cash_position: compactCashPosition(savedContext?.cash_position),
+    confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 8),
+    next_best_actions: compactActionList(savedContext?.next_best_actions || []).slice(0, 6),
     top_categories: (savedContext?.top_categories || []).slice(0, 12),
     monthly_breakdown: (savedContext?.monthly_breakdown_all || savedContext?.monthly_breakdown || []).slice(0, 12),
     calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
@@ -400,15 +417,15 @@ function buildMinimalCoachBrainForPrompt(savedContext: any, message = "") {
           income_streams: (statement.income_streams || []).slice(0, 5),
         }
       : null,
-    app_money_model: savedContext?.app_money_model || null,
-    monthly_income_estimate: savedContext?.monthly_income_estimate || null,
+    app_money_model: compactAppMoneyModel(savedContext?.app_money_model),
+    monthly_income_estimate: compactIncomeEstimate(savedContext?.monthly_income_estimate),
     monthly_scheduled_outgoings_to_cover: savedContext?.monthly_scheduled_outgoings_to_cover ?? null,
     monthly_bills_from_calendar_gross: savedContext?.monthly_bills_from_calendar_gross ?? null,
-    monthly_flexible_spending: savedContext?.monthly_flexible_spending || null,
-    savings_capacity: savedContext?.savings_capacity || null,
-    cash_position: savedContext?.cash_position || null,
+    monthly_flexible_spending: compactFlexibleSpending(savedContext?.monthly_flexible_spending),
+    savings_capacity: compactSavingsCapacity(savedContext?.savings_capacity),
+    cash_position: compactCashPosition(savedContext?.cash_position),
     confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 6),
-    next_best_actions: (savedContext?.next_best_actions || []).slice(0, 5),
+    next_best_actions: compactActionList(savedContext?.next_best_actions || []).slice(0, 5),
     top_categories: (savedContext?.top_categories || []).slice(0, 8),
     calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
     money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
@@ -639,6 +656,117 @@ function compactMoneyUnderstanding(context: any) {
     bills_found: compactBills(context.bills_found || []),
     recent_transactions: compactTransactions(context.recent_transactions || []).slice(0, 12),
   };
+}
+
+function compactAppMoneyModel(context: any) {
+  if (!context) return null;
+  return {
+    monthly_income_estimate: context.monthly_income_estimate ?? null,
+    monthly_income_label: context.monthly_income_label || null,
+    income_pay_cycle_summary: context.income_pay_cycle_summary || null,
+    income_confidence: context.income_confidence || null,
+    expected_income_next_30_days: compactUpcomingMoney(context.expected_income_next_30_days),
+    monthly_bills_from_calendar: context.monthly_bills_from_calendar ?? null,
+    monthly_shared_bill_contributions: context.monthly_shared_bill_contributions ?? null,
+    monthly_bill_burden_after_contributions: context.monthly_bill_burden_after_contributions ?? null,
+    monthly_outgoings_to_cover: context.monthly_outgoings_to_cover ?? null,
+    shared_bill_contributions: compactAmountList(context.shared_bill_contributions).slice(0, 8),
+    possible_shared_bill_contributions_to_check: compactAmountList(context.possible_shared_bill_contributions_to_check).slice(0, 8),
+    monthly_flexible_spending_estimate: context.monthly_flexible_spending_estimate ?? null,
+    monthly_flexible_spending_planning_label: context.monthly_flexible_spending_planning_label || null,
+    flexible_spending_confidence: context.flexible_spending_confidence || null,
+    safe_monthly_saving_amount: context.safe_monthly_saving_amount ?? null,
+    stretch_monthly_saving_amount: context.stretch_monthly_saving_amount ?? null,
+    current_cash: context.current_cash ?? null,
+    cash_basis: context.cash_basis || null,
+    upcoming_bills: compactBills(safeArray(context.upcoming_bills)).slice(0, 12),
+    checks_waiting: compactChecks(safeArray(context.checks_waiting)).slice(0, 12),
+    warnings: safeArray(context.warnings).slice(0, 8),
+  };
+}
+
+function compactIncomeEstimate(context: any) {
+  if (!context) return null;
+  return {
+    monthlyEstimate: context.monthlyEstimate ?? null,
+    confidence: context.confidence || null,
+    label: context.label || null,
+    payCycleSummary: context.payCycleSummary || null,
+    nextPay: compactMoneyItem(context.nextPay),
+    upcoming30Days: compactUpcomingMoney(context.upcoming30Days),
+    excludedSharedContributions: compactAmountList(context.excludedSharedContributions).slice(0, 8),
+  };
+}
+
+function compactFlexibleSpending(context: any) {
+  if (!context) return null;
+  return {
+    monthlyEstimate: context.monthlyEstimate ?? null,
+    confidence: context.confidence || null,
+    label: context.label || null,
+    planningLabel: context.planningLabel || null,
+    isUsefulForPlanning: context.isUsefulForPlanning ?? null,
+    topCategories: safeArray(context.topCategories).slice(0, 8),
+  };
+}
+
+function compactSavingsCapacity(context: any) {
+  if (!context) return null;
+  return {
+    safeMonthlyAmount: context.safeMonthlyAmount ?? null,
+    stretchMonthlyAmount: context.stretchMonthlyAmount ?? null,
+    status: context.status || null,
+    label: context.label || null,
+    body: context.body || null,
+  };
+}
+
+function compactCashPosition(context: any) {
+  if (!context) return null;
+  return {
+    amount: context.amount ?? null,
+    hasKnownBalance: context.hasKnownBalance ?? null,
+    label: context.label || null,
+  };
+}
+
+function compactUpcomingMoney(context: any) {
+  if (!context) return null;
+  return {
+    total: context.total ?? null,
+    count: context.count ?? null,
+    label: context.label || null,
+    items: compactAmountList(context.items).slice(0, 8),
+  };
+}
+
+function compactAmountList(items: any) {
+  return safeArray(items).map(compactMoneyItem).filter(Boolean);
+}
+
+function compactMoneyItem(item: any) {
+  if (!item) return null;
+  return {
+    name: item.name || item.label || item.description || item.merchant || null,
+    amount: item.amount ?? item.monthlyAmount ?? item.appliedMonthlyAmount ?? null,
+    date: item.date || item.dueDate || item.nextDate || null,
+    confidence: item.confidence || item.status || null,
+  };
+}
+
+function compactActionList(items: any) {
+  return safeArray(items).map((item) => {
+    if (typeof item === "string") return item;
+    return {
+      title: item.title || item.label || item.name || null,
+      body: item.body || item.description || item.reason || null,
+      priority: item.priority || item.status || null,
+    };
+  });
+}
+
+function safeArray(value: any) {
+  return Array.isArray(value) ? value : [];
 }
 
 function buildCoachSystemPrompt(message: string) {
