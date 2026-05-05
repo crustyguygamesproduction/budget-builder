@@ -22,6 +22,7 @@ export function buildAppMoneyModel({
   goals = [],
   debts = [],
   investments = [],
+  dismissedCheckKeys = [],
 } = {}) {
   const transactions = moneyUnderstanding?.transactions || [];
   const billStreams = moneyUnderstanding?.billStreams || [];
@@ -47,7 +48,7 @@ export function buildAppMoneyModel({
     [...sharedBillContributions.confirmed, ...sharedBillContributions.needsChecking].flatMap((contribution) => contribution.sourceIds || [])
   );
   const incomeTransactions = preliminaryIncomeTransactions.filter(
-    (transaction) => !contributionSourceIds.has(getTransactionSourceId(transaction))
+    (transaction) => !isSharedContributionTransaction(transaction, sharedBillContributions, contributionSourceIds)
   );
   const incomeTotal = sumAmounts(incomeTransactions);
   const incomeConfidence = getIncomeConfidence(incomeTransactions, monthWindow.monthKeys);
@@ -69,7 +70,7 @@ export function buildAppMoneyModel({
   const monthlyFlexibleSpending = flexibleSpendingTotal / monthCount;
   const flexibleSpendingConfidence = getFlexibleConfidence(flexibleTransactions, monthWindow.monthKeys);
   const allIncomeTransactions = getIncomeTransactions(transactions).filter(
-    (transaction) => !contributionSourceIds.has(getTransactionSourceId(transaction))
+    (transaction) => !isSharedContributionTransaction(transaction, sharedBillContributions, contributionSourceIds)
   );
   const allFlexibleTransactions = getFlexibleTransactions(transactions, billStreams, billMatchKeys);
 
@@ -93,8 +94,12 @@ export function buildAppMoneyModel({
     incomeConfidence,
   });
 
-  const sharedContributionChecks = buildSharedContributionChecks(sharedBillContributions.needsChecking);
-  const checksWaiting = [...(moneyUnderstanding?.checks || []), ...sharedContributionChecks];
+  const visibleSharedBillContributions = {
+    ...sharedBillContributions,
+    needsChecking: filterDismissedChecks(sharedBillContributions.needsChecking, dismissedCheckKeys, moneyUnderstanding?.transactionRules),
+  };
+  const sharedContributionChecks = buildSharedContributionChecks(visibleSharedBillContributions.needsChecking);
+  const checksWaiting = filterDismissedChecks([...(moneyUnderstanding?.checks || []), ...sharedContributionChecks], dismissedCheckKeys, moneyUnderstanding?.transactionRules);
   const dataFreshness = getModelFreshness(transactions);
   const cleanMonthlyFacts = buildCleanMonthlyFacts({
     transactions,
@@ -106,7 +111,7 @@ export function buildAppMoneyModel({
     monthlyIncome,
     incomeConfidence,
     flexibleSpendingConfidence,
-    sharedBillContributions,
+    sharedBillContributions: visibleSharedBillContributions,
     checksWaiting,
   });
   const confidenceWarnings = getConfidenceWarnings({
@@ -115,7 +120,7 @@ export function buildAppMoneyModel({
     incomeConfidence,
     flexibleSpendingConfidence,
     visibleCash,
-    sharedBillContributions,
+    sharedBillContributions: visibleSharedBillContributions,
     budgetSanity: cleanMonthlyFacts.budget_sanity,
   });
 
@@ -133,7 +138,7 @@ export function buildAppMoneyModel({
     monthlyScheduledOutgoingsTotal: roundMoney(monthlyBillBurdenTotal),
     monthlySharedContributionTotal: roundMoney(monthlySharedContributionTotal),
     fixedCommitments: billStreams,
-    sharedBillContributions,
+    sharedBillContributions: visibleSharedBillContributions,
     income: {
       transactions: incomeTransactions,
       monthlyEstimate: roundMoney(monthlyIncome),
@@ -175,7 +180,7 @@ export function buildAppMoneyModel({
       incomeConfidence,
       billStreams,
       safeMonthlySaving,
-      sharedBillContributions,
+      sharedBillContributions: visibleSharedBillContributions,
     }),
     aiContext: {
       monthly_income_estimate: roundMoney(monthlyIncome),
@@ -188,7 +193,7 @@ export function buildAppMoneyModel({
       monthly_bill_burden_after_contributions: roundMoney(monthlyBillBurdenTotal),
       monthly_outgoings_to_cover: roundMoney(monthlyBillBurdenTotal),
       shared_bill_contributions: sharedBillContributions.confirmed,
-      possible_shared_bill_contributions_to_check: sharedBillContributions.needsChecking,
+      possible_shared_bill_contributions_to_check: visibleSharedBillContributions.needsChecking,
       monthly_flexible_spending_estimate: roundMoney(monthlyFlexibleSpending),
       monthly_flexible_spending_planning_label: getFlexiblePlanningLabel(monthlyFlexibleSpending, monthlyIncome, flexibleSpendingConfidence),
       flexible_spending_confidence: flexibleSpendingConfidence,
@@ -485,6 +490,30 @@ function buildSharedContributionChecks(candidates = []) {
   }));
 }
 
+function filterDismissedChecks(checks = [], dismissedCheckKeys = [], transactionRules = []) {
+  const dismissed = new Set((dismissedCheckKeys || []).map(String));
+  return (checks || []).filter((check) => {
+    if (dismissed.has(String(check?.key || ""))) return false;
+    return !hasSkippedReviewRule(check, transactionRules);
+  });
+}
+
+function hasSkippedReviewRule(check, transactionRules = []) {
+  const checkText = normalizeText(check?.matchText || check?.label || check?.question || "");
+  const checkAmount = Math.abs(Number(check?.amount || 0));
+  if (!checkText) return false;
+
+  return (transactionRules || []).some((rule) => {
+    if (normalizeText(rule?.rule_type || "") !== "confidence_check_skipped") return false;
+    const ruleText = normalizeText(rule?.match_text || "");
+    if (!ruleText) return false;
+    const textMatches = ruleText.includes(checkText) || checkText.includes(ruleText);
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || !checkAmount || Math.abs(ruleAmount - checkAmount) <= Math.max(3, checkAmount * 0.18);
+  });
+}
+
 function dayDistance(a, b) {
   const direct = Math.abs(Number(a || 1) - Number(b || 1));
   return Math.min(direct, 31 - direct);
@@ -506,6 +535,29 @@ function cleanContributionName(transaction) {
 
 function getTransactionSourceId(transaction) {
   return String(transaction.id || `${transaction.transaction_date || ""}:${transaction.description || ""}:${transaction.amount || ""}`);
+}
+
+function getSharedContributionSourceIds(sharedBillContributions = {}) {
+  return new Set(
+    [...(sharedBillContributions.confirmed || []), ...(sharedBillContributions.needsChecking || [])]
+      .flatMap((contribution) => contribution.sourceIds || [])
+      .map(String)
+  );
+}
+
+function getSharedContributionKeys(sharedBillContributions = {}) {
+  return new Set(
+    [...(sharedBillContributions.confirmed || []), ...(sharedBillContributions.needsChecking || [])]
+      .map((contribution) => contribution.key)
+      .filter(Boolean)
+  );
+}
+
+function isSharedContributionTransaction(transaction, sharedBillContributions = {}, sourceIds = getSharedContributionSourceIds(sharedBillContributions)) {
+  if (!transaction || Number(transaction.amount || 0) <= 0) return false;
+  if (sourceIds.has(getTransactionSourceId(transaction))) return true;
+  const contributionKeys = getSharedContributionKeys(sharedBillContributions);
+  return contributionKeys.has(`shared-contribution:${contributionKey(transaction)}`);
 }
 
 function getUpcomingIncome(incomeTransactions = [], incomeConfidence = "low") {
@@ -736,6 +788,9 @@ function buildCleanMonthlyFacts({
     billStreams,
     billMatchKeys,
     monthlyBillBurdenTotal,
+    monthlyIncome,
+    incomeConfidence,
+    sharedBillContributions,
   });
   const closedMonths = months.filter((month) => month.status !== "partial");
   const analysisMonths = closedMonths.length >= 2 ? closedMonths : months;
@@ -776,8 +831,19 @@ function buildCleanMonthlyFacts({
   };
 }
 
-function buildMonthlyRows({ transactions, incomeTransactions, flexibleTransactions, billStreams, billMatchKeys, monthlyBillBurdenTotal }) {
+function buildMonthlyRows({
+  transactions,
+  incomeTransactions,
+  flexibleTransactions,
+  billStreams,
+  billMatchKeys,
+  monthlyBillBurdenTotal,
+  monthlyIncome,
+  incomeConfidence,
+  sharedBillContributions,
+}) {
   const rows = new Map();
+  const sharedContributionSourceIds = getSharedContributionSourceIds(sharedBillContributions);
   const ensure = (key) => {
     if (!rows.has(key)) {
       rows.set(key, {
@@ -793,6 +859,7 @@ function buildMonthlyRows({ transactions, incomeTransactions, flexibleTransactio
         bill_spending_gross: 0,
         bill_burden: 0,
         refunds_and_reimbursements: 0,
+        shared_contribution_income: 0,
         transfer_like_outgoings: 0,
         excluded_outgoings: 0,
         real_spending: 0,
@@ -822,6 +889,9 @@ function buildMonthlyRows({ transactions, incomeTransactions, flexibleTransactio
 
     if (amount > 0) row.raw_income += amount;
     if (amount < 0) row.raw_outgoings += Math.abs(amount);
+    if (amount > 0 && isSharedContributionTransaction(transaction, sharedBillContributions, sharedContributionSourceIds)) {
+      row.shared_contribution_income += amount;
+    }
 
     if (incomeIds.has(sourceId)) row.real_income += amount;
     if (isExcludedOutgoing(transaction, billStreams, billMatchKeys)) {
@@ -855,6 +925,13 @@ function buildMonthlyRows({ transactions, incomeTransactions, flexibleTransactio
       const dayCount = row.days_seen.size;
       const latestKey = list.at(-1)?.month;
       const latestLooksPartial = row.month === latestKey && !isMonthCompleteEnough(row);
+      const reviewFlags = getMonthlyReviewFlags(row, {
+        monthlyIncome,
+        incomeConfidence,
+        sharedBillContributions,
+        status: latestLooksPartial ? "partial" : "closed",
+        realSpending,
+      });
       return {
         ...row,
         days_seen: dayCount,
@@ -868,12 +945,51 @@ function buildMonthlyRows({ transactions, incomeTransactions, flexibleTransactio
         flexible_spending: roundMoney(row.flexible_spending),
         bill_spending_gross: roundMoney(row.bill_spending_gross),
         refunds_and_reimbursements: roundMoney(row.refunds_and_reimbursements),
+        shared_contribution_income: roundMoney(row.shared_contribution_income),
         transfer_like_outgoings: roundMoney(row.transfer_like_outgoings),
         excluded_outgoings: roundMoney(row.excluded_outgoings),
         category_totals: topCategoryEntries(row.category_totals, 8),
         status: latestLooksPartial ? "partial" : "closed",
+        review_flags: reviewFlags,
+        calendar_status: getMonthlyCalendarStatus(reviewFlags),
       };
     });
+}
+
+function getMonthlyReviewFlags(row, { monthlyIncome, incomeConfidence, sharedBillContributions, status, realSpending }) {
+  const flags = [];
+  const rawOutgoings = Number(row.raw_outgoings || 0);
+  const realIncome = Number(row.real_income || 0);
+  const cleanSpending = Number(realSpending || 0);
+  const transferLike = Number(row.transfer_like_outgoings || 0);
+  const excluded = Number(row.excluded_outgoings || 0);
+  const sharedNeedsReview = (sharedBillContributions?.needsChecking || []).length > 0;
+  const incomeBasis = Math.max(realIncome, Number(monthlyIncome || 0));
+
+  if (status === "partial") flags.push("partial_month");
+  if (transferLike >= Math.max(250, rawOutgoings * 0.25)) flags.push("likely_transfers");
+  if (excluded >= Math.max(250, rawOutgoings * 0.25)) flags.push("raw_movement_inflated");
+  if (Number(row.refunds_and_reimbursements || 0) >= 100) flags.push("refund_or_reimbursement");
+  if (sharedNeedsReview && (Number(row.shared_contribution_income || 0) > 0 || Number(row.bill_spending_gross || 0) > 0 || Number(row.raw_income || 0) >= 100)) {
+    flags.push("shared_money_needs_review");
+  }
+  if (incomeBasis > 0 && rawOutgoings > incomeBasis * 1.5 && (transferLike + excluded) >= 250) {
+    flags.push("raw_outgoings_above_income");
+  }
+
+  const cleanNet = realIncome - cleanSpending;
+  const impossibleThreshold = Math.max(500, incomeBasis * 0.45);
+  if (cleanNet < -impossibleThreshold && (sharedNeedsReview || incomeConfidence === "low" || transferLike >= 250 || excluded >= 250)) {
+    flags.push("personal_result_needs_checking");
+  }
+
+  return [...new Set(flags)];
+}
+
+function getMonthlyCalendarStatus(flags = []) {
+  return flags.some((flag) => ["shared_money_needs_review", "personal_result_needs_checking"].includes(flag))
+    ? "needs_checking"
+    : "personal_estimate";
 }
 
 function isMonthCompleteEnough(row) {
@@ -1026,14 +1142,20 @@ function compactMonthlyRow(row) {
     month: row.month,
     label: row.label,
     status: row.status,
+    calendar_status: row.calendar_status,
+    review_flags: row.review_flags,
     real_income: row.real_income,
     real_spending: row.real_spending,
+    net_after_real_spending: row.net_after_real_spending,
     flexible_spending: row.flexible_spending,
     bill_burden: row.bill_burden,
+    bill_spending_gross: row.bill_spending_gross,
+    raw_income: row.raw_income,
     raw_outgoings: row.raw_outgoings,
     excluded_outgoings: row.excluded_outgoings,
     transfer_like_outgoings: row.transfer_like_outgoings,
     refunds_and_reimbursements: row.refunds_and_reimbursements,
+    shared_contribution_income: row.shared_contribution_income,
     category_totals: row.category_totals,
   };
 }

@@ -1,6 +1,6 @@
 # Codex context for Budget Builder / Money Hub
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 This file is intended to give Codex enough context to work safely on the project without needing the chat history.
 
@@ -97,6 +97,48 @@ Preserve this flow:
 ```text
 CSV or bank feed -> import parser -> money understanding / statement intelligence -> app money model -> compact Coach context -> AI Coach advice
 ```
+
+### Calendar clean-money source of truth
+
+Status: completed on 2026-05-05.
+
+Relevant files:
+
+- `src/pages/CalendarPage.jsx`
+- `src/lib/calendarMoneyPresentation.js`
+- `src/lib/appMoneyModel.js`
+
+Current behaviour:
+
+- Calendar is a simple bills-and-monthly-pressure screen: header, next-bill hero, compact upcoming bills, one quick read, and recent months.
+- Calendar monthly reads use `appMoneyModel.cleanMonthlyFacts.monthly_rows` first.
+- `getMonthlyBreakdown()` remains a raw reference fallback only. It must not drive personal monthly budget conclusions.
+- Recent Months labels each row as `Personal net estimate`, `Needs checking`, or `Raw bank movement`.
+- Clean month rows carry review flags for shared money, likely transfers, raw movement inflation, refunds/reimbursements, partial months, and impossible-looking personal results.
+- Shared rent/bill contributions are excluded from income by contribution source and contribution key, so older repeated housemate payments do not become fake income.
+- If shared rent timing is unclear, Calendar shows `Needs checking` instead of a confident impossible deficit or fake surplus.
+- Upcoming bills show the user's share where confirmed shared money exists, with total bill shown only as secondary context.
+
+### Review skip semantics
+
+Status: completed on 2026-05-05.
+
+Relevant files:
+
+- `src/lib/reviewDismissals.js`
+- `src/lib/reviewOptions.js`
+- `src/pages/ConfidencePage.jsx`
+- `src/pages/CoachPage.jsx`
+- `src/lib/appMoneyModel.js`
+- `src/lib/moneyUnderstanding.js`
+
+Current behaviour:
+
+- `Skip this` means the user does not want that exact Review item counted as pending.
+- Skips are stored locally and as a non-financial `transaction_rules` row with `rule_type = confidence_check_skipped`.
+- A skipped check should disappear from Review and should not keep Home, Calendar, Goals, Coach or page guides saying there are checks waiting.
+- Skipping does not teach a spending/income classification. If the user wants the money treatment changed, they should pick a Review option.
+- Review options now include plain-language answers for normal purchase, one-off payment, own transfer, and irrelevant/exclude.
 
 ### User scoping
 
@@ -304,9 +346,8 @@ Previous behaviour:
 
 Current behaviour:
 
-- The bottom `Recent Months` / `This Month` section shows month label, days used, and net only.
-- It does not show gross `In` / `Out` copy in that bottom section.
-- Day-level drilldowns can still show in/out because that is about a selected day, not a monthly income claim.
+- Superseded by the 2026-05-05 Calendar clean-money simplification above.
+- Calendar no longer uses raw `In` / `Out` monthly summaries for the main monthly read.
 
 ## Medium-priority maintainability work
 
@@ -389,9 +430,11 @@ Use a test account.
 
 ### Calendar
 
-- Confirm bottom Recent Months shows only month label, days used, and net.
-- Confirm no `In` / `Out` copy appears in the bottom Recent Months rows.
-- Confirm selected day drilldown still shows day-level transaction detail.
+- Confirm the page shows a simple header, next-bill hero, Upcoming Bills, What Stands Out, and Recent Months.
+- Confirm Recent Months rows are labelled `Personal net estimate`, `Needs checking`, or `Raw bank movement`.
+- Confirm no `In` / `Out` copy appears in Recent Months.
+- Confirm shared rent/bill contributions show as reduced user share, with gross total only as secondary context.
+- Confirm cross-month or uncertain shared money shows `Needs checking` and points to Review.
 
 ### Deletion audit
 

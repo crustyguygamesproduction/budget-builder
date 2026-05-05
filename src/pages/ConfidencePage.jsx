@@ -2,111 +2,9 @@ import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { readCoachGeneratedChecks } from "../lib/coachGeneratedChecks";
 import { normalizeText } from "../lib/finance";
+import { dismissReviewCheckKey, readDismissedReviewCheckKeys } from "../lib/reviewDismissals";
+import { REVIEW_RULE_OPTIONS } from "../lib/reviewOptions";
 import { Section, MiniCard } from "../components/ui";
-
-const RULE_OPTIONS = [
-  {
-    label: "Rent contribution",
-    category: "Shared rent contribution",
-    ruleType: "shared_bill_contribution",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: false,
-    helper: "Use this when someone pays you their share of rent.",
-  },
-  {
-    label: "Bill contribution",
-    category: "Shared bill contribution",
-    ruleType: "shared_bill_contribution",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: false,
-    helper: "Use this when someone pays you back for shared bills.",
-  },
-  {
-    label: "Rent",
-    category: "Rent",
-    isBill: true,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: true,
-    helper: "Use this for your landlord or housing payment.",
-  },
-  {
-    label: "Bill",
-    category: "Major bill",
-    isBill: true,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: true,
-    helper: "Use this for bills you need money ready for.",
-  },
-  {
-    label: "Subscription",
-    category: "Subscription",
-    isBill: false,
-    isSubscription: true,
-    isInternalTransfer: false,
-    matchAmount: true,
-    helper: "Use this for Netflix, Apple, memberships, app plans, gyms or similar.",
-  },
-  {
-    label: "Wages/income",
-    category: "Wages",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: false,
-    helper: "Use this for pay from work, wages, salary, benefits or reliable income.",
-  },
-  {
-    label: "Friend/family",
-    category: "Personal payment",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: false,
-    helper: "Use this for gifts, lending, paying people back, or help from people you know.",
-  },
-  {
-    label: "Work/expense",
-    category: "Work / pass-through",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: false,
-    helper: "Use this for expenses, resale, client money or reimbursement that is not really yours to spend.",
-  },
-  {
-    label: "Refund/reimbursement",
-    category: "Refund",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: false,
-    matchAmount: false,
-    helper: "Use this for refunds, chargebacks, cashback or money returned after spending.",
-  },
-  {
-    label: "My own transfer",
-    category: "Internal Transfer",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: true,
-    matchAmount: false,
-    helper: "Use this for moving your own money between accounts or pots.",
-  },
-  {
-    label: "Ignore from budget",
-    category: "Internal Transfer",
-    isBill: false,
-    isSubscription: false,
-    isInternalTransfer: true,
-    matchAmount: false,
-    helper: "Use this when the payment should not count as income, spending or a bill.",
-  },
-];
 
 export default function ConfidencePage({
   transactions,
@@ -120,12 +18,7 @@ export default function ConfidencePage({
 }) {
   const [savingKey, setSavingKey] = useState("");
   const [dismissedKeys, setDismissedKeys] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      return JSON.parse(localStorage.getItem("moneyhub-dismissed-confidence-checks") || "[]");
-    } catch {
-      return [];
-    }
+    return readDismissedReviewCheckKeys();
   });
   const [message, setMessage] = useState("");
 
@@ -152,8 +45,8 @@ export default function ConfidencePage({
     [dismissedKeys, transactionRules]
   );
 
-  const completedCount = transactionRules.filter((rule) =>
-    ["coach_confirmation", "recurring_major_payment", "confidence_check", "shared_bill_contribution"].includes(rule.rule_type)
+  const handledCount = transactionRules.filter((rule) =>
+    ["coach_confirmation", "recurring_major_payment", "confidence_check", "shared_bill_contribution", "confidence_check_skipped"].includes(rule.rule_type)
   ).length;
 
   async function saveRule(candidate, option) {
@@ -169,7 +62,7 @@ export default function ConfidencePage({
         {
           user_id: user.id,
           rule_type: option.ruleType || "confidence_check",
-          match_text: candidate.matchText,
+          match_text: getCandidateMatchText(candidate),
           match_amount: option.matchAmount ? candidate.amount : null,
           category: option.category,
           is_bill: Boolean(option.isBill),
@@ -183,7 +76,7 @@ export default function ConfidencePage({
 
       if (error) throw error;
 
-      dismissCandidate(candidate, false);
+      dismissCandidateLocal(candidate);
       await onTransactionRulesChange?.();
       setMessage(`Saved: ${candidate.label} is ${option.label}. Money Hub will remember this next time.`);
     } catch (error) {
@@ -210,17 +103,45 @@ export default function ConfidencePage({
     });
   }
 
-  function dismissCandidate(candidate, persist = true) {
-    setDismissedKeys((prev) => {
-      const next = [...new Set([...prev, candidate.key])];
-      if (typeof window !== "undefined") {
-        localStorage.setItem("moneyhub-dismissed-confidence-checks", JSON.stringify(next));
-      }
-      return next;
-    });
+  function dismissCandidateLocal(candidate) {
+    setDismissedKeys(dismissReviewCheckKey(candidate.key));
+  }
 
-    if (persist) {
-      setMessage(`Skipped ${candidate.label}. If it appears again, you can answer it later.`);
+  async function skipCandidate(candidate) {
+    if (!candidate || savingKey) return;
+    setSavingKey(candidate.key);
+    setMessage("");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const { error } = await supabase.from("transaction_rules").upsert(
+        {
+          user_id: user.id,
+          rule_type: "confidence_check_skipped",
+          match_text: getCandidateMatchText(candidate),
+          match_amount: candidate.amount ?? null,
+          category: "Skipped Review",
+          is_bill: false,
+          is_subscription: false,
+          is_internal_transfer: false,
+          notes: `User skipped this Review check without changing money treatment. Example: ${candidate.sampleDescription || candidate.label}`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,rule_type,match_text,match_amount" }
+      );
+
+      if (error) throw error;
+
+      dismissCandidateLocal(candidate);
+      await onTransactionRulesChange?.();
+      setMessage(`Skipped ${candidate.label}. Money Hub will stop counting it as a waiting Review item.`);
+    } catch (error) {
+      setMessage(error.message || "Could not skip that check yet.");
+    } finally {
+      setSavingKey("");
     }
   }
 
@@ -228,7 +149,7 @@ export default function ConfidencePage({
     <>
       <Section styles={styles} title="Review">
         <p style={styles.sectionIntro}>
-          Answer the tiny questions Money Hub cannot safely guess. One tap can fix your bills, transfers, totals and AI advice.
+          Answer only what matters. Skip means "stop asking me about this"; choose an option when you want Money Hub to learn the right rule.
         </p>
 
         {returnTarget ? (
@@ -239,14 +160,14 @@ export default function ConfidencePage({
 
         <div style={getStatsGridStyle(screenWidth)}>
           <MiniCard styles={styles} title="Waiting" value={`${checks.length}`} />
-          <MiniCard styles={styles} title="Answered" value={`${completedCount}`} />
+          <MiniCard styles={styles} title="Handled" value={`${handledCount}`} />
           <MiniCard styles={styles} title="Why do this?" value="Better answers" />
         </div>
 
         {message ? <div style={styles.historyNote}>{message}</div> : null}
         {coachCheckCount > 0 ? (
           <div style={styles.historyNote}>
-            Someone missing? Ask Coach with their name, or mark these as friend/family, wages, work expenses, your own transfer, or something else.
+            Use plain answers like Normal purchase, One-off payment, My own transfer, or Irrelevant / exclude when the app is overthinking a transaction.
           </div>
         ) : null}
       </Section>
@@ -270,7 +191,7 @@ export default function ConfidencePage({
               saving={savingKey === candidate.key}
               onSave={(option) => saveRule(candidate, option)}
               onOther={() => saveOtherRule(candidate)}
-              onSkip={() => dismissCandidate(candidate)}
+              onSkip={() => skipCandidate(candidate)}
             />
           ))}
         </Section>
@@ -290,7 +211,7 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
           </p>
         </div>
         <button type="button" style={styles.ghostBtn} onClick={onSkip} disabled={saving}>
-          Skip
+          Skip this
         </button>
       </div>
 
@@ -311,7 +232,7 @@ function ConfidenceCard({ candidate, styles, saving, onSave, onOther, onSkip }) 
       </div>
 
       <div style={getOptionGridStyle()}>
-        {RULE_OPTIONS.map((option) => (
+        {REVIEW_RULE_OPTIONS.map((option) => (
           <button
             key={option.label}
             type="button"
@@ -346,7 +267,7 @@ function formatCheckPattern(candidate) {
 }
 
 function hasAnsweredRule(candidate, transactionRules = []) {
-  const match = normalizeText(candidate?.matchText || candidate?.label);
+  const match = normalizeText(getCandidateMatchText(candidate));
   if (!match) return false;
 
   return (transactionRules || []).some((rule) => {
@@ -354,6 +275,10 @@ function hasAnsweredRule(candidate, transactionRules = []) {
     if (!ruleText) return false;
     return ruleText.includes(match) || match.includes(ruleText);
   });
+}
+
+function getCandidateMatchText(candidate) {
+  return candidate?.matchText || candidate?.label || candidate?.question || "review check";
 }
 
 function getExamplesForCandidate(transactions, candidate) {

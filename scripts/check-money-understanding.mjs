@@ -13,6 +13,8 @@ const { buildMoneyUnderstanding } = await server.ssrLoadModule("/src/lib/moneyUn
 const { buildAppMoneyModel } = await server.ssrLoadModule("/src/lib/appMoneyModel.js");
 const { getStatementIntelligenceContext } = await server.ssrLoadModule("/src/lib/statementIntelligence.js");
 const { buildCoachContext } = await server.ssrLoadModule("/src/lib/coachContext.js");
+const { buildCalendarMonthlyRows } = await server.ssrLoadModule("/src/lib/calendarMoneyPresentation.js");
+const { REVIEW_RULE_OPTIONS } = await server.ssrLoadModule("/src/lib/reviewOptions.js");
 
 let nextId = 1;
 
@@ -43,8 +45,17 @@ function buildModel(transactions, options = {}) {
       goals: options.goals || [],
       debts: options.debts || [],
       investments: options.investments || [],
+      dismissedCheckKeys: options.dismissedCheckKeys || [],
     }),
   };
+}
+
+{
+  const optionLabels = REVIEW_RULE_OPTIONS.map((option) => option.label);
+  assert.ok(optionLabels.includes("Normal purchase"));
+  assert.ok(optionLabels.includes("One-off payment"));
+  assert.ok(optionLabels.includes("My own transfer"));
+  assert.ok(optionLabels.includes("Irrelevant / exclude"));
 }
 
 {
@@ -140,6 +151,33 @@ function buildModel(transactions, options = {}) {
 
   assert.equal(understanding.billStreams.length, 0);
   assert.equal(understanding.checks.length, 1);
+}
+
+{
+  const transactions = [
+    tx("ACME payment", -420, "2026-02-14"),
+    tx("ACME payment", -420, "2026-03-14"),
+    tx("ACME payment", -420, "2026-04-14"),
+  ];
+  const firstRead = buildModel(transactions);
+  const checkKey = firstRead.appModel.checksWaiting[0]?.key;
+  const dismissedRead = buildModel(transactions, { dismissedCheckKeys: [checkKey] });
+
+  assert.ok(checkKey);
+  assert.equal(firstRead.appModel.checksWaiting.length, 1);
+  assert.equal(dismissedRead.appModel.checksWaiting.length, 0);
+  assert.equal(dismissedRead.appModel.nextBestActions.some((action) => action.key === "checks"), false);
+
+  const skippedRuleRead = buildModel(transactions, {
+    transactionRules: [{
+      rule_type: "confidence_check_skipped",
+      match_text: firstRead.appModel.checksWaiting[0].matchText,
+      match_amount: firstRead.appModel.checksWaiting[0].amount,
+      category: "Skipped Review",
+    }],
+  });
+  assert.equal(skippedRuleRead.understanding.checks.length, 0);
+  assert.equal(skippedRuleRead.appModel.checksWaiting.length, 0);
 }
 
 {
@@ -373,6 +411,38 @@ function buildModel(transactions, options = {}) {
 }
 
 {
+  const transactions = [
+    tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+    tx("Faster payment from Sam", 725, "2026-02-18"),
+    tx("Faster payment from Sam", 725, "2026-03-18"),
+    tx("Faster payment from Sam", 725, "2026-04-18"),
+  ];
+  const firstRead = buildModel(transactions);
+  const sharedCheckKey = firstRead.appModel.checksWaiting.find((check) => check.sharedContribution)?.key;
+  const dismissedRead = buildModel(transactions, { dismissedCheckKeys: [sharedCheckKey] });
+
+  assert.ok(sharedCheckKey);
+  assert.equal(firstRead.appModel.sharedBillContributions.needsChecking.length, 1);
+  assert.equal(dismissedRead.appModel.checksWaiting.some((check) => check.key === sharedCheckKey), false);
+  assert.equal(dismissedRead.appModel.sharedBillContributions.needsChecking.length, 0);
+  assert.equal(dismissedRead.appModel.nextBestActions.some((action) => action.key === "shared-bills"), false);
+  assert.equal(dismissedRead.appModel.cleanMonthlyFacts.uncertainty_flags.includes("review_checks_waiting"), false);
+
+  const skippedRuleRead = buildModel(transactions, {
+    transactionRules: [{
+      rule_type: "confidence_check_skipped",
+      match_text: firstRead.appModel.checksWaiting.find((check) => check.sharedContribution).matchText,
+      match_amount: firstRead.appModel.checksWaiting.find((check) => check.sharedContribution).amount,
+      category: "Skipped Review",
+    }],
+  });
+  assert.equal(skippedRuleRead.appModel.checksWaiting.some((check) => check.sharedContribution), false);
+  assert.equal(skippedRuleRead.appModel.sharedBillContributions.needsChecking.length, 0);
+}
+
+{
   const understanding = buildMoneyUnderstanding({
     transactions: [
       tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
@@ -508,6 +578,13 @@ function buildModel(transactions, options = {}) {
   assert.equal(facts.latest_full_month.transfer_like_outgoings, 1800);
   assert.equal(facts.budget_sanity.raw_outgoings_likely_inflated, true);
   assert.ok(facts.uncertainty_flags.includes("raw_outgoings_likely_inflated"));
+
+  const calendarRows = buildCalendarMonthlyRows({ cleanRows: facts.monthly_rows, rawRows: [], timeframe: "all" });
+  const april = calendarRows.find((row) => row.label === "April 2026");
+  assert.equal(april.valueLabel, "Personal net estimate");
+  assert.equal(april.status, "personal_estimate");
+  assert.equal(april.net, 709);
+  assert.ok(april.detailLabel.includes("transfers excluded"));
 }
 
 {
@@ -525,6 +602,25 @@ function buildModel(transactions, options = {}) {
   assert.equal(appModel.income.monthlyEstimate, 0);
   assert.equal(appModel.cleanMonthlyFacts.latest_full_month.real_income, 0);
   assert.equal(appModel.cleanMonthlyFacts.latest_full_month.bill_burden, 725);
+}
+
+{
+  const { appModel } = buildModel([
+    tx("Rent to landlord", -1450, "2026-01-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-02-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+    tx("Housemate rent contribution", 725, "2026-01-01"),
+    tx("Housemate rent contribution", 725, "2026-02-01"),
+    tx("Housemate rent contribution", 725, "2026-03-01"),
+    tx("Housemate rent contribution", 725, "2026-04-01"),
+  ]);
+  const january = appModel.cleanMonthlyFacts.monthly_rows.find((row) => row.month === "2026-01");
+
+  assert.equal(appModel.monthlyScheduledOutgoingsTotal, 725);
+  assert.equal(january.real_income, 0);
+  assert.equal(january.bill_burden, 725);
+  assert.equal(january.net_after_real_spending, -725);
 }
 
 {
@@ -555,6 +651,28 @@ function buildModel(transactions, options = {}) {
   assert.equal(march.real_income, 0);
   assert.equal(april.bill_burden, 1450);
   assert.ok(appModel.checksWaiting.some((check) => check.sharedContribution));
+
+  const calendarRows = buildCalendarMonthlyRows({ cleanRows: appModel.cleanMonthlyFacts.monthly_rows, rawRows: [], timeframe: "all" });
+  assert.equal(calendarRows.find((row) => row.label === "March 2026").status, "needs_checking");
+  assert.equal(calendarRows.find((row) => row.label === "April 2026").status, "needs_checking");
+  assert.equal(calendarRows.find((row) => row.label === "April 2026").amountText, "Needs checking");
+}
+
+{
+  const calendarRows = buildCalendarMonthlyRows({
+    cleanRows: null,
+    rawRows: [{ key: "2026-04", label: "April 2026", earned: 1700, spent: 3500, net: -1800, activeDays: 21 }],
+    timeframe: "all",
+  });
+
+  assert.equal(calendarRows[0].valueLabel, "Raw bank movement");
+  assert.equal(calendarRows[0].status, "raw_movement");
+  assert.ok(calendarRows[0].warning.includes("Raw bank movement"));
+}
+
+{
+  const calendarRows = buildCalendarMonthlyRows({ cleanRows: [], rawRows: [], timeframe: "all" });
+  assert.deepEqual(calendarRows, []);
 }
 
 {

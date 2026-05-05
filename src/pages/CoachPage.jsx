@@ -6,6 +6,8 @@ import {
   mergeCoachGeneratedChecks,
   readCoachGeneratedChecks,
 } from "../lib/coachGeneratedChecks";
+import { dismissReviewCheckKey, readDismissedReviewCheckKeys } from "../lib/reviewDismissals";
+import { REVIEW_RULE_OPTIONS } from "../lib/reviewOptions";
 import { getTopCategories } from "../lib/dashboardIntelligence";
 import { getStatementIntelligenceContext } from "../lib/statementIntelligence";
 import {
@@ -59,12 +61,7 @@ export default function CoachPage({
   const [clearing, setClearing] = useState(false);
   const [savingRuleKey, setSavingRuleKey] = useState("");
   const [dismissedRuleKeys, setDismissedRuleKeys] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      return JSON.parse(localStorage.getItem("moneyhub-dismissed-rule-checks") || "[]");
-    } catch {
-      return [];
-    }
+    return readDismissedReviewCheckKeys();
   });
   const [chatError, setChatError] = useState("");
   const [coachGeneratedChecks, setCoachGeneratedChecks] = useState(() => readCoachGeneratedChecks());
@@ -133,11 +130,6 @@ export default function CoachPage({
     // This only consumes a one-shot draft left by navigation into the coach.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem("moneyhub-dismissed-rule-checks", JSON.stringify(dismissedRuleKeys));
-  }, [dismissedRuleKeys]);
 
   useEffect(() => {
     if (thinking) {
@@ -287,7 +279,7 @@ export default function CoachPage({
         {
           user_id: user.id,
           rule_type: "coach_confirmation",
-          match_text: candidate.matchText,
+          match_text: getCandidateMatchText(candidate),
           match_amount: rule.matchAmount ? candidate.amount : null,
           category: rule.category,
           is_bill: Boolean(rule.isBill),
@@ -301,7 +293,8 @@ export default function CoachPage({
 
       if (error) throw error;
 
-      setDismissedRuleKeys((prev) => [...new Set([...prev, candidate.key])]);
+      dismissReviewCheckKey(candidate.key);
+      setDismissedRuleKeys(readDismissedReviewCheckKeys());
       await onTransactionRulesChange?.();
     } catch (error) {
       setChatError(error.message || "Could not save that correction yet.");
@@ -311,8 +304,45 @@ export default function CoachPage({
   }
 
   function dismissCorrection(candidate) {
-    if (!candidate) return;
-    setDismissedRuleKeys((prev) => [...new Set([...prev, candidate.key])]);
+    if (!candidate || savingRuleKey) return;
+    skipCorrection(candidate);
+  }
+
+  async function skipCorrection(candidate) {
+    setSavingRuleKey(candidate.key);
+    setChatError("");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const { error } = await supabase.from("transaction_rules").upsert(
+        {
+          user_id: user.id,
+          rule_type: "confidence_check_skipped",
+          match_text: getCandidateMatchText(candidate),
+          match_amount: candidate.amount ?? null,
+          category: "Skipped Review",
+          is_bill: false,
+          is_subscription: false,
+          is_internal_transfer: false,
+          notes: `User skipped this Coach Review check without changing money treatment. Example: ${candidate.sampleDescription || candidate.label}`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,rule_type,match_text,match_amount" }
+      );
+
+      if (error) throw error;
+
+      dismissReviewCheckKey(candidate.key);
+      setDismissedRuleKeys(readDismissedReviewCheckKeys());
+      await onTransactionRulesChange?.();
+    } catch (error) {
+      setChatError(error.message || "Could not skip that correction yet.");
+    } finally {
+      setSavingRuleKey("");
+    }
   }
 
   async function clearChat() {
@@ -544,6 +574,10 @@ function buildCoachBrainReadyHelper(data) {
   return `${count ? `${count} transactions saved for Coach.` : "Saved money read is ready."}${latest}${updated}`;
 }
 
+function getCandidateMatchText(candidate) {
+  return candidate?.matchText || candidate?.label || candidate?.question || "review check";
+}
+
 function getCoachChecksPillStyle(styles) {
   return {
     width: "100%",
@@ -589,19 +623,6 @@ function formatRelativeSyncTime(value) {
 }
 
 function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
-  const rules = [
-    { label: "Rent contribution", category: "Shared rent contribution", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
-    { label: "Bill contribution", category: "Shared bill contribution", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
-    { label: "Rent", category: "Rent", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
-    { label: "Bill", category: "Major bill", isBill: true, isSubscription: false, isInternalTransfer: false, matchAmount: true },
-    { label: "Subscription", category: "Subscription", isBill: false, isSubscription: true, isInternalTransfer: false, matchAmount: true },
-    { label: "Friend/family", category: "Personal payment", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
-    { label: "Work/pass-through", category: "Work / pass-through", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
-    { label: "Refund/reimbursement", category: "Refund", isBill: false, isSubscription: false, isInternalTransfer: false, matchAmount: false },
-    { label: "Transfer", category: "Internal Transfer", isBill: false, isSubscription: false, isInternalTransfer: true, matchAmount: false },
-    { label: "Ignore from budget", category: "Internal Transfer", isBill: false, isSubscription: false, isInternalTransfer: true, matchAmount: false },
-  ];
-
   return (
     <div style={getModalOverlayStyle()} role="dialog" aria-modal="true">
       <div style={getCorrectionSheetStyle(styles)}>
@@ -613,16 +634,17 @@ function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
           {candidate.question || `What is ${candidate.label}?`}
         </div>
         <div style={{ fontSize: 14, lineHeight: 1.45, color: "#64748b", marginBottom: 12 }}>
-          I am not fully sure how to treat this. I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. {candidate.helper || "Your answer will fix future totals."}
+          I am not fully sure how to treat this. I found about £{Number(candidate.amount || 0).toFixed(2)} repeated {candidate.count} times. Pick Normal purchase, One-off payment, My own transfer, or Irrelevant / exclude if I am overthinking it.
         </div>
         <div style={{ display: "grid", gap: 8 }}>
-          {rules.map((rule) => (
+          {REVIEW_RULE_OPTIONS.map((rule) => (
             <button
               key={rule.label}
               type="button"
               style={getCorrectionOptionStyle(styles)}
               onClick={() => onSave(rule)}
               disabled={saving}
+              title={rule.helper}
             >
               {saving ? "Saving..." : rule.label}
             </button>
@@ -633,7 +655,7 @@ function CorrectionModal({ candidate, styles, saving, onSave, onDismiss }) {
             onClick={onDismiss}
             disabled={saving}
           >
-            Ask me later
+            Skip this
           </button>
         </div>
       </div>

@@ -76,6 +76,7 @@ export function buildMoneyUnderstanding({ transactions = [], transactionRules = 
   const checks = buildChecks({
     candidates: buildRecurringMajorPaymentCandidates(smartTransactions, transactionRules),
     billStreams,
+    transactionRules,
   });
   const upcomingBills = getUpcomingBills(billStreams);
   const upcomingBillsTotal = upcomingBills.reduce((sum, bill) => sum + Number(bill.amount || 0), 0);
@@ -521,14 +522,31 @@ function normaliseSnapshotChecks(items = []) {
   }));
 }
 
-function buildChecks({ candidates, billStreams }) {
+function buildChecks({ candidates, billStreams, transactionRules = [] }) {
   return (candidates || [])
     .filter((candidate) => !hasMatchingBillStream(candidate, billStreams))
+    .filter((candidate) => !hasSkippedReviewRule(candidate, transactionRules))
     .map((candidate) => ({
       ...candidate,
       question: `What is ${candidate.label}?`,
       helper: "Is this a bill, subscription, transfer, work money, or something else?",
     }));
+}
+
+function hasSkippedReviewRule(candidate, transactionRules = []) {
+  const candidateText = normalizeText(candidate?.matchText || candidate?.label || "");
+  const candidateAmount = Math.abs(Number(candidate?.amount || 0));
+  if (!candidateText) return false;
+
+  return (transactionRules || []).some((rule) => {
+    if (normalizeText(rule?.rule_type || "") !== "confidence_check_skipped") return false;
+    const ruleText = normalizeText(rule?.match_text || "");
+    if (!ruleText) return false;
+    const textMatches = ruleText.includes(candidateText) || candidateText.includes(ruleText);
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || !candidateAmount || Math.abs(ruleAmount - candidateAmount) <= Math.max(3, candidateAmount * 0.18);
+  });
 }
 
 function hasMatchingBillStream(candidate, billStreams) {

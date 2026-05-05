@@ -1,3 +1,5 @@
+import { readDismissedReviewCheckKeys } from "./reviewDismissals";
+
 export const COACH_GENERATED_CHECKS_KEY = "moneyhub-coach-generated-checks";
 
 export function readCoachGeneratedChecks() {
@@ -5,7 +7,11 @@ export function readCoachGeneratedChecks() {
   try {
     const parsed = JSON.parse(localStorage.getItem(COACH_GENERATED_CHECKS_KEY) || "[]");
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(Boolean).filter(isUsefulCoachGeneratedCheck);
+    const dismissed = new Set(readDismissedReviewCheckKeys());
+    return parsed
+      .filter(Boolean)
+      .filter(isUsefulCoachGeneratedCheck)
+      .filter((item) => !dismissed.has(String(item?.key || "")));
   } catch {
     return [];
   }

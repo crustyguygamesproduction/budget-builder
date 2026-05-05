@@ -1,60 +1,31 @@
-﻿import { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
-import { InsightCard, MiniCard, Section } from "../components/ui";
+import { InsightCard, Section } from "../components/ui";
 import SetupEmptyState from "../components/SetupEmptyState";
-import { getFunctionErrorMessage } from "../lib/functionErrors";
+import { formatCurrency, normalizeText } from "../lib/finance";
 import {
-  addDays,
-  formatCompactCurrency,
-  formatCurrency,
-  formatDateLong,
-  getMeaningfulCategory,
-  normalizeText,
-  startOfDay,
-  toIsoDate,
-} from "../lib/finance";
-import {
-  buildCalendarMonth,
-  buildHistoricalCalendarMonth,
-  buildRollingHistoryWindow,
-  canShiftCalendarMonth,
-  canShiftShortWindow,
-  clampDayToRange,
-  clampMonthToRange,
   downloadCalendarEvent,
-  formatShortWeekday,
-  formatShortWindowTitle,
-  getCalendarMonthBounds,
-  getCalendarPatternSummary,
-  getCalendarSummaryGridStyle,
-  getEarliestHistoryDate,
-  getLatestHistoryDate,
   getMonthlyBreakdown,
-  getMonthlyHistorySummary,
-  getRollingDaysGridStyle,
-  getRollingWindowSummary,
-  getTimeframeDayCount,
-  getTimeframeMonthCount,
-  isShortTimeframe,
 } from "../lib/calendarIntelligence";
-import { getCalendarEventStyle } from "../lib/styleHelpers";
+import {
+  buildCalendarMonthlyRows,
+  getMonthStandout,
+} from "../lib/calendarMoneyPresentation";
 import { cleanBillName, getBillBaseName } from "../lib/moneyUnderstandingGuards";
-import { getDataFreshness } from "../lib/dashboardIntelligence";
 
-const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-export default function CalendarPage({ transactions, transactionRules = [], moneyUnderstanding, appMoneyModel, onTransactionRulesChange, onRefreshMoneyUnderstanding, onNavigate, screenWidth, styles }) {
-  const [viewDate, setViewDate] = useState(() => new Date());
-  const [selectedDayKey, setSelectedDayKey] = useState("");
-  const [calendarMode, setCalendarMode] = useState("recurring");
-  const [timeframe, setTimeframe] = useState("all");
-  const [calendarAiBusy, setCalendarAiBusy] = useState(false);
-  const [calendarAiText, setCalendarAiText] = useState("");
-  const [calendarAiError, setCalendarAiError] = useState("");
+export default function CalendarPage({
+  transactions,
+  transactionRules = [],
+  moneyUnderstanding,
+  appMoneyModel,
+  onTransactionRulesChange,
+  onRefreshMoneyUnderstanding,
+  onNavigate,
+  screenWidth,
+  styles,
+}) {
   const [correctionBusyKey, setCorrectionBusyKey] = useState("");
   const [calendarNotice, setCalendarNotice] = useState("");
-  const [showBillsList, setShowBillsList] = useState(false);
   const [showMissingBills, setShowMissingBills] = useState(false);
   const [showHiddenSuggestions, setShowHiddenSuggestions] = useState(false);
   const [hiddenCandidateKeys, setHiddenCandidateKeys] = useState([]);
@@ -65,12 +36,10 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
       .map((event) => ({ ...event, title: cleanBillName(event.title) }))),
     [moneyUnderstanding]
   );
-  const allHistoryMonths = useMemo(
-    () => getMonthlyBreakdown(transactions, "all"),
-    [transactions]
+  const missingBillCandidates = useMemo(
+    () => getMissingBillCandidates(transactions, recurringEvents, transactionRules),
+    [transactions, recurringEvents, transactionRules]
   );
-  const availableMonthCount = allHistoryMonths.length;
-  const missingBillCandidates = useMemo(() => getMissingBillCandidates(transactions, recurringEvents, transactionRules), [transactions, recurringEvents, transactionRules]);
   const visibleMissingBillCandidates = useMemo(
     () => missingBillCandidates.filter((candidate) => !hiddenCandidateKeys.includes(candidate.key) && !confirmedCandidateKeys.includes(candidate.key)),
     [missingBillCandidates, hiddenCandidateKeys, confirmedCandidateKeys]
@@ -79,115 +48,54 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     () => dedupeHiddenSuggestionRules(transactionRules || []),
     [transactionRules]
   );
-  const shortTimeframe = isShortTimeframe(timeframe);
-  const usingShortHistoryView = shortTimeframe && calendarMode === "history";
-  const shortWindowSize = getTimeframeDayCount(timeframe);
-  const earliestHistoryDate = useMemo(
-    () => getEarliestHistoryDate(transactions),
-    [transactions]
+  const sharedContributions = useMemo(
+    () => appMoneyModel?.sharedBillContributions?.confirmed || [],
+    [appMoneyModel?.sharedBillContributions]
   );
-  const latestHistoryDate = useMemo(
-    () => getLatestHistoryDate(transactions),
-    [transactions]
+  const sharedContributionsToCheck = useMemo(
+    () => appMoneyModel?.sharedBillContributions?.needsChecking || [],
+    [appMoneyModel?.sharedBillContributions]
   );
-  const shortWindowBounds = useMemo(
-    () => ({ start: earliestHistoryDate, end: startOfDay(new Date()) }),
-    [earliestHistoryDate]
-  );
-  const activeShortEndDate = useMemo(
-    () => clampDayToRange(viewDate, shortWindowBounds),
-    [viewDate, shortWindowBounds]
-  );
-  const calendarBounds = useMemo(
-    () => getCalendarMonthBounds(transactions, timeframe),
-    [transactions, timeframe]
-  );
-  const recurringBounds = useMemo(() => {
-    const start = new Date();
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-    return { start, end: new Date(start.getFullYear(), start.getMonth() + 11, 1) };
-  }, []);
-  const activeViewDate = useMemo(() => clampMonthToRange(viewDate, calendarBounds), [viewDate, calendarBounds]);
-  const activeRecurringViewDate = useMemo(() => clampMonthToRange(viewDate, recurringBounds), [viewDate, recurringBounds]);
-
-  const historicalCalendar = useMemo(() => buildHistoricalCalendarMonth(activeViewDate, transactions, recurringEvents), [activeViewDate, transactions, recurringEvents]);
-  const recurringCalendar = useMemo(() => buildCalendarMonth(activeRecurringViewDate, recurringEvents), [activeRecurringViewDate, recurringEvents]);
-  const rollingHistoryWindow = useMemo(() => buildRollingHistoryWindow(transactions, activeShortEndDate, shortWindowSize), [transactions, activeShortEndDate, shortWindowSize]);
-
-  const timeframeOptions = [["1d", "1D"],["1w", "1W"],["2w", "2W"],["1m", "1M"],["3m", "3M"],["6m", "6M"],["12m", "12M"],["all", "All"]];
-  const timeframeLabel = timeframeOptions.find(([key]) => key === timeframe)?.[1] || timeframe.toUpperCase();
-
-  const calendarDays = calendarMode === "history" ? usingShortHistoryView ? rollingHistoryWindow.days : historicalCalendar.days : recurringCalendar.days;
-  const summary = usingShortHistoryView ? getRollingWindowSummary(rollingHistoryWindow.days) : getMonthlyHistorySummary(activeViewDate, transactions);
-  const recurringMonthEvents = recurringCalendar.days.filter((day) => day.inMonth !== false).flatMap((day) => day.events || []);
-  const recurringMonthTotal = recurringMonthEvents.reduce((sum, event) => sum + Math.abs(Number(event.amount || 0)), 0);
-  const sharedContributions = appMoneyModel?.sharedBillContributions?.confirmed || [];
   const sharedBillMoney = Number(appMoneyModel?.monthlySharedContributionTotal || appMoneyModel?.sharedBillContributions?.monthlyTotal || 0);
-  const personalBillTotal = sharedBillMoney > 0 ? Math.max(Number(appMoneyModel?.monthlyBillBurdenTotal || 0) || recurringMonthTotal - sharedBillMoney, 0) : recurringMonthTotal;
-  const currentMonth = new Date();
-  const isViewingCurrentRecurringMonth = activeRecurringViewDate.getMonth() === currentMonth.getMonth() && activeRecurringViewDate.getFullYear() === currentMonth.getFullYear();
-  const nextRecurringEvent = recurringMonthEvents.filter((event) => !isViewingCurrentRecurringMonth || event.day >= currentMonth.getDate()).sort((a, b) => a.day - b.day)[0] || recurringMonthEvents[0] || null;
-  const patternSummary = getCalendarPatternSummary(transactions, timeframe);
-  const rawMonthlyBreakdown = getMonthlyBreakdown(transactions, shortTimeframe ? "1m" : timeframe).slice(0, 6);
-  const monthlyBreakdown = getDisplayMonthlyBreakdown({
-    cleanRows: appMoneyModel?.cleanMonthlyFacts?.monthly_rows,
-    rawRows: rawMonthlyBreakdown,
-    timeframe: shortTimeframe ? "1m" : timeframe,
+  const grossMonthlyBillTotal = Number(appMoneyModel?.grossMonthlyBillTotal || 0);
+  const personalBillTotal = Number(appMoneyModel?.monthlyBillBurdenTotal ?? appMoneyModel?.monthlyBillTotal ?? 0);
+
+  const upcomingBills = useMemo(
+    () => buildUpcomingBillRows({
+      upcomingBills: appMoneyModel?.upcomingBills,
+      recurringEvents,
+      sharedContributions,
+      sharedContributionsToCheck,
+    }),
+    [appMoneyModel?.upcomingBills, recurringEvents, sharedContributions, sharedContributionsToCheck]
+  );
+  const nextBill = upcomingBills[0] || null;
+  const rawMonthlyBreakdown = useMemo(
+    () => getMonthlyBreakdown(transactions, "all").slice(0, 6),
+    [transactions]
+  );
+  const monthlyRows = useMemo(
+    () => buildCalendarMonthlyRows({
+      cleanRows: appMoneyModel?.cleanMonthlyFacts?.monthly_rows,
+      rawRows: rawMonthlyBreakdown,
+      timeframe: "all",
+    }),
+    [appMoneyModel?.cleanMonthlyFacts?.monthly_rows, rawMonthlyBreakdown]
+  );
+  const standout = getMonthStandout({
+    monthlyRows,
+    cleanFacts: appMoneyModel?.cleanMonthlyFacts,
+    sharedBillContributions: appMoneyModel?.sharedBillContributions,
+    missingBillCount: visibleMissingBillCandidates.length,
   });
-  const visibleHistoryTransactions = calendarDays.flatMap((day) => day.transactions || []);
-  const selectedDay = selectedDayKey ? calendarDays.find((day) => day.key === selectedDayKey) || null : null;
-  const canGoPrev = usingShortHistoryView ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, -1) : calendarMode === "recurring" ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, -1) : canShiftCalendarMonth(activeViewDate, calendarBounds, -1);
-  const canGoNext = usingShortHistoryView ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, 1) : calendarMode === "recurring" ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, 1) : canShiftCalendarMonth(activeViewDate, calendarBounds, 1);
-  const shortRangeTitle = usingShortHistoryView ? formatShortWindowTitle(rollingHistoryWindow.startDate, rollingHistoryWindow.endDate, timeframe) : calendarMode === "recurring" ? `${MONTH_NAMES[activeRecurringViewDate.getMonth()]} ${activeRecurringViewDate.getFullYear()}` : `${MONTH_NAMES[activeViewDate.getMonth()]} ${activeViewDate.getFullYear()}`;
-  const calendarRead = getCalendarRead({
-    calendarMode,
-    recurringMonthEvents,
+  const heroRead = getCalendarHeroRead({
+    nextBill,
     personalBillTotal,
-    nextRecurringEvent,
-    visibleMissingBillCandidates,
-    hiddenSuggestionRules,
+    grossMonthlyBillTotal,
     sharedBillMoney,
-    summary,
-    timeframeLabel,
-    shortRangeTitle,
+    missingBillCount: visibleMissingBillCandidates.length,
+    sharedContributionsToCheck,
   });
-  const allowHorizontalScroll = usingShortHistoryView ? shortWindowSize > 7 || screenWidth <= 760 : screenWidth <= 760;
-
-  function clearCalendarAiRead() { setCalendarAiText(""); setCalendarAiError(""); }
-
-  function handleRangeShift(direction) {
-    setSelectedDayKey("");
-    clearCalendarAiRead();
-    if (usingShortHistoryView) {
-      if ((direction < 0 && !canGoPrev) || (direction > 0 && !canGoNext)) return;
-      setViewDate((current) => clampDayToRange(addDays(startOfDay(current), direction * shortWindowSize), shortWindowBounds));
-      return;
-    }
-    if ((direction < 0 && !canGoPrev) || (direction > 0 && !canGoNext)) return;
-    if (calendarMode === "recurring") {
-      setViewDate((current) => clampMonthToRange(new Date(current.getFullYear(), current.getMonth() + direction, 1), recurringBounds));
-      return;
-    }
-    setViewDate((current) => clampMonthToRange(new Date(current.getFullYear(), current.getMonth() + direction, 1), calendarBounds));
-  }
-
-  function handleTimeframeChange(nextTimeframe) {
-    const needsMonths = getTimeframeMonthCount(nextTimeframe);
-    const unavailable = needsMonths > 0 && nextTimeframe !== "all" && availableMonthCount < needsMonths;
-    if (unavailable) return;
-    setTimeframe(nextTimeframe);
-    setSelectedDayKey("");
-    clearCalendarAiRead();
-    if (isShortTimeframe(nextTimeframe)) { setViewDate(latestHistoryDate); return; }
-    const nextBounds = getCalendarMonthBounds(transactions, nextTimeframe);
-    setViewDate(nextBounds.end);
-  }
-
-  function handleDayClick(day) {
-    if (calendarMode === "history" && day.isFutureDay) return;
-    setSelectedDayKey((current) => (current === day.key ? "" : day.key));
-  }
 
   async function saveCalendarRule({ matchText, amount, category, isBill, isSubscription, notes }) {
     if (!matchText) return;
@@ -218,10 +126,16 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     setCorrectionBusyKey(event.key || matchText);
     setCalendarNotice("");
     try {
-      await saveCalendarRule({ matchText, amount: event.amount, category: "Ignore for Calendar", isBill: false, isSubscription: false, notes: `User marked ${event.title} as not a bill from Calendar.` });
+      await saveCalendarRule({
+        matchText,
+        amount: event.grossAmount || event.amount,
+        category: "Ignore for Calendar",
+        isBill: false,
+        isSubscription: false,
+        notes: `User marked ${event.name || event.title} as not a bill from Calendar.`,
+      });
       await onRefreshMoneyUnderstanding?.();
-      setCalendarNotice(`${event.title} removed from Calendar. Calendar is refreshing.`);
-      setSelectedDayKey("");
+      setCalendarNotice(`${event.name || event.title} removed from Calendar. Calendar is refreshing.`);
     } catch (error) {
       setCalendarNotice(error.message || "Could not save that correction yet.");
     } finally {
@@ -235,7 +149,14 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     setCalendarNotice(`Saving ${candidate.label} as ${category}...`);
     try {
       const isSubscription = category === "Subscription";
-      await saveCalendarRule({ matchText: candidate.matchText, amount: candidate.amount, category, isBill: !isSubscription, isSubscription, notes: `User confirmed missing Calendar item as ${category}. Example: ${candidate.example}` });
+      await saveCalendarRule({
+        matchText: candidate.matchText,
+        amount: candidate.amount,
+        category,
+        isBill: !isSubscription,
+        isSubscription,
+        notes: `User confirmed missing Calendar item as ${category}. Example: ${candidate.example}`,
+      });
       await onRefreshMoneyUnderstanding?.();
       setCalendarNotice(`Added ${candidate.label} as ${category}. Calendar is refreshing.`);
     } catch (error) {
@@ -251,7 +172,14 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
     setCorrectionBusyKey(candidate.key);
     setCalendarNotice(`Removing ${candidate.label} from Calendar suggestions...`);
     try {
-      await saveCalendarRule({ matchText: candidate.matchText, amount: candidate.amount, category: "Ignore for Calendar", isBill: false, isSubscription: false, notes: `User marked ${candidate.label} as not a bill from Calendar suggestions. Example: ${candidate.example}` });
+      await saveCalendarRule({
+        matchText: candidate.matchText,
+        amount: candidate.amount,
+        category: "Ignore for Calendar",
+        isBill: false,
+        isSubscription: false,
+        notes: `User marked ${candidate.label} as not a bill from Calendar suggestions. Example: ${candidate.example}`,
+      });
       await onRefreshMoneyUnderstanding?.();
       setCalendarNotice(`${candidate.label} removed from Calendar suggestions.`);
     } catch (error) {
@@ -261,79 +189,51 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
       setCorrectionBusyKey("");
     }
   }
+
   async function restoreHiddenSuggestion(rule) {
-  const matchText = rule.match_text || "";
-  const niceName = niceCandidateName(matchText);
-  const restoreKey = `restore-${rule.id || matchText}`;
+    const matchText = rule.match_text || "";
+    const niceName = niceCandidateName(matchText);
+    const restoreKey = `restore-${rule.id || matchText}`;
 
-  setCorrectionBusyKey(restoreKey);
-  setCalendarNotice(`Restoring ${niceName}...`);
+    setCorrectionBusyKey(restoreKey);
+    setCalendarNotice(`Restoring ${niceName}...`);
 
-  try {
-    let query = supabase.from("transaction_rules").delete();
-
-    if (rule.id) {
-      query = query.eq("id", rule.id);
-    } else {
-      const { data: { user } } = await supabase.auth.getUser();
-      query = query
-        .eq("user_id", user.id)
-        .eq("rule_type", "calendar_suppression")
-        .eq("match_text", matchText);
-
-      if (rule.match_amount != null) {
-        query = query.eq("match_amount", rule.match_amount);
-      }
-    }
-
-    const { error } = await query;
-    if (error) throw error;
-
-    const providerKey = getProviderKey(matchText);
-
-    setHiddenCandidateKeys((keys) =>
-      keys.filter((key) => !normalizeText(key).includes(providerKey))
-    );
-
-    await onTransactionRulesChange?.();
-    await onRefreshMoneyUnderstanding?.();
-
-    setCalendarNotice(`${niceName} restored. Check possible bills again.`);
-    setShowHiddenSuggestions(false);
-    setShowMissingBills(true);
-  } catch (error) {
-    setCalendarNotice(error.message || `Could not restore ${niceName}. Try again.`);
-  } finally {
-    setCorrectionBusyKey("");
-  }
-}
-
-  async function runCalendarAiAnalysis() {
-    setCalendarAiBusy(true);
-    setCalendarAiError("");
     try {
-      const context = {
-        source: "calendar",
-        timeframe,
-        timeframe_label: timeframeLabel,
-        visible_window_label: shortRangeTitle,
-        calendar_mode: calendarMode,
-        summary,
-        calendar_summary: { spent: summary.spent, earned: summary.earned, net: summary.net, active_days: summary.activeDays, recurring_month_total: recurringMonthTotal, recurring_month_count: recurringMonthEvents.length, next_recurring_event: nextRecurringEvent },
-        data_freshness: getDataFreshness(transactions),
-        monthly_breakdown: monthlyBreakdown.slice(0, 4),
-        visible_transactions: visibleHistoryTransactions.slice(0, 30).map((transaction) => ({ date: transaction.transaction_date, description: transaction.description, category: getMeaningfulCategory(transaction), amount: transaction.amount })),
-        recurring_events: recurringMonthEvents.slice(0, 20),
-        visible_transaction_count: visibleHistoryTransactions.length,
-        selected_day: selectedDay ? { date: toIsoDate(selectedDay.date), earned: selectedDay.earned, spent: selectedDay.spent, net: selectedDay.net, transaction_count: selectedDay.transactions?.length || 0 } : null,
-      };
-      const { data, error } = await supabase.functions.invoke("ai-coach", { body: { mode: "coach", message: calendarMode === "recurring" ? "Analyse the future payments calendar. Explain the next likely bills/subscriptions and point out any estimates. Keep it short and practical." : "Analyse the currently open calendar timeframe. Keep it concise, specific to the visible range, and do not claim there are multiple months unless the provided data clearly includes them.", context } });
-      if (error) throw new Error(await getFunctionErrorMessage(error, "Calendar AI is busy right now. Try again later."));
-      setCalendarAiText(String(data?.reply || "No calendar analysis came back."));
+      let query = supabase.from("transaction_rules").delete();
+
+      if (rule.id) {
+        query = query.eq("id", rule.id);
+      } else {
+        const { data: { user } } = await supabase.auth.getUser();
+        query = query
+          .eq("user_id", user.id)
+          .eq("rule_type", "calendar_suppression")
+          .eq("match_text", matchText);
+
+        if (rule.match_amount != null) {
+          query = query.eq("match_amount", rule.match_amount);
+        }
+      }
+
+      const { error } = await query;
+      if (error) throw error;
+
+      const providerKey = getProviderKey(matchText);
+
+      setHiddenCandidateKeys((keys) =>
+        keys.filter((key) => !normalizeText(key).includes(providerKey))
+      );
+
+      await onTransactionRulesChange?.();
+      await onRefreshMoneyUnderstanding?.();
+
+      setCalendarNotice(`${niceName} restored. Check possible bills again.`);
+      setShowHiddenSuggestions(false);
+      setShowMissingBills(true);
     } catch (error) {
-      setCalendarAiError(error.message || "Could not analyse this timeframe yet.");
+      setCalendarNotice(error.message || `Could not restore ${niceName}. Try again.`);
     } finally {
-      setCalendarAiBusy(false);
+      setCorrectionBusyKey("");
     }
   }
 
@@ -365,95 +265,66 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
 
   return (
     <>
-      <CalendarCommandCenter
-        read={calendarRead}
-        calendarMode={calendarMode}
+      <CalendarHeader screenWidth={screenWidth} />
+      <CalendarHero
+        read={heroRead}
         screenWidth={screenWidth}
         onPrimary={() => {
-          if (calendarMode === "history") {
-            runCalendarAiAnalysis();
+          if (sharedContributionsToCheck.length) {
+            onNavigate?.("confidence");
             return;
           }
           if (visibleMissingBillCandidates.length) {
             setShowMissingBills(true);
-            setShowBillsList(false);
             return;
           }
-          if (recurringMonthEvents.length) {
-            setShowBillsList(true);
-            setShowMissingBills(false);
-            return;
-          }
-          runCalendarAiAnalysis();
+          onNavigate?.("confidence");
         }}
-        onReview={() => {
-          setShowMissingBills(true);
-          setShowBillsList(false);
-        }}
-        onAskAi={runCalendarAiAnalysis}
-        aiBusy={calendarAiBusy}
       />
 
-      <Section styles={styles} title={calendarMode === "recurring" ? "Bills Timeline" : "Spending Timeline"}>
-        <div style={styles.calendarTopRow}>
-          <button style={{ ...styles.secondaryInlineBtn, ...(canGoPrev ? null : styles.calendarNavBtnDisabled) }} type="button" onClick={(event) => { event.currentTarget.blur(); handleRangeShift(-1); }} disabled={!canGoPrev}>Previous</button>
-          <div style={styles.calendarTitleWrap}>
-            <h4 style={styles.calendarTitle}>{shortRangeTitle}</h4>
-            <p style={styles.smallMuted}>{calendarMode === "recurring" ? "Only bills and subscriptions Money Hub is confident about show here. Unsure payments go to Checks." : usingShortHistoryView ? "Showing a short slice of your real spending history." : timeframe === "all" ? "Showing your full uploaded history." : `Showing the latest month inside your ${timeframeLabel} view.`}</p>
+      <Section
+        styles={styles}
+        title="Upcoming Bills"
+        right={
+          <div style={getSmallActionRowStyle()}>
+            <button type="button" style={styles.ghostBtn} onClick={() => setShowMissingBills((open) => !open)}>
+              Possible bills
+            </button>
+            <button type="button" style={styles.ghostBtn} onClick={() => setShowHiddenSuggestions((open) => !open)}>
+              Hidden
+            </button>
           </div>
-          <button style={{ ...styles.secondaryInlineBtn, ...(canGoNext ? null : styles.calendarNavBtnDisabled) }} type="button" onClick={(event) => { event.currentTarget.blur(); handleRangeShift(1); }} disabled={!canGoNext}>Next</button>
-        </div>
-
-        <div style={styles.calendarToolbar}>
-          <ToolbarGroup label="View">
-            {[["recurring", "Future bills"],["history", "Past spending"]].map(([key, label]) => (<button key={key} type="button" aria-pressed={calendarMode === key} onClick={(event) => { event.currentTarget.blur(); setCalendarMode(key); setSelectedDayKey(""); clearCalendarAiRead(); if (key === "recurring" && isShortTimeframe(timeframe)) { setTimeframe("all"); setViewDate(recurringBounds.start); return; } if (key === "recurring") setViewDate(recurringBounds.start); }} style={{ ...styles.calendarModeChip, ...(calendarMode === key ? styles.calendarModeChipActive : null) }}>{label}</button>))}
-          </ToolbarGroup>
-          <ToolbarGroup label="History range">
-            {timeframeOptions.map(([key, label]) => { const needsMonths = getTimeframeMonthCount(key); const unavailable = needsMonths > 0 && key !== "all" && availableMonthCount < needsMonths; return (<button key={key} type="button" aria-pressed={timeframe === key} onClick={(event) => { event.currentTarget.blur(); handleTimeframeChange(key); }} disabled={calendarMode === "recurring" ? true : unavailable} style={{ ...styles.calendarTimeframeChip, ...(timeframe === key ? styles.calendarTimeframeChipActive : null), ...((calendarMode === "recurring" || unavailable) ? styles.timeframeChipDisabled : null) }}>{label}</button>); })}
-          </ToolbarGroup>
-        </div>
-
+        }
+      >
         {calendarNotice ? <p style={{ ...styles.calendarRangeHint, color: calendarNotice.toLowerCase().includes("could not") ? "#dc2626" : "#2563eb" }}>{calendarNotice}</p> : null}
-        {availableMonthCount <= 1 && !shortTimeframe && calendarMode === "history" ? <p style={styles.calendarRangeHint}>You have one month of history so far. Add more statements to make patterns smarter.</p> : null}
-
-        {calendarMode === "recurring" ? (
-          <div style={getCalendarSummaryGridStyle(screenWidth)}>
-            <MiniCard styles={styles} title={sharedBillMoney > 0 ? "Bills to cover" : "Bills this month"} value={formatCurrency(personalBillTotal)} />
-            <button type="button" onClick={() => setShowBillsList((open) => !open)} style={styles.calendarSummaryAction}>
-              <span>Bills found</span>
-              <strong>{recurringMonthEvents.length}</strong>
-              <small>{showBillsList ? "Tap to hide" : "Tap to manage"}</small>
-            </button>
-            <button type="button" onClick={() => setShowMissingBills((open) => !open)} style={styles.calendarSummaryAction}>
-              <span>Bills missing?</span>
-              <strong>{visibleMissingBillCandidates.length ? `${visibleMissingBillCandidates.length} to review` : "Nothing obvious"}</strong>
-              <small>Check possible missing bills</small>
-            </button>
-            <button type="button" onClick={() => setShowHiddenSuggestions((open) => !open)} style={styles.calendarSummaryAction}>
-              <span>Hidden</span>
-              <strong>{hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "None"}</strong>
-              <small>Bring back things you removed</small>
-            </button>
-            <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
-            <MiniCard styles={styles} title={getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).hasShare ? "Your share" : "Amount"} value={nextRecurringEvent ? formatCurrency(getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).amount) : "£0.00"} />
+        {upcomingBills.length ? (
+          <div style={getSimpleListStyle()}>
+            {upcomingBills.slice(0, 8).map((bill) => (
+              <UpcomingBillRow
+                key={bill.key}
+                bill={bill}
+                styles={styles}
+                busyKey={correctionBusyKey}
+                onAddToCalendar={() => downloadCalendarEvent(toCalendarEvent(bill))}
+                onNotBill={() => markEventNotBill(bill)}
+              />
+            ))}
           </div>
         ) : (
-          <div style={getCalendarSummaryGridStyle(screenWidth)}>
-            <MiniCard styles={styles} title="Money out" value={formatCurrency(summary.spent)} />
-            <MiniCard styles={styles} title="Money in" value={formatCurrency(summary.earned)} />
-            <MiniCard styles={styles} title="Left" value={`${summary.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(summary.net))}`} />
-            <MiniCard styles={styles} title="Days used" value={`${summary.activeDays}`} />
-          </div>
+          <p style={styles.emptyText}>No confident regular bills yet. Answer Review checks or upload more history so Money Hub can separate bills from normal spending.</p>
         )}
 
-        {calendarMode === "recurring" && showBillsList ? (
-          <CalendarBillsPanel events={recurringMonthEvents} styles={styles} busyKey={correctionBusyKey} onNotBill={markEventNotBill} sharedContributions={sharedContributions} />
+        {showMissingBills ? (
+          <MissingBillsPanel
+            candidates={visibleMissingBillCandidates}
+            styles={styles}
+            busyKey={correctionBusyKey}
+            onConfirm={markCandidateAsBill}
+            onHide={hideMissingBillCandidate}
+            onClose={() => setShowMissingBills(false)}
+          />
         ) : null}
-
-        {calendarMode === "recurring" && showMissingBills ? (
-          <MissingBillsPanel candidates={visibleMissingBillCandidates} styles={styles} busyKey={correctionBusyKey} onConfirm={markCandidateAsBill} onHide={hideMissingBillCandidate} onClose={() => setShowMissingBills(false)} />
-        ) : null}
-        {calendarMode === "recurring" && showHiddenSuggestions ? (
+        {showHiddenSuggestions ? (
           <HiddenSuggestionsPanel
             rules={hiddenSuggestionRules}
             styles={styles}
@@ -462,55 +333,45 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
             onClose={() => setShowHiddenSuggestions(false)}
           />
         ) : null}
-
-        <div style={{ ...styles.calendarGridViewport, overflowX: allowHorizontalScroll ? "auto" : "hidden" }}>
-          <div style={{ ...(shortTimeframe && calendarMode === "history" ? getRollingDaysGridStyle(screenWidth, shortWindowSize) : styles.calendarGrid), minWidth: usingShortHistoryView && allowHorizontalScroll ? `${Math.max(shortWindowSize, 7) * 96}px` : !usingShortHistoryView && screenWidth <= 760 ? "640px" : undefined }}>
-            {!usingShortHistoryView ? DAY_NAMES.map((day) => <div key={day} style={styles.calendarDayHeader}>{day}</div>) : null}
-            {calendarDays.map((day) => {
-              const isSelected = selectedDayKey === day.key;
-              const txCount = day.transactions?.length || 0;
-              const eventCount = day.events?.length || 0;
-              const firstLabel = day.previewLabels?.[0] || day.events?.[0]?.title || "";
-              const extraCount = calendarMode === "history" ? Math.max(txCount - 1, 0) : Math.max(eventCount - 1, 0);
-              const net = Number(day.net || 0);
-              return (
-                <button key={day.key} type="button" onClick={() => handleDayClick(day)} disabled={calendarMode === "history" && day.isFutureDay} style={{ ...styles.calendarCell, ...(usingShortHistoryView ? styles.calendarCellShort : null), ...(day.inMonth === false ? styles.calendarCellMuted : null), ...(calendarMode === "history" && day.isFutureDay ? styles.calendarCellFuture : null), ...(isSelected ? styles.calendarCellSelected : null) }}>
-                  <div style={styles.calendarDateRow}><div><div style={styles.calendarDate}>{day.date.getDate()}</div>{usingShortHistoryView && calendarMode === "history" ? <div style={styles.calendarWeekdayMini}>{formatShortWeekday(day.date)}</div> : null}</div>{calendarMode === "history" && txCount > 0 ? <span style={styles.calendarCountTag}>{txCount}</span> : calendarMode === "recurring" && eventCount > 0 ? <span style={styles.calendarCountTag}>{eventCount}</span> : null}</div>
-                  {calendarMode === "history" ? (<>{day.isFutureDay ? <div style={styles.calendarFutureBlock} /> : txCount > 0 ? <div style={net >= 0 ? styles.calendarNetPillPositive : styles.calendarNetPillNegative}>{net >= 0 ? "+" : "-"}{formatCompactCurrency(Math.abs(net))}</div> : <div style={styles.calendarEmptyHint}>Quiet day</div>}{!day.isFutureDay && firstLabel ? <div style={styles.calendarSingleLabel}>{firstLabel}</div> : null}{!day.isFutureDay && extraCount > 0 ? <div style={styles.calendarMore}>{extraCount} more</div> : null}</>) : (<>{eventCount > 0 ? <div style={styles.calendarRecurringStack}>{day.events.slice(0, 2).map((event) => <div key={event.key} style={getCalendarEventStyle(event.kind)}><span style={styles.calendarEventText}>{event.title}</span></div>)}</div> : <div style={styles.calendarEmptyHint}>Nothing due</div>}{extraCount > 0 ? <div style={styles.calendarMore}>{extraCount} more</div> : null}</>)}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {!selectedDay && calendarMode === "history" ? <p style={styles.calendarRangeHint}>Tap a day to see what happened.</p> : null}
-
-        {selectedDay ? (
-          <div style={styles.calendarInlinePanel}>
-            <div style={styles.calendarInlinePanelTop}><strong>{calendarMode === "history" ? formatDateLong(selectedDay.date) : `${formatDateLong(selectedDay.date)} estimate`}</strong><button style={styles.ghostBtn} type="button" onClick={() => setSelectedDayKey("")}>Close</button></div>
-            {calendarMode === "history" ? (selectedDay.transactions.length === 0 ? <p style={styles.emptyText}>{selectedDay.isFutureDay ? "This day has not happened yet." : "Nothing landed on this day."}</p> : <><p style={styles.transactionMeta}>{selectedDay.transactions.length} transaction{selectedDay.transactions.length === 1 ? "" : "s"}. In {formatCurrency(selectedDay.earned)}. Out {formatCurrency(selectedDay.spent)}. Left {selectedDay.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(selectedDay.net))}</p>{selectedDay.transactions.map((transaction) => <TransactionRow styles={styles} key={transaction.id || `${transaction.transaction_date}-${transaction.description}-${transaction.amount}`} name={transaction.description || "Transaction"} meta={getMeaningfulCategory(transaction) || "Uncategorised"} amount={Number(transaction.amount || 0)} />)}</>) : !selectedDay.events.length ? <p style={styles.emptyText}>Nothing is expected on this date.</p> : selectedDay.events.map((event) => <div key={event.key} style={styles.signalCard}><div style={styles.signalHeader}><div><strong>{event.title}</strong><p style={styles.transactionMeta}>Expected around day {event.day} - {event.kindLabel} - {getPlainMatchLabel(event.confidenceLabel)}</p>{event.estimateNote ? <p style={styles.transactionMeta}>{event.estimateNote}</p> : null}</div><strong>{event.amount > 0 ? "+" : "-"}{formatCurrency(Math.abs(event.amount))}</strong></div><div style={styles.inlineBtnRow}><button style={styles.primaryInlineBtn} onClick={() => downloadCalendarEvent(event)}>Add to Google / Apple Calendar</button><button style={styles.secondaryInlineBtn} type="button" onClick={() => markEventNotBill(event)} disabled={correctionBusyKey === (event.key || getEventMatchText(event))}>{correctionBusyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}</button></div></div>)}
-          </div>
-        ) : null}
       </Section>
 
-      <Section styles={styles} title="What Stands Out" right={<button type="button" style={styles.ghostBtn} onClick={runCalendarAiAnalysis} disabled={calendarAiBusy}>{calendarAiBusy ? "Checking..." : "Ask AI"}</button>}>
-        <InsightCard styles={styles} label={calendarAiText ? "AI answer" : "Quick read"} headline={calendarAiText ? `Read for ${timeframeLabel}` : calendarMode === "recurring" ? "Upcoming bill pressure" : patternSummary.headline} body={calendarAiText || (calendarMode === "recurring" ? recurringMonthEvents.length ? sharedBillMoney > 0 ? `Money Hub sees ${formatCurrency(personalBillTotal)} you need to cover this month after regular shared bill money.` : `Money Hub expects ${recurringMonthEvents.length} future bill/payment${recurringMonthEvents.length === 1 ? "" : "s"} this month, totalling about ${formatCurrency(recurringMonthTotal)}. Estimates improve as you add more months and answer Checks.` : "No future bills found yet. Add more history or answer Checks when they appear." : patternSummary.body)} />
-        {calendarAiError ? <p style={styles.errorNote}>{calendarAiError}</p> : null}
+      <Section styles={styles} title="What Stands Out">
+        <InsightCard
+          styles={styles}
+          label={standout.label}
+          headline={standout.headline}
+          body={standout.body}
+        />
       </Section>
 
-      <Section styles={styles} title={monthlyBreakdown.length <= 1 ? "This Month" : "Recent Months"}>
-        {monthlyBreakdown.length === 0 ? <p style={styles.emptyText}>Add more history to see month-by-month spending.</p> : monthlyBreakdown.length === 1 ? <MonthSummaryCard month={monthlyBreakdown[0]} styles={styles} /> : monthlyBreakdown.map((month) => <MonthTrendRow key={month.key} month={month} styles={styles} />)}
+      <Section styles={styles} title={monthlyRows.length <= 1 ? "This Month" : "Recent Months"}>
+        {monthlyRows.length === 0 ? (
+          <p style={styles.emptyText}>Add more history to see month-by-month pressure.</p>
+        ) : (
+          <div style={getSimpleListStyle()}>
+            {monthlyRows.map((month) => <MonthTrendRow key={month.key} month={month} styles={styles} />)}
+          </div>
+        )}
       </Section>
     </>
   );
 }
 
-function CalendarCommandCenter({ read, calendarMode, screenWidth, onPrimary, onReview, onAskAi, aiBusy }) {
+function CalendarHeader({ screenWidth }) {
+  return (
+    <header style={getCalendarHeaderStyle(screenWidth)}>
+      <h2 style={getCalendarHeaderTitleStyle(screenWidth)}>Calendar</h2>
+      <p style={getCalendarHeaderSubtitleStyle()}>Bills and monthly pressure</p>
+    </header>
+  );
+}
+
+function CalendarHero({ read, screenWidth, onPrimary }) {
   return (
     <section style={getCalendarHeroStyle(screenWidth, read.tone)}>
       <div style={getCalendarHeroTopStyle(screenWidth)}>
         <div>
-          <p style={getCalendarHeroEyebrowStyle()}>{calendarMode === "recurring" ? "Forward look" : "History read"}</p>
+          <p style={getCalendarHeroEyebrowStyle()}>{read.eyebrow}</p>
           <h2 style={getCalendarHeroTitleStyle(screenWidth)}>{read.headline}</h2>
           <p style={getCalendarHeroBodyStyle()}>{read.body}</p>
         </div>
@@ -520,24 +381,12 @@ function CalendarCommandCenter({ read, calendarMode, screenWidth, onPrimary, onR
           <small>{read.statusDetail}</small>
         </div>
       </div>
-
       <div style={getCalendarHeroMetricGridStyle(screenWidth)}>
-        {read.metrics.map((metric) => (
-          <CalendarHeroMetric key={metric.label} metric={metric} />
-        ))}
+        {read.metrics.map((metric) => <CalendarHeroMetric key={metric.label} metric={metric} />)}
       </div>
-
       <div style={getCalendarHeroActionRowStyle()}>
         <button type="button" style={getCalendarHeroPrimaryButtonStyle(read.tone)} onClick={onPrimary}>
           {read.primaryLabel}
-        </button>
-        {calendarMode === "recurring" ? (
-          <button type="button" style={getCalendarHeroSecondaryButtonStyle()} onClick={onReview}>
-            Check possible bills
-          </button>
-        ) : null}
-        <button type="button" style={getCalendarHeroSecondaryButtonStyle()} onClick={onAskAi} disabled={aiBusy}>
-          {aiBusy ? "Checking..." : "Ask AI"}
         </button>
       </div>
     </section>
@@ -554,325 +403,240 @@ function CalendarHeroMetric({ metric }) {
   );
 }
 
-function ToolbarGroup({ label, children }) {
+function UpcomingBillRow({ bill, styles, busyKey, onAddToCalendar, onNotBill }) {
+  const isBusy = busyKey === (bill.key || getEventMatchText(bill));
   return (
-    <div style={getToolbarGroupStyle()}>
-      <span style={getToolbarLabelStyle()}>{label}</span>
-      <div style={getToolbarButtonRowStyle()}>{children}</div>
-    </div>
-  );
-}
-
-function MonthSummaryCard({ month, styles }) {
-  return (
-    <div style={styles.daySummaryCard}>
-      <strong>{month.label}</strong>
-      <p style={styles.transactionMeta}>{month.detailLabel}</p>
-      <p style={{ ...styles.transactionMeta, color: month.net >= 0 ? "#059669" : "#dc2626", marginTop: "8px" }}>
-        {month.valueLabel}: {month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}
-      </p>
+    <div style={getBillRowStyle(bill.needsChecking)}>
+      <div style={{ minWidth: 0 }}>
+        <strong>{bill.name}</strong>
+        <p style={styles.transactionMeta}>{bill.dueLabel}</p>
+        {bill.needsChecking ? <p style={styles.transactionMeta}>Shared money may be affecting this bill. Confirm in Review.</p> : null}
+      </div>
+      <div style={getBillRowRightStyle()}>
+        <span style={getAmountLabelStyle()}>{bill.needsChecking ? "Needs checking" : "Your share"}</span>
+        <strong style={getBillAmountStyle(bill.needsChecking)}>{bill.needsChecking ? "Review" : formatCurrency(bill.userShare)}</strong>
+        {bill.grossAmount !== bill.userShare || bill.needsChecking ? <small style={styles.transactionMeta}>{formatCurrency(bill.grossAmount)} total bill</small> : null}
+        <div style={getRowActionStyle()}>
+          <button type="button" style={styles.secondaryInlineBtn} onClick={onAddToCalendar}>Add</button>
+          <button type="button" style={styles.secondaryInlineBtn} disabled={isBusy} onClick={onNotBill}>
+            {isBusy ? "Saving..." : "Not a bill"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function MonthTrendRow({ month, styles }) {
+  const needsChecking = month.status === "needs_checking";
   return (
-    <div style={styles.monthTrendRow}>
-      <div>
+    <div style={getMonthRowStyle(needsChecking)}>
+      <div style={{ minWidth: 0 }}>
         <strong>{month.label}</strong>
         <p style={styles.transactionMeta}>{month.detailLabel}</p>
+        {month.warning ? <p style={styles.transactionMeta}>{month.warning}</p> : null}
       </div>
-      <strong style={{ color: month.net >= 0 ? "#059669" : "#dc2626" }}>
-        {month.net >= 0 ? "+" : "-"}{formatCurrency(Math.abs(month.net))}
-      </strong>
+      <div style={getMonthAmountWrapStyle()}>
+        <span style={getAmountLabelStyle()}>{month.valueLabel}</span>
+        <strong style={{ color: needsChecking ? "#b45309" : month.net >= 0 ? "#047857" : "#b91c1c" }}>
+          {month.amountText}
+        </strong>
+      </div>
     </div>
   );
 }
 
-function getCalendarRead({
-  calendarMode,
-  recurringMonthEvents,
+function getCalendarHeroRead({
+  nextBill,
   personalBillTotal,
-  nextRecurringEvent,
-  visibleMissingBillCandidates,
-  hiddenSuggestionRules,
+  grossMonthlyBillTotal,
   sharedBillMoney,
-  summary,
-  timeframeLabel,
-  shortRangeTitle,
+  missingBillCount,
+  sharedContributionsToCheck,
 }) {
-  if (calendarMode === "history") {
-    const netLabel = `${summary.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(summary.net))}`;
+  const needsSharedCheck = sharedContributionsToCheck.length > 0;
+  if (needsSharedCheck) {
     return {
-      tone: summary.net < 0 ? "warn" : "good",
-      headline: `${shortRangeTitle} without the fog.`,
-      body: "Past spending is for pattern-spotting. Use it to catch heavy days, then go back to Future bills before deciding what is safe to spend.",
-      statusLabel: "Visible range",
-      statusValue: timeframeLabel,
-      statusDetail: `${summary.activeDays} active day${summary.activeDays === 1 ? "" : "s"}`,
-      primaryLabel: "Ask what changed",
+      tone: "warn",
+      eyebrow: "Needs checking",
+      headline: nextBill ? `${nextBill.name} may be shared` : "Shared bill money needs a check",
+      body: "Calendar can see possible rent or bill contribution money, so it will not pretend the full result is certain.",
+      statusLabel: "Review",
+      statusValue: "Needs checking",
+      statusDetail: "Confirm shared money",
+      primaryLabel: "Open Review",
       metrics: [
-        { label: "Money out", value: formatCurrency(summary.spent), detail: "Visible spending", tone: "bad" },
-        { label: "Money in", value: formatCurrency(summary.earned), detail: "Visible income", tone: "good" },
-        { label: "Net", value: netLabel, detail: "Raw range movement", tone: summary.net < 0 ? "bad" : "good" },
+        { label: "To cover", value: formatCurrency(personalBillTotal || grossMonthlyBillTotal), detail: "Before uncertain shared money", tone: "warn" },
+        { label: "Next bill", value: nextBill ? nextBill.name : "None found", detail: nextBill?.dueLabel || "Needs more data", tone: "focus" },
+        { label: "Checks", value: `${sharedContributionsToCheck.length}`, detail: "Shared money", tone: "warn" },
       ],
     };
   }
 
-  const missingCount = visibleMissingBillCandidates.length;
-  const tone = missingCount ? "warn" : recurringMonthEvents.length ? "focus" : "empty";
+  if (!nextBill) {
+    return {
+      tone: "empty",
+      eyebrow: "Forward look",
+      headline: "No confident bills found yet",
+      body: "A blank bill calendar usually means the data is too thin. Review possible bills or upload more history.",
+      statusLabel: "To cover",
+      statusValue: formatCurrency(personalBillTotal),
+      statusDetail: missingBillCount ? `${missingBillCount} possible bill${missingBillCount === 1 ? "" : "s"}` : "No regular payments found",
+      primaryLabel: missingBillCount ? "Check possible bills" : "Open Review",
+      metrics: [
+        { label: "Your share", value: formatCurrency(personalBillTotal), detail: "Known bills", tone: "neutral" },
+        { label: "Next bill", value: "None found", detail: "Needs more data", tone: "neutral" },
+        { label: "Review", value: missingBillCount ? `${missingBillCount}` : "Clear", detail: "Possible bills", tone: missingBillCount ? "warn" : "good" },
+      ],
+    };
+  }
+
   return {
-    tone,
-    headline: nextRecurringEvent ? `${nextRecurringEvent.title} is the next thing to respect.` : "No confident bills found yet.",
-    body: nextRecurringEvent
-      ? "This page protects money that is already spoken for. Confirm the weird stuff so Home and Coach stop guessing."
-      : "Upload more history or check possible bills. A blank calendar usually means the data is too thin, not that life is free.",
-    statusLabel: sharedBillMoney > 0 ? "Your bill burden" : "Bills this month",
-    statusValue: formatCurrency(personalBillTotal),
-    statusDetail: sharedBillMoney > 0 ? "After regular shared money" : `${recurringMonthEvents.length} expected payment${recurringMonthEvents.length === 1 ? "" : "s"}`,
-    primaryLabel: missingCount ? `Review ${missingCount} possible bill${missingCount === 1 ? "" : "s"}` : recurringMonthEvents.length ? "Manage bills found" : "Ask what is missing",
+    tone: "focus",
+    eyebrow: "Next bill",
+    headline: `Next up: ${nextBill.name}`,
+    body: nextBill.grossAmount !== nextBill.userShare
+      ? `${formatCurrency(nextBill.grossAmount)} total bill, with shared money expected. Keep ${formatCurrency(nextBill.userShare)} covered.`
+      : `Keep ${formatCurrency(nextBill.userShare)} covered for this payment. Calendar is using bills Money Hub is confident about.`,
+    statusLabel: "Your share to cover",
+    statusValue: formatCurrency(nextBill.userShare),
+    statusDetail: nextBill.grossAmount !== nextBill.userShare ? `${formatCurrency(nextBill.grossAmount)} total bill` : nextBill.dueLabel,
+    primaryLabel: missingBillCount ? "Check possible bills" : "Open Review",
     metrics: [
-      { label: "To cover", value: formatCurrency(personalBillTotal), detail: sharedBillMoney > 0 ? "Your share estimate" : "Expected bills", tone: personalBillTotal > 0 ? "bad" : "neutral" },
-      { label: "Next bill", value: nextRecurringEvent ? nextRecurringEvent.title : "None found", detail: nextRecurringEvent ? `Around day ${nextRecurringEvent.day}` : "Needs more data", tone: "focus" },
-      { label: "Needs review", value: missingCount ? `${missingCount}` : "Clear", detail: hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "Possible bills", tone: missingCount ? "warn" : "good" },
+      { label: "Monthly cover", value: formatCurrency(personalBillTotal), detail: sharedBillMoney > 0 ? "Your share estimate" : "Expected bills", tone: personalBillTotal > 0 ? "bad" : "neutral" },
+      { label: "Shared money", value: sharedBillMoney > 0 ? formatCurrency(sharedBillMoney) : "None found", detail: sharedBillMoney > 0 ? "Excluded from income" : "No regular contribution", tone: sharedBillMoney > 0 ? "good" : "neutral" },
+      { label: "Review", value: missingBillCount ? `${missingBillCount}` : "Clear", detail: "Possible bills", tone: missingBillCount ? "warn" : "good" },
     ],
   };
 }
 
-function getDisplayMonthlyBreakdown({ cleanRows, rawRows, timeframe }) {
-  const clean = Array.isArray(cleanRows)
-    ? cleanRows
-        .filter((row) => row?.month && row?.label)
-        .slice()
-        .sort((a, b) => String(b.month).localeCompare(String(a.month)))
-    : [];
+function buildUpcomingBillRows({ upcomingBills = [], recurringEvents = [], sharedContributions = [], sharedContributionsToCheck = [] }) {
+  const source = Array.isArray(upcomingBills) && upcomingBills.length
+    ? upcomingBills
+    : (recurringEvents || []).map((event) => ({
+        key: event.key,
+        name: event.title || event.name,
+        amount: Math.abs(Number(event.amount || 0)),
+        day: event.day,
+        kind: event.kind,
+        confidence: event.confidenceLabel,
+      }));
 
-  if (clean.length > 0) {
-    const count = timeframe === "all" ? 6 : Math.min(Math.max(getTimeframeMonthCount(timeframe), 1), 6);
-    return clean.slice(0, count).map((row) => ({
-      key: `clean:${row.month}`,
-      label: row.label,
-      net: Number(row.real_income || 0) - Number(row.real_spending || 0),
-      valueLabel: "Personal net estimate",
-      detailLabel: `${row.status === "partial" ? "Partial clean month" : "Clean month"} - Personal net estimate`,
-    }));
-  }
-
-  return (rawRows || []).map((row) => ({
-    key: `raw:${row.key}`,
-    label: row.label,
-    net: Number(row.net || 0),
-    valueLabel: "Raw bank movement",
-    detailLabel: `Raw bank movement - used on ${row.activeDays} day${row.activeDays === 1 ? "" : "s"}`,
-  }));
+  return dedupeUpcomingBills(source.map((item) => {
+    const grossAmount = Math.abs(Number(item.amount || 0));
+    const due = item.date ? getDateRead(item.date) : getNextDateRead(item.day);
+    const share = getSharedAdjustedBillAmount(item, sharedContributions);
+    const needsChecking = hasSharedContributionCheck(item, sharedContributionsToCheck);
+    return {
+      key: item.key || `${getBillBaseName(item.name || item.title)}:${grossAmount}:${item.day || due.day}`,
+      name: cleanBillName(item.name || item.title || "Bill"),
+      grossAmount,
+      userShare: needsChecking ? grossAmount : share.amount,
+      day: item.day || due.day,
+      date: due.iso,
+      daysAway: due.daysAway,
+      dueLabel: due.label,
+      kind: item.kind || "bill",
+      confidenceLabel: item.confidence || item.confidenceLabel || "medium",
+      needsChecking,
+    };
+  }))
+    .filter((bill) => bill.grossAmount > 0)
+    .sort((a, b) => a.daysAway - b.daysAway || b.grossAmount - a.grossAmount);
 }
 
-function getCalendarHeroStyle(screenWidth, tone) {
-  const accent = tone === "warn" ? "#f59e0b" : tone === "good" ? "#10b981" : tone === "empty" ? "#64748b" : "#2563eb";
-  return {
-    marginBottom: 14,
-    padding: screenWidth <= 520 ? 16 : 18,
-    borderRadius: 26,
-    border: "1px solid rgba(203, 213, 225, 0.84)",
-    background: `linear-gradient(135deg, #ffffff 0%, #f8fbff 58%, ${hexToRgba(accent, 0.12)} 100%)`,
-    boxShadow: "0 18px 46px rgba(15, 23, 42, 0.08)",
-    overflow: "hidden",
-  };
-}
-
-function getCalendarHeroTopStyle(screenWidth) {
-  return {
-    display: "grid",
-    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "minmax(0, 1.25fr) minmax(180px, 0.75fr)",
-    gap: 14,
-    alignItems: "stretch",
-  };
-}
-
-function getCalendarHeroEyebrowStyle() {
-  return {
-    margin: "0 0 6px",
-    color: "#2563eb",
-    fontSize: 11,
-    fontWeight: 900,
-    letterSpacing: "0.12em",
-    textTransform: "uppercase",
-  };
-}
-
-function getCalendarHeroTitleStyle(screenWidth) {
-  return {
-    margin: 0,
-    color: "#0f172a",
-    fontSize: screenWidth <= 520 ? 24 : 30,
-    lineHeight: 1.04,
-    letterSpacing: 0,
-  };
-}
-
-function getCalendarHeroBodyStyle() {
-  return {
-    margin: "9px 0 0",
-    color: "#526174",
-    fontSize: 14,
-    lineHeight: 1.48,
-  };
-}
-
-function getCalendarHeroStatusStyle(tone) {
-  const background = tone === "warn" ? "#fff7ed" : tone === "good" ? "#ecfdf5" : "#eff6ff";
-  const border = tone === "warn" ? "#fed7aa" : tone === "good" ? "#bbf7d0" : "#bfdbfe";
-  return {
-    display: "grid",
-    gap: 5,
-    alignContent: "center",
-    padding: 14,
-    borderRadius: 20,
-    background,
-    border: `1px solid ${border}`,
-  };
-}
-
-function getCalendarHeroMetricGridStyle(screenWidth) {
-  return {
-    display: "grid",
-    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "repeat(3, minmax(0, 1fr))",
-    gap: 9,
-    marginTop: 14,
-  };
-}
-
-function getCalendarHeroMetricStyle(tone) {
-  const colors = {
-    bad: ["#fff1f2", "#fecdd3", "#991b1b"],
-    good: ["#ecfdf5", "#bbf7d0", "#047857"],
-    warn: ["#fff7ed", "#fed7aa", "#b45309"],
-    focus: ["#eff6ff", "#bfdbfe", "#1d4ed8"],
-    neutral: ["#f8fafc", "#e2e8f0", "#334155"],
-  }[tone] || ["#f8fafc", "#e2e8f0", "#334155"];
-
-  return {
-    minWidth: 0,
-    display: "grid",
-    gap: 5,
-    padding: 12,
-    borderRadius: 18,
-    background: colors[0],
-    border: `1px solid ${colors[1]}`,
-    color: colors[2],
-  };
-}
-
-function getCalendarHeroActionRowStyle() {
-  return {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 9,
-    marginTop: 14,
-  };
-}
-
-function getCalendarHeroPrimaryButtonStyle(tone) {
-  return {
-    border: 0,
-    borderRadius: 16,
-    padding: "11px 14px",
-    background: tone === "warn" ? "#b45309" : "#0f172a",
-    color: "white",
-    fontWeight: 900,
-    cursor: "pointer",
-  };
-}
-
-function getCalendarHeroSecondaryButtonStyle() {
-  return {
-    border: "1px solid #dbe4ef",
-    borderRadius: 16,
-    padding: "10px 13px",
-    background: "rgba(255,255,255,0.88)",
-    color: "#253348",
-    fontWeight: 900,
-    cursor: "pointer",
-  };
-}
-
-function getToolbarGroupStyle() {
-  return {
-    display: "grid",
-    gap: 6,
-  };
-}
-
-function getToolbarLabelStyle() {
-  return {
-    color: "#64748b",
-    fontSize: 11,
-    fontWeight: 900,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-  };
-}
-
-function getToolbarButtonRowStyle() {
-  return {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-  };
-}
-
-function hexToRgba(hex, alpha) {
-  const value = hex.replace("#", "");
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function CalendarBillsPanel({ events, styles, busyKey, onNotBill, sharedContributions = [] }) {
-  const uniqueEvents = dedupeEvents(events);
-  return (
-    <div style={styles.calendarCorrectionPanel}>
-      <div style={styles.calendarCorrectionHeader}>
-        <div>
-          <strong>Bills found</strong>
-          <p style={styles.transactionMeta}>Remove anything that is not a real bill, rent, debt or subscription.</p>
-        </div>
-      </div>
-      {uniqueEvents.length ? uniqueEvents.map((event) => (
-        <div key={event.key || `${getEventMatchText(event)}-${event.amount}-${event.day}`} style={styles.calendarCorrectionRow}>
-          <div>
-            <strong>{event.title}</strong>
-            <p style={styles.transactionMeta}>{getBillPanelAmountText(event, sharedContributions)} expected around day {event.day}</p>
-          </div>
-          <button style={styles.secondaryInlineBtn} type="button" onClick={() => onNotBill(event)} disabled={busyKey === (event.key || getEventMatchText(event))}>
-            {busyKey === (event.key || getEventMatchText(event)) ? "Saving..." : "Not a bill"}
-          </button>
-        </div>
-      )) : <p style={styles.emptyText}>No bills found yet.</p>}
-    </div>
-  );
-}
-
-function getSharedAdjustedEventAmount(event, sharedContributions = []) {
-  if (!event) return { amount: 0, hasShare: false };
-  const grossAmount = Math.abs(Number(event.amount || 0));
-  const eventKey = String(event.key || "");
-  const eventName = String(event.title || event.name || "");
+function getSharedAdjustedBillAmount(bill, sharedContributions = []) {
+  const grossAmount = Math.abs(Number(bill.amount || bill.grossAmount || 0));
+  const billKey = String(bill.key || "");
+  const billName = String(bill.name || bill.title || "");
   const contribution = (sharedContributions || []).find((item) => {
-    const keyMatches = item.matchedBillKey && eventKey && String(item.matchedBillKey) === eventKey;
-    const nameMatches = item.matchedBillName && eventName && normalizeText(item.matchedBillName) === normalizeText(eventName);
+    const keyMatches = item.matchedBillKey && billKey && String(item.matchedBillKey) === billKey;
+    const nameMatches = item.matchedBillName && billName && normalizeText(item.matchedBillName) === normalizeText(billName);
     return keyMatches || nameMatches;
   });
   const contributionAmount = Math.abs(Number(contribution?.appliedMonthlyAmount || 0));
-  if (!grossAmount || !contributionAmount) return { amount: grossAmount, hasShare: false };
-  return { amount: Math.max(grossAmount - contributionAmount, 0), hasShare: true, grossAmount };
+  if (!grossAmount || !contributionAmount) return { amount: grossAmount, grossAmount, hasShare: false };
+  return { amount: Math.max(grossAmount - contributionAmount, 0), grossAmount, hasShare: true };
 }
 
-function getBillPanelAmountText(event, sharedContributions = []) {
-  const read = getSharedAdjustedEventAmount(event, sharedContributions);
-  if (read.hasShare) return `${formatCurrency(read.amount)} your share, ${formatCurrency(read.grossAmount)} total`;
-  return formatCurrency(Math.abs(Number(event.amount || 0)));
+function hasSharedContributionCheck(bill, contributions = []) {
+  const billKey = String(bill.key || "");
+  const billName = String(bill.name || bill.title || "");
+  return (contributions || []).some((item) => {
+    const keyMatches = item.matchedBillKey && billKey && String(item.matchedBillKey) === billKey;
+    const nameMatches = item.matchedBillName && billName && normalizeText(item.matchedBillName) === normalizeText(billName);
+    return keyMatches || nameMatches;
+  });
+}
+
+function dedupeUpcomingBills(bills = []) {
+  return bills.reduce((list, bill) => {
+    const providerKey = getProviderKey(getBillBaseName(bill.name) || bill.name);
+    const amount = Math.abs(Number(bill.grossAmount || 0));
+    const day = Number(bill.day || 0);
+    const matchIndex = list.findIndex((existing) => {
+      const existingProvider = getProviderKey(getBillBaseName(existing.name) || existing.name);
+      const existingAmount = Math.abs(Number(existing.grossAmount || 0));
+      const existingDay = Number(existing.day || 0);
+      return providerKey && existingProvider && providerKey === existingProvider && amountsClose(amount, existingAmount, 0.08, 3) && Math.abs(day - existingDay) <= 4;
+    });
+    if (matchIndex < 0) return [...list, bill];
+    const current = list[matchIndex];
+    const better = bill.needsChecking || bill.daysAway < current.daysAway ? bill : current;
+    return list.map((item, index) => (index === matchIndex ? better : item));
+  }, []);
+}
+
+function getDateRead(isoDate) {
+  const date = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return getNextDateRead(1);
+  const today = startOfLocalDay(new Date());
+  const daysAway = Math.max(Math.round((startOfLocalDay(date) - today) / 86400000), 0);
+  return {
+    iso: isoDate,
+    day: date.getDate(),
+    daysAway,
+    label: formatDueLabel(date, daysAway),
+  };
+}
+
+function getNextDateRead(day) {
+  const today = startOfLocalDay(new Date());
+  const safeDay = Math.max(1, Math.min(Number(day || 1), 28));
+  let date = new Date(today.getFullYear(), today.getMonth(), safeDay);
+  if (date < today) date = new Date(today.getFullYear(), today.getMonth() + 1, safeDay);
+  const daysAway = Math.max(Math.round((date - today) / 86400000), 0);
+  return {
+    iso: date.toISOString().slice(0, 10),
+    day: safeDay,
+    daysAway,
+    label: formatDueLabel(date, daysAway),
+  };
+}
+
+function formatDueLabel(date, daysAway) {
+  if (daysAway === 0) return "Due today";
+  if (daysAway === 1) return "Due tomorrow";
+  const dateText = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(date);
+  return `Due ${dateText}`;
+}
+
+function startOfLocalDay(date) {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+function toCalendarEvent(bill) {
+  return {
+    key: bill.key,
+    title: bill.name,
+    amount: -Math.abs(Number(bill.grossAmount || 0)),
+    day: bill.day,
+    kind: bill.kind,
+    kindLabel: bill.kind === "subscription" ? "Subscription" : "Bill",
+    confidenceLabel: bill.confidenceLabel || "medium",
+  };
 }
 
 function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onClose }) {
@@ -882,7 +646,7 @@ function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onC
       <div style={styles.calendarCorrectionHeader}>
         <div>
           <strong>Check possible missing bills</strong>
-          <p style={styles.transactionMeta}>These payments might be bills. Tap the right type, or remove anything that is not a bill.</p>
+          <p style={styles.transactionMeta}>These payments might be bills. Pick the right type, or remove anything that is not a bill.</p>
         </div>
         <button style={styles.ghostBtn} type="button" onClick={onClose}>Close</button>
       </div>
@@ -910,6 +674,7 @@ function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onC
     </div>
   );
 }
+
 function HiddenSuggestionsPanel({ rules, styles, busyKey, onRestore, onClose }) {
   return (
     <div style={styles.calendarCorrectionPanel}>
@@ -918,9 +683,7 @@ function HiddenSuggestionsPanel({ rules, styles, busyKey, onRestore, onClose }) 
           <strong>Hidden suggestions</strong>
           <p style={styles.transactionMeta}>Restore anything you removed by mistake.</p>
         </div>
-        <button style={styles.ghostBtn} type="button" onClick={onClose}>
-          Close
-        </button>
+        <button style={styles.ghostBtn} type="button" onClick={onClose}>Close</button>
       </div>
 
       {rules.length ? (
@@ -955,26 +718,6 @@ function HiddenSuggestionsPanel({ rules, styles, busyKey, onRestore, onClose }) 
       )}
     </div>
   );
-}
-
-function TransactionRow({ name, meta, amount, styles }) {
-  return <div style={styles.transactionRow}><div><strong>{name}</strong><p style={styles.transactionMeta}>{meta}</p></div><strong style={{ color: amount < 0 ? "#dc2626" : "#059669" }}>{amount < 0 ? "-" : "+"}{formatCurrency(Math.abs(amount))}</strong></div>;
-}
-
-function getPlainMatchLabel(confidenceLabel) {
-  return confidenceLabel === "high" ? "strong match" : "good match";
-}
-
-function getEventMatchText(event) {
-  return cleanBillName(event?.title || "")
-    .toLowerCase()
-    .replace(/\bbill around\b/g, " ")
-    .replace(/\baround\b/g, " ")
-    .replace(/£?\d+(\.\d{1,2})?/g, " ")
-    .replace(/\bbill\b/g, " ")
-    .replace(/\bsubscription\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function getMissingBillCandidates(transactions = [], events = [], transactionRules = []) {
@@ -1069,6 +812,75 @@ function getProviderKey(value) {
 function niceCandidateName(value) {
   return cleanCandidateText(value).split(" ").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") || "Possible bill";
 }
+
+function getEventMatchText(event) {
+  return cleanBillName(event?.name || event?.title || "")
+    .toLowerCase()
+    .replace(/\bbill around\b/g, " ")
+    .replace(/\baround\b/g, " ")
+    .replace(/£?\d+(\.\d{1,2})?/g, " ")
+    .replace(/\bbill\b/g, " ")
+    .replace(/\bsubscription\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function dedupeEvents(events = []) {
+  return (events || []).reduce((list, event) => {
+    const providerKey = getProviderKey(getBillBaseName(event.title) || event.title);
+    const amount = Math.abs(Number(event.amount || 0));
+    const day = Number(event.day || 0);
+    const matchIndex = list.findIndex((existing) => {
+      const existingProviderKey = getProviderKey(getBillBaseName(existing.title) || existing.title);
+      const existingAmount = Math.abs(Number(existing.amount || 0));
+      const existingDay = Number(existing.day || 0);
+      return providerKey && existingProviderKey && providerKey === existingProviderKey && amountsClose(amount, existingAmount, 0.08, 3) && Math.abs(day - existingDay) <= 4;
+    });
+    if (matchIndex < 0) return [...list, event];
+    const current = list[matchIndex];
+    const better = scoreCalendarEvent(event) > scoreCalendarEvent(current) ? event : current;
+    return list.map((item, index) => (index === matchIndex ? better : item));
+  }, []);
+}
+
+function candidateMatchesExistingBill(candidate, events = []) {
+  return (events || []).some((event) => {
+    const eventProviderKey = getProviderKey(getBillBaseName(event.title) || event.title);
+    const eventAmount = Math.abs(Number(event.amount || 0));
+    return candidate.providerKey && eventProviderKey && candidate.providerKey === eventProviderKey && !isSeparateAmountBand(candidate.amount, eventAmount);
+  });
+}
+
+function isSuppressedByCalendarRules(candidate, transactionRules = []) {
+  const matchingSuppressions = (transactionRules || []).filter((rule) => {
+    const category = normalizeText(rule?.category || "");
+    const saysNotBill = rule?.rule_type === "calendar_suppression" || (!rule?.is_bill && !rule?.is_subscription && ["ignore for calendar", "not a bill", "spending", "personal payment"].includes(category));
+    if (!saysNotBill) return false;
+    const ruleProviderKey = getProviderKey(rule?.match_text || "");
+    if (!ruleProviderKey) return false;
+    const textMatches = candidate.providerKey === ruleProviderKey || candidate.providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(candidate.providerKey);
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.12, 3);
+  });
+
+  if (!matchingSuppressions.length) return false;
+
+  const latestSuppressionTime = Math.max(...matchingSuppressions.map(ruleTime));
+  const latestConfirmedTime = Math.max(0, ...(transactionRules || []).filter((rule) => {
+    const type = normalizeText(rule?.rule_type || "");
+    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
+    const ruleProviderKey = getProviderKey(rule?.match_text || "");
+    if (!ruleProviderKey) return false;
+    const textMatches = candidate.providerKey === ruleProviderKey || candidate.providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(candidate.providerKey);
+    if (!textMatches) return false;
+    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
+    return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.18, 3);
+  }).map(ruleTime));
+
+  return latestSuppressionTime >= latestConfirmedTime;
+}
+
 function dedupeHiddenSuggestionRules(rules = []) {
   const suppressions = (rules || []).filter((rule) => {
     const ruleType = normalizeText(rule.rule_type || "");
@@ -1132,62 +944,6 @@ function mode(values) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] || 1;
 }
 
-function dedupeEvents(events = []) {
-  return (events || []).reduce((list, event) => {
-    const providerKey = getProviderKey(getBillBaseName(event.title) || event.title);
-    const amount = Math.abs(Number(event.amount || 0));
-    const day = Number(event.day || 0);
-    const matchIndex = list.findIndex((existing) => {
-      const existingProviderKey = getProviderKey(getBillBaseName(existing.title) || existing.title);
-      const existingAmount = Math.abs(Number(existing.amount || 0));
-      const existingDay = Number(existing.day || 0);
-      return providerKey && existingProviderKey && providerKey === existingProviderKey && amountsClose(amount, existingAmount, 0.08, 3) && Math.abs(day - existingDay) <= 4;
-    });
-    if (matchIndex < 0) return [...list, event];
-    const current = list[matchIndex];
-    const better = scoreCalendarEvent(event) > scoreCalendarEvent(current) ? event : current;
-    return list.map((item, index) => (index === matchIndex ? better : item));
-  }, []);
-}
-
-function candidateMatchesExistingBill(candidate, events = []) {
-  return (events || []).some((event) => {
-    const eventProviderKey = getProviderKey(getBillBaseName(event.title) || event.title);
-    const eventAmount = Math.abs(Number(event.amount || 0));
-    return candidate.providerKey && eventProviderKey && candidate.providerKey === eventProviderKey && !isSeparateAmountBand(candidate.amount, eventAmount);
-  });
-}
-
-function isSuppressedByCalendarRules(candidate, transactionRules = []) {
-  const matchingSuppressions = (transactionRules || []).filter((rule) => {
-    const category = normalizeText(rule?.category || "");
-    const saysNotBill = rule?.rule_type === "calendar_suppression" || (!rule?.is_bill && !rule?.is_subscription && ["ignore for calendar", "not a bill", "spending", "personal payment"].includes(category));
-    if (!saysNotBill) return false;
-    const ruleProviderKey = getProviderKey(rule?.match_text || "");
-    if (!ruleProviderKey) return false;
-    const textMatches = candidate.providerKey === ruleProviderKey || candidate.providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(candidate.providerKey);
-    if (!textMatches) return false;
-    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
-    return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.12, 3);
-  });
-
-  if (!matchingSuppressions.length) return false;
-
-  const latestSuppressionTime = Math.max(...matchingSuppressions.map(ruleTime));
-  const latestConfirmedTime = Math.max(0, ...(transactionRules || []).filter((rule) => {
-    const type = normalizeText(rule?.rule_type || "");
-    if (type !== "calendar_confirmed_bill" && !rule?.is_bill && !rule?.is_subscription) return false;
-    const ruleProviderKey = getProviderKey(rule?.match_text || "");
-    if (!ruleProviderKey) return false;
-    const textMatches = candidate.providerKey === ruleProviderKey || candidate.providerKey.includes(ruleProviderKey) || ruleProviderKey.includes(candidate.providerKey);
-    if (!textMatches) return false;
-    const ruleAmount = Math.abs(Number(rule?.match_amount || 0));
-    return !ruleAmount || amountsClose(candidate.amount, ruleAmount, 0.18, 3);
-  }).map(ruleTime));
-
-  return latestSuppressionTime >= latestConfirmedTime;
-}
-
 function ruleTime(rule) {
   const value = new Date(rule?.updated_at || rule?.created_at || 0).getTime();
   return Number.isFinite(value) ? value : 0;
@@ -1211,4 +967,248 @@ function scoreCalendarEvent(event) {
   const confidence = normalizeText(event?.confidenceLabel || event?.confidence || "");
   const confidenceScore = confidence === "high" ? 40 : confidence === "medium" ? 25 : confidence === "estimated" ? 12 : 0;
   return confidenceScore + Number(event?.sourceMonths || 0) * 6 + Number(event?.sourceCount || 0);
+}
+
+function getCalendarHeaderStyle(screenWidth) {
+  return {
+    marginBottom: 12,
+    display: "grid",
+    gap: 4,
+    padding: screenWidth <= 520 ? "0 2px" : "0 4px",
+  };
+}
+
+function getCalendarHeaderTitleStyle(screenWidth) {
+  return {
+    margin: 0,
+    color: "#0f172a",
+    fontSize: screenWidth <= 520 ? 28 : 34,
+    lineHeight: 1.05,
+    letterSpacing: 0,
+  };
+}
+
+function getCalendarHeaderSubtitleStyle() {
+  return {
+    margin: 0,
+    color: "#64748b",
+    fontSize: 14,
+    lineHeight: 1.45,
+  };
+}
+
+function getCalendarHeroStyle(screenWidth, tone) {
+  const accent = tone === "warn" ? "#f59e0b" : tone === "empty" ? "#64748b" : "#2563eb";
+  return {
+    marginBottom: 14,
+    padding: screenWidth <= 520 ? 16 : 18,
+    borderRadius: 18,
+    border: "1px solid rgba(203, 213, 225, 0.84)",
+    background: `linear-gradient(135deg, #ffffff 0%, #f8fbff 62%, ${hexToRgba(accent, 0.11)} 100%)`,
+    boxShadow: "0 18px 44px rgba(15, 23, 42, 0.08)",
+    overflow: "hidden",
+  };
+}
+
+function getCalendarHeroTopStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "minmax(0, 1.25fr) minmax(180px, 0.75fr)",
+    gap: 14,
+    alignItems: "stretch",
+  };
+}
+
+function getCalendarHeroEyebrowStyle() {
+  return {
+    margin: "0 0 6px",
+    color: "#2563eb",
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  };
+}
+
+function getCalendarHeroTitleStyle(screenWidth) {
+  return {
+    margin: 0,
+    color: "#0f172a",
+    fontSize: screenWidth <= 520 ? 24 : 30,
+    lineHeight: 1.04,
+    letterSpacing: 0,
+  };
+}
+
+function getCalendarHeroBodyStyle() {
+  return {
+    margin: "9px 0 0",
+    color: "#526174",
+    fontSize: 14,
+    lineHeight: 1.48,
+  };
+}
+
+function getCalendarHeroStatusStyle(tone) {
+  const background = tone === "warn" ? "#fff7ed" : "#eff6ff";
+  const border = tone === "warn" ? "#fed7aa" : "#bfdbfe";
+  return {
+    display: "grid",
+    gap: 5,
+    alignContent: "center",
+    padding: 14,
+    borderRadius: 14,
+    background,
+    border: `1px solid ${border}`,
+  };
+}
+
+function getCalendarHeroMetricGridStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "repeat(3, minmax(0, 1fr))",
+    gap: 9,
+    marginTop: 14,
+  };
+}
+
+function getCalendarHeroMetricStyle(tone) {
+  const colors = {
+    bad: ["#fff1f2", "#fecdd3", "#991b1b"],
+    good: ["#ecfdf5", "#bbf7d0", "#047857"],
+    warn: ["#fff7ed", "#fed7aa", "#b45309"],
+    focus: ["#eff6ff", "#bfdbfe", "#1d4ed8"],
+    neutral: ["#f8fafc", "#e2e8f0", "#334155"],
+  }[tone] || ["#f8fafc", "#e2e8f0", "#334155"];
+
+  return {
+    minWidth: 0,
+    display: "grid",
+    gap: 5,
+    padding: 12,
+    borderRadius: 12,
+    background: colors[0],
+    border: `1px solid ${colors[1]}`,
+    color: colors[2],
+  };
+}
+
+function getCalendarHeroActionRowStyle() {
+  return {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 9,
+    marginTop: 14,
+  };
+}
+
+function getCalendarHeroPrimaryButtonStyle(tone) {
+  return {
+    border: 0,
+    borderRadius: 12,
+    padding: "11px 14px",
+    background: tone === "warn" ? "#b45309" : "#0f172a",
+    color: "white",
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}
+
+function getSimpleListStyle() {
+  return {
+    display: "grid",
+    gap: 0,
+  };
+}
+
+function getSmallActionRowStyle() {
+  return {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "flex-end",
+  };
+}
+
+function getBillRowStyle(needsChecking) {
+  return {
+    display: "flex",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 14,
+    alignItems: "flex-start",
+    padding: "13px 0",
+    borderBottom: "1px solid #e8eef7",
+    borderLeft: needsChecking ? "3px solid #f59e0b" : "3px solid transparent",
+    paddingLeft: needsChecking ? 10 : 0,
+  };
+}
+
+function getBillRowRightStyle() {
+  return {
+    display: "grid",
+    justifyItems: "end",
+    gap: 3,
+    textAlign: "right",
+    minWidth: 132,
+  };
+}
+
+function getRowActionStyle() {
+  return {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 6,
+    marginTop: 5,
+  };
+}
+
+function getAmountLabelStyle() {
+  return {
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  };
+}
+
+function getBillAmountStyle(needsChecking) {
+  return {
+    color: needsChecking ? "#b45309" : "#0f172a",
+    fontSize: 17,
+  };
+}
+
+function getMonthRowStyle(needsChecking) {
+  return {
+    display: "flex",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 12,
+    padding: "13px 0",
+    borderBottom: "1px solid #e8eef7",
+    borderLeft: needsChecking ? "3px solid #f59e0b" : "3px solid transparent",
+    paddingLeft: needsChecking ? 10 : 0,
+  };
+}
+
+function getMonthAmountWrapStyle() {
+  return {
+    display: "grid",
+    justifyItems: "end",
+    gap: 4,
+    textAlign: "right",
+    minWidth: 132,
+  };
+}
+
+function hexToRgba(hex, alpha) {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

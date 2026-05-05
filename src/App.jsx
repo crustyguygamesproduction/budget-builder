@@ -10,6 +10,11 @@ import { getBankFeedReadiness } from "./lib/bankFeeds";
 import { getSubscriptionStatus } from "./lib/productPlan";
 import { buildMoneyUnderstanding } from "./lib/moneyUnderstanding";
 import { buildAppMoneyModel } from "./lib/appMoneyModel";
+import {
+  readDismissedReviewCheckKeys,
+  REVIEW_DISMISSED_CHECKS_KEY,
+  REVIEW_DISMISSALS_CHANGED_EVENT,
+} from "./lib/reviewDismissals";
 import { useViewport } from "./hooks/useViewport";
 import { useMoneyHubData } from "./hooks/useMoneyHubData";
 import { useCoachSnapshot } from "./hooks/useCoachSnapshot";
@@ -70,6 +75,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [page, setPage] = useState("today");
   const [returnTarget, setReturnTarget] = useState(null);
+  const [dismissedCheckKeys, setDismissedCheckKeys] = useState(() => readDismissedReviewCheckKeys());
 
   const [viewerMode, setViewerMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -130,6 +136,25 @@ export default function App() {
     localStorage.setItem("moneyhub-viewer-preview", viewerMode ? "true" : "false");
   }, [viewerMode]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    function refreshDismissedChecks() {
+      setDismissedCheckKeys(readDismissedReviewCheckKeys());
+    }
+
+    function handleStorage(event) {
+      if (event.key === REVIEW_DISMISSED_CHECKS_KEY) refreshDismissedChecks();
+    }
+
+    window.addEventListener(REVIEW_DISMISSALS_CHANGED_EVENT, refreshDismissedChecks);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener(REVIEW_DISMISSALS_CHANGED_EVENT, refreshDismissedChecks);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
   function navigateTo(nextPage, options = {}) {
     if (options.returnToCurrent && nextPage !== page) {
       setReturnTarget({ page, label: PAGE_TITLES[page] || "Back" });
@@ -159,8 +184,8 @@ export default function App() {
   );
   const smartTransactions = moneyUnderstanding.transactions;
   const appMoneyModel = useMemo(
-    () => buildAppMoneyModel({ moneyUnderstanding, accounts, goals, debts, investments }),
-    [moneyUnderstanding, accounts, goals, debts, investments]
+    () => buildAppMoneyModel({ moneyUnderstanding, accounts, goals, debts, investments, dismissedCheckKeys }),
+    [moneyUnderstanding, accounts, goals, debts, investments, dismissedCheckKeys]
   );
 
   const subscriptionStatus = useMemo(() => getSubscriptionStatus(subscriptionProfile), [subscriptionProfile]);
