@@ -9,7 +9,8 @@ Use this first when making changes so future work does not start by rereading th
 - `src/lib/styleHelpers.js` owns responsive/status style helper functions.
 - `src/components/ui.jsx` owns repeated small UI primitives: `Section`, `MiniCard`, `Row`, `InsightCard`, and `ActionCard`.
 - `src/components/TopBar.jsx` and `src/components/BottomNav.jsx` own the app frame.
-- `src/components/onboarding/*` owns the first-run guided setup flow, user-scoped onboarding memory, and setup replay.
+- `src/components/PageGuide.jsx` owns the page-native first-run guidance shown inside each page.
+- `src/components/onboarding/onboardingState.js` owns user-scoped page-guide memory and setup replay.
 
 ## Pages
 

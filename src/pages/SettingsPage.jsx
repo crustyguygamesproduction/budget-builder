@@ -243,15 +243,15 @@ export default function SettingsPage({
   return (
     <>
       <Notice notice={notice} styles={styles} onClose={() => setNotice(null)} />
-      <Section title="Setup Guide" styles={styles}>
+      <Section title="Page Guides" styles={styles}>
         <p style={styles.sectionIntro}>
-          Use this if you want Money Hub to walk you through the simple rhythm again: upload statements, review Calendar, set one goal, then ask AI.
+          Use this if you want the small first-run guide to appear again inside each page.
         </p>
-        <Row name="Best first upload" value="CSV bank statements. Multiple files are fine." styles={styles} />
-        <Row name="Main review" value="Calendar finds bills, rent, subscriptions and debt payments." styles={styles} />
-        <Row name="Then" value="Goals picks a safety target, AI explains the plan." styles={styles} />
+        <Row name="Fastest payoff" value="Upload one main-account CSV, then check Home and Review." styles={styles} />
+        <Row name="Main review" value="Review keeps transfers, refunds and shared money out of bad maths." styles={styles} />
+        <Row name="Then" value="Calendar, Goals and Coach use the cleaner read." styles={styles} />
         <button style={styles.ghostBtn} type="button" onClick={() => replayOnboarding(userId)}>
-          Replay guided setup
+          Replay page guides
         </button>
         <button style={styles.ghostBtn} type="button" onClick={onShowPrivacy}>
           Privacy

@@ -59,6 +59,18 @@ Do not run destructive Supabase commands without asking the user.
 
 ## Important safety improvements already made
 
+### Page-native first-run guidance
+
+Status: completed on 2026-05-05.
+
+Current behaviour:
+
+- The old full-screen onboarding modal has been removed.
+- `src/components/PageGuide.jsx` shows a compact, page-specific guide inside each page the first time a signed-in user opens it.
+- The guide is user-scoped and page-scoped through `src/components/onboarding/onboardingState.js`.
+- Settings can replay all page guides.
+- Guidance should stay action-led: first payoff, three steps, one primary action. Avoid reintroducing a blocking global onboarding tour.
+
 ### Coach brain number discipline
 
 Status: completed on 2026-05-04.

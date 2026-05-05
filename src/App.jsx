@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 import BottomNav from "./components/BottomNav";
 import TopBar from "./components/TopBar";
+import PageGuide from "./components/PageGuide";
 import AuthPage from "./pages/AuthPage";
 import { styles } from "./styles";
 import { getMainStyle } from "./lib/styleHelpers";
@@ -19,7 +20,6 @@ const ConfidencePage = lazy(() => import("./pages/ConfidencePage"));
 const DebtsPage = lazy(() => import("./pages/DebtsPageUx"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
 const InvestmentsPage = lazy(() => import("./pages/InvestmentsPageUx"));
-const OnboardingTutorial = lazy(() => import("./components/OnboardingTutorial"));
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const ReceiptsPage = lazy(() => import("./pages/ReceiptsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
@@ -208,6 +208,19 @@ export default function App() {
     <div style={styles.app}>
       <TopBar email={session.user.email} title={PAGE_TITLES[page] || "Money Hub"} page={page} returnTarget={returnTarget} onBack={goBackToReturnTarget} screenWidth={screenWidth} styles={styles} />
       <main style={getMainStyle(screenWidth, page)}>
+        <PageGuide
+          page={page}
+          userId={session.user.id}
+          screenWidth={screenWidth}
+          transactions={smartTransactions}
+          appMoneyModel={appMoneyModel}
+          goals={goals}
+          debts={debts}
+          investments={investments}
+          receipts={receipts}
+          onNavigate={navigateTo}
+          onGoToCoach={openCoachWithPrompt}
+        />
         <Suspense fallback={<div style={styles.loading}>Opening {PAGE_TITLES[page] || "Money Hub"}...</div>}>
         {page === "today" && <TodayPage transactions={smartTransactions} transactionRules={transactionRules} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} accounts={accounts} goals={goals} debts={debts} investments={investments} statementImports={statementImports} subscriptionStatus={subscriptionStatus} bankFeedReadiness={bankFeedReadiness} onGoToCoach={openCoachWithPrompt} onNavigate={navigateTo} screenWidth={screenWidth} styles={styles} />}
         {page === "upload" && <UploadPage accounts={accounts} statementImports={statementImports} existingTransactions={smartTransactions} moneyUnderstanding={moneyUnderstanding} appMoneyModel={appMoneyModel} transactionRules={transactionRules} onImportDone={async () => { await loadAllData(); await refreshMoneyOrganiser({ force: true }); await loadAllData(); }} onTransactionRulesChange={loadTransactionRules} onGoToCoach={openCoachWithPrompt} screenWidth={screenWidth} styles={styles} />}
@@ -222,7 +235,6 @@ export default function App() {
         {page === "privacy" && <PrivacyPage onBack={() => setPage("settings")} styles={styles} />}
         </Suspense>
       </main>
-      <Suspense fallback={null}><OnboardingTutorial setPage={navigateTo} userId={session.user.id} screenWidth={screenWidth} transactionCount={transactions.length} accountCount={accounts.length} /></Suspense>
       <BottomNav page={page} setPage={navigateTo} screenWidth={screenWidth} styles={styles} />
     </div>
   );
