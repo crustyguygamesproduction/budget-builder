@@ -33,8 +33,10 @@
 - `ai-coach` consumes compact saved Coach snapshots. After changing `supabase/functions/ai-coach/index.ts`, redeploy it with:
 
 ```bash
-npx supabase functions deploy ai-coach --project-ref itayxahonejogrnkhllp
+npx supabase functions deploy ai-coach
 ```
+
+The local Supabase project should be linked before using the command above. If a deploy toolchain needs an explicit project ref, use the linked project ref and avoid committing secrets.
 
 ## Vercel
 
@@ -42,6 +44,7 @@ npx supabase functions deploy ai-coach --project-ref itayxahonejogrnkhllp
 - Output directory: `dist`
 - Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in Vercel project settings. `.env.example` documents the required names.
 - `vercel.json` now adds baseline security headers: CSP, frame blocking, referrer policy, content-type sniff protection, and a restrictive permissions policy.
+- For Coach, confirm the current Vercel origin is either one of the Budget Builder Vercel project aliases accepted by `ai-coach` or is listed in Supabase function secret `ALLOWED_ORIGINS`.
 
 ## Paid Mode
 
@@ -83,6 +86,7 @@ npx supabase functions deploy ai-coach --project-ref itayxahonejogrnkhllp
 - Keep signed document links short-lived. The browser should not store permanent public URLs for receipts, debts, investments, statements, or bank-feed exports.
 - `src/pages/PrivacyPage.jsx` explains financial data use, AI context, private storage, and user control in product language.
 - Supabase Edge Functions support `ALLOWED_ORIGINS` for tighter CORS. Set it to the production and preview app origins before public launch.
+- For `ai-coach`, verify Supabase function secrets before launch: `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ALLOWED_ORIGINS`, and `ENVIRONMENT` or `APP_ENV=production`. Missing or mismatched CORS config returns a safe JSON error code where the browser can receive it.
 
 ## Bundle Size
 

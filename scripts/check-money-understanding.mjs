@@ -628,5 +628,22 @@ function buildModel(transactions, options = {}) {
   assert.equal(context.clean_monthly_facts.monthly_rows.length, 1);
 }
 
+{
+  const edgeSource = readFileSync("supabase/functions/ai-coach/index.ts", "utf8");
+  assert.ok(edgeSource.includes("origin_not_allowed"));
+  assert.ok(edgeSource.includes("trimCoachPromptContext"));
+  assert.ok(edgeSource.includes("MAX_COACH_PROMPT_CONTEXT_BYTES"));
+  assert.ok(edgeSource.includes("coach_brain_invalid"));
+  assert.ok(/function compactTransactions\(transactions: any\)[\s\S]+safeArray\(transactions\)/.test(edgeSource));
+
+  const coachPageSource = readFileSync("src/pages/CoachPage.jsx", "utf8");
+  const sendStart = coachPageSource.indexOf("async function sendMessage");
+  const sendEnd = coachPageSource.indexOf("async function saveCorrectionRule");
+  const sendBody = coachPageSource.slice(sendStart, sendEnd);
+  assert.ok(sendBody.indexOf('functions.invoke("ai-coach"') < sendBody.indexOf('from("ai_messages").insert(['));
+  assert.equal(sendBody.includes('from("ai_messages").insert({'), false);
+  assert.ok(coachPageSource.includes("CORS/ALLOWED_ORIGINS"));
+}
+
 await server.close();
 console.log("money understanding checks passed");

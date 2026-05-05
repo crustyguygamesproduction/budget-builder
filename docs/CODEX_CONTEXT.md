@@ -186,7 +186,7 @@ Current behaviour:
 
 ### 1. Harden `ai-coach` CORS
 
-Status: completed in commit `6f10eb8`.
+Status: completed in commit `6f10eb8`, with a follow-up hardening pass on 2026-05-05.
 
 File: `supabase/functions/ai-coach/index.ts`
 
@@ -197,10 +197,14 @@ Before commit `6f10eb8`, `buildCorsHeaders()` allowed any origin when `ALLOWED_O
 Current behaviour:
 
 - Uses the same fail-closed production pattern as `money-organiser` and `swift-worker`.
-- Includes helpers like `isProductionRuntime()`, `isLocalOrigin()`, and `hasCorsConfigError()`.
+- Includes helpers like `isProductionRuntime()`, `isLocalOrigin()`, and explicit CORS error codes.
 - If `ENVIRONMENT`, `DENO_ENV`, or `APP_ENV` is `production` or `prod`, and `ALLOWED_ORIGINS` is empty, it returns 500 before OPTIONS handling.
 - Includes header `X-CORS-Config-Error: missing_allowed_origins`.
+- If a browser origin is not allowed, it now returns `origin_not_allowed` instead of silently falling back to the first configured origin.
+- The Budget Builder Vercel project aliases are accepted by pattern, but custom domains must still be added to `ALLOWED_ORIGINS`.
 - In non-production, if `ALLOWED_ORIGINS` is empty, it allows local origins only.
+- `CoachPage.jsx` keeps the pending blue user message while the request is in flight, then saves the user and assistant messages only after `ai-coach` succeeds. Failed sends restore the draft without leaving duplicate saved user bubbles.
+- `ai-coach` validates saved Coach snapshot shape, null-guards compact clean-money fields, and trims prompt context if a snapshot gets too large.
 
 ### 2. Require auth and rate limiting for `ai-coach` market price mode
 

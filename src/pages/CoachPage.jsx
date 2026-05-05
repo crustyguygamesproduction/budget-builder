@@ -226,12 +226,6 @@ export default function CoachPage({
         data: { user },
       } = await supabase.auth.getUser();
 
-      await supabase.from("ai_messages").insert({
-        user_id: user.id,
-        role: "user",
-        content: text,
-      });
-
       await refreshSavedCoachQueryFocus(user.id, transactions, resolvedCoachMessage);
 
       const { data, error } = await supabase.functions.invoke("ai-coach", {
@@ -252,11 +246,20 @@ export default function CoachPage({
         setCoachGeneratedChecks(mergeCoachGeneratedChecks(data.coach_check_suggestions));
       }
 
-      await supabase.from("ai_messages").insert({
-        user_id: user.id,
-        role: "assistant",
-        content: data?.reply || "No reply received.",
-      });
+      const assistantReply = data?.reply || "No reply received.";
+      const { error: insertError } = await supabase.from("ai_messages").insert([
+        {
+          user_id: user.id,
+          role: "user",
+          content: text,
+        },
+        {
+          user_id: user.id,
+          role: "assistant",
+          content: assistantReply,
+        },
+      ]);
+      if (insertError) throw insertError;
 
       setPendingUserMessage(null);
       await onChange();
@@ -666,17 +669,30 @@ function formatChatTime(value) {
 
 async function getFunctionErrorMessage(error) {
   const rawMessage = String(error?.message || "");
-  const fallback = /non-2xx status code/i.test(rawMessage)
-    ? "Coach is busy right now. Try again later."
-    : rawMessage || "AI request failed.";
+  const sendFailed = /failed to send a request to the edge function/i.test(rawMessage);
+  const fallback = sendFailed
+    ? "Coach failed before a reply came back. Check the Edge Function deployment, CORS/ALLOWED_ORIGINS, and required secrets."
+    : /non-2xx status code/i.test(rawMessage)
+      ? "Coach reached the Edge Function, but it returned an error. Check Supabase function logs for the safe error code."
+      : rawMessage || "AI request failed.";
   try {
     const response = error?.context;
     if (response && typeof response.clone === "function") {
-      const data = await response.clone().json();
+      const cloned = response.clone();
+      const data = await cloned.json();
+      if (data?.error && data?.code) return `${data.error} (${data.code})`;
       return data?.error || data?.code || fallback;
     }
   } catch {
-    // Keep the original Supabase error when the response body is not JSON.
+    try {
+      const response = error?.context;
+      if (response && typeof response.clone === "function") {
+        const text = await response.clone().text();
+        if (text) return text.slice(0, 180);
+      }
+    } catch {
+      // Keep the original Supabase error when the response body is not readable.
+    }
   }
   return fallback;
 }

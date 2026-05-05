@@ -37,7 +37,9 @@ function isLocalOrigin(origin: string) {
 }
 
 function isProjectVercelOrigin(origin: string) {
-  return /^https:\/\/budget-builder-[a-z0-9-]+-crustyguygamesproductions-projects\.vercel\.app$/i.test(origin);
+  return origin === "https://budget-builder.vercel.app"
+    || /^https:\/\/budget-builder-[a-z0-9-]+\.vercel\.app$/i.test(origin)
+    || /^https:\/\/budget-builder-[a-z0-9-]+-crustyguygamesproductions?-projects\.vercel\.app$/i.test(origin);
 }
 
 function buildCorsHeaders(req: Request) {
@@ -57,23 +59,41 @@ function buildCorsHeaders(req: Request) {
     };
   }
 
-  const allowOrigin = allowedOrigins.includes(origin) || isProjectVercelOrigin(origin)
-    ? origin
-    : allowedOrigins.length > 0
-      ? allowedOrigins[0]
-      : isLocalOrigin(origin)
-        ? origin
-        : "null";
+  const originAllowed = origin
+    ? allowedOrigins.includes(origin) || isProjectVercelOrigin(origin) || (!isProductionRuntime() && isLocalOrigin(origin))
+    : false;
 
-  return {
+  const allowOrigin = originAllowed
+    ? origin
+    : !origin && allowedOrigins.length > 0
+      ? allowedOrigins[0]
+      : "null";
+
+  const headers: Record<string, string> = {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
+
+  if (origin && !originAllowed) {
+    headers["X-CORS-Config-Error"] = "origin_not_allowed";
+  }
+
+  return headers;
 }
 
-function hasCorsConfigError(headers: Record<string, string>) {
-  return headers["X-CORS-Config-Error"] === "missing_allowed_origins";
+function getCorsConfigError(headers: Record<string, string>) {
+  return headers["X-CORS-Config-Error"] || "";
+}
+
+function getCorsErrorStatus(code: string) {
+  return code === "missing_allowed_origins" ? 500 : 403;
+}
+
+function getCorsErrorMessage(code: string) {
+  if (code === "missing_allowed_origins") return "ALLOWED_ORIGINS must be set in production.";
+  if (code === "origin_not_allowed") return "This app origin is not allowed to call AI Coach. Add the current Vercel domain to ALLOWED_ORIGINS.";
+  return "AI Coach CORS configuration rejected this request.";
 }
 
 function cleanReply(text: string) {
@@ -176,7 +196,7 @@ async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
     body: JSON.stringify(body),
   });
 
-  const data = await response.json();
+  const data = await readResponseJson(response);
   if (!response.ok) {
     const openAIErrorKind = data?.error?.code || data?.error?.type || "unknown";
     console.error("ai-coach: OpenAI request failed", {
@@ -195,6 +215,14 @@ async function callResponsesApi(apiKey: string, body: Record<string, unknown>) {
     );
   }
   return data;
+}
+
+async function readResponseJson(response: Response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
 }
 
 async function callResponsesApiWithModels(apiKey: string, body: Record<string, unknown>, models: string[]) {
@@ -348,6 +376,15 @@ async function getSavedCoachContext(req: Request) {
     );
   }
 
+  if (typeof data.context !== "object" || Array.isArray(data.context)) {
+    throw new PublicFunctionError(
+      "coach_brain_invalid",
+      "Coach brain is saved but the shape is invalid. Open the app once to rebuild it, then try again.",
+      200,
+      "coach_context_snapshots.context is not an object"
+    );
+  }
+
   return {
     ...(data.context || {}),
     server_context_meta: {
@@ -361,7 +398,7 @@ async function getSavedCoachContext(req: Request) {
 }
 
 function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
-  const recentMessages = Array.isArray(savedContext?.recent_messages) ? savedContext.recent_messages.slice(-8) : [];
+  const recentMessages = safeArray(savedContext?.recent_messages).slice(-8);
   const relevantTransactions = getRelevantTransactions(savedContext, message);
   const queryFocus = buildServerQueryFocus(savedContext, message) || savedContext?.query_focus || null;
   return {
@@ -378,20 +415,20 @@ function buildSavedCoachBrainForPrompt(savedContext: any, message: string) {
     savings_capacity: compactSavingsCapacity(savedContext?.savings_capacity),
     cash_position: compactCashPosition(savedContext?.cash_position),
     clean_monthly_facts: compactCleanMonthlyFacts(savedContext?.clean_monthly_facts || savedContext?.app_money_model?.clean_monthly_facts),
-    confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 8),
-    next_best_actions: compactActionList(savedContext?.next_best_actions || []).slice(0, 6),
-    top_categories: (savedContext?.top_categories || []).slice(0, 12),
-    monthly_breakdown: (savedContext?.monthly_breakdown_all || savedContext?.monthly_breakdown || []).slice(0, 12),
+    confidence_warnings: safeArray(savedContext?.confidence_warnings).slice(0, 8),
+    next_best_actions: compactActionList(savedContext?.next_best_actions).slice(0, 6),
+    top_categories: safeArray(savedContext?.top_categories).slice(0, 12),
+    monthly_breakdown: safeArray(savedContext?.monthly_breakdown_all || savedContext?.monthly_breakdown).slice(0, 12),
     calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
     money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
-    bills_found: compactBills(savedContext?.bills_found || []).slice(0, 20),
-    checks_waiting: compactChecks(savedContext?.checks_waiting || []).slice(0, 12),
+    bills_found: compactBills(savedContext?.bills_found).slice(0, 20),
+    checks_waiting: compactChecks(savedContext?.checks_waiting).slice(0, 12),
     transfer_summary: savedContext?.transfer_summary || null,
-    debts: (savedContext?.debts || []).slice(0, 8),
-    investments: (savedContext?.investments || []).slice(0, 8),
-    debt_signals: (savedContext?.debt_signals || []).slice(0, 8),
-    investment_signals: (savedContext?.investment_signals || []).slice(0, 8),
-    recent_transactions: compactTransactions(savedContext?.recent_transactions || []).slice(0, 20),
+    debts: safeArray(savedContext?.debts).slice(0, 8),
+    investments: safeArray(savedContext?.investments).slice(0, 8),
+    debt_signals: safeArray(savedContext?.debt_signals).slice(0, 8),
+    investment_signals: safeArray(savedContext?.investment_signals).slice(0, 8),
+    recent_transactions: compactTransactions(savedContext?.recent_transactions).slice(0, 20),
     relevant_searchable_transactions: relevantTransactions,
     recent_messages: recentMessages,
     launch_safety_rules: savedContext?.launch_safety_rules || null,
@@ -413,9 +450,9 @@ function buildMinimalCoachBrainForPrompt(savedContext: any, message = "") {
           total_transactions: statement.total_transactions,
           settled_transaction_count: statement.settled_transaction_count,
           pass_through_analysis: statement.pass_through_analysis,
-          category_totals: (statement.category_totals || []).slice(0, 8),
-          merchant_totals: (statement.merchant_totals || []).slice(0, 8),
-          income_streams: (statement.income_streams || []).slice(0, 5),
+          category_totals: safeArray(statement.category_totals).slice(0, 8),
+          merchant_totals: safeArray(statement.merchant_totals).slice(0, 8),
+          income_streams: safeArray(statement.income_streams).slice(0, 5),
         }
       : null,
     app_money_model: compactAppMoneyModel(savedContext?.app_money_model),
@@ -426,21 +463,53 @@ function buildMinimalCoachBrainForPrompt(savedContext: any, message = "") {
     savings_capacity: compactSavingsCapacity(savedContext?.savings_capacity),
     cash_position: compactCashPosition(savedContext?.cash_position),
     clean_monthly_facts: compactCleanMonthlyFacts(savedContext?.clean_monthly_facts || savedContext?.app_money_model?.clean_monthly_facts),
-    confidence_warnings: (savedContext?.confidence_warnings || []).slice(0, 6),
-    next_best_actions: compactActionList(savedContext?.next_best_actions || []).slice(0, 5),
-    top_categories: (savedContext?.top_categories || []).slice(0, 8),
+    confidence_warnings: safeArray(savedContext?.confidence_warnings).slice(0, 6),
+    next_best_actions: compactActionList(savedContext?.next_best_actions).slice(0, 5),
+    top_categories: safeArray(savedContext?.top_categories).slice(0, 8),
     calendar_pattern_summary: savedContext?.calendar_pattern_summary || null,
     money_understanding: compactMoneyUnderstanding(savedContext?.money_understanding),
-    bills_found: compactBills(savedContext?.bills_found || []).slice(0, 8),
-    checks_waiting: compactChecks(savedContext?.checks_waiting || []).slice(0, 6),
+    bills_found: compactBills(savedContext?.bills_found).slice(0, 8),
+    checks_waiting: compactChecks(savedContext?.checks_waiting).slice(0, 6),
     transfer_summary: savedContext?.transfer_summary || null,
-    debts: (savedContext?.debts || []).slice(0, 5),
-    investments: (savedContext?.investments || []).slice(0, 5),
-    debt_signals: (savedContext?.debt_signals || []).slice(0, 5),
-    investment_signals: (savedContext?.investment_signals || []).slice(0, 5),
-    recent_transactions: compactTransactions(savedContext?.recent_transactions || []).slice(0, 8),
+    debts: safeArray(savedContext?.debts).slice(0, 5),
+    investments: safeArray(savedContext?.investments).slice(0, 5),
+    debt_signals: safeArray(savedContext?.debt_signals).slice(0, 5),
+    investment_signals: safeArray(savedContext?.investment_signals).slice(0, 5),
+    recent_transactions: compactTransactions(savedContext?.recent_transactions).slice(0, 8),
     launch_safety_rules: savedContext?.launch_safety_rules || null,
   };
+}
+
+const MAX_COACH_PROMPT_CONTEXT_BYTES = 120_000;
+
+function trimCoachPromptContext(promptContext: Record<string, unknown>) {
+  if (byteLength(promptContext) <= MAX_COACH_PROMPT_CONTEXT_BYTES) {
+    return { context: promptContext, trimmed: false };
+  }
+
+  const trimmed = {
+    server_context_meta: promptContext.server_context_meta || null,
+    totals: promptContext.totals || null,
+    transaction_count: promptContext.transaction_count || 0,
+    query_focus: promptContext.query_focus || null,
+    clean_monthly_facts: promptContext.clean_monthly_facts || null,
+    app_money_model: promptContext.app_money_model || null,
+    monthly_income_estimate: promptContext.monthly_income_estimate || null,
+    monthly_scheduled_outgoings_to_cover: promptContext.monthly_scheduled_outgoings_to_cover ?? null,
+    monthly_flexible_spending: promptContext.monthly_flexible_spending || null,
+    savings_capacity: promptContext.savings_capacity || null,
+    cash_position: promptContext.cash_position || null,
+    confidence_warnings: safeArray(promptContext.confidence_warnings).slice(0, 8),
+    checks_waiting: safeArray(promptContext.checks_waiting).slice(0, 8),
+    transfer_summary: promptContext.transfer_summary || null,
+    launch_safety_rules: promptContext.launch_safety_rules || null,
+    context_size_guard: {
+      applied: true,
+      note: "Prompt context was trimmed to compact clean facts and relevant lookup summary.",
+    },
+  };
+
+  return { context: trimmed, trimmed: true };
 }
 
 function buildCoachRequestBody(message: string, promptContext: Record<string, unknown>) {
@@ -601,30 +670,39 @@ function buildServerQueryFocus(savedContext: any, message: string) {
   });
 }
 
-function compactTransactions(transactions: any[]) {
-  return (transactions || []).map((transaction) => ({
-    date: transaction.date || transaction.transaction_date || null,
-    name: transaction.name || transaction.description || transaction.merchant || null,
-    category: transaction.category || null,
-    amount: transaction.amount ?? null,
-  }));
+function compactTransactions(transactions: any) {
+  return safeArray(transactions).map((transaction) => {
+    const item = transaction && typeof transaction === "object" ? transaction : {};
+    return {
+      date: item.date || item.transaction_date || null,
+      name: item.name || item.description || item.merchant || null,
+      category: item.category || null,
+      amount: item.amount ?? null,
+    };
+  });
 }
 
-function compactBills(bills: any[]) {
-  return (bills || []).map((bill) => ({
-    name: bill.name || bill.title || null,
-    amount: bill.amount ?? null,
-    expected_day: bill.expected_day || bill.day || null,
-    kind: bill.kind || null,
-  }));
+function compactBills(bills: any) {
+  return safeArray(bills).map((bill) => {
+    const item = bill && typeof bill === "object" ? bill : {};
+    return {
+      name: item.name || item.title || null,
+      amount: item.amount ?? null,
+      expected_day: item.expected_day || item.day || null,
+      kind: item.kind || null,
+    };
+  });
 }
 
-function compactChecks(checks: any[]) {
-  return (checks || []).map((check) => ({
-    label: check.label || check.question || null,
-    amount: check.amount ?? null,
-    reason: check.reason || check.helper || null,
-  }));
+function compactChecks(checks: any) {
+  return safeArray(checks).map((check) => {
+    const item = check && typeof check === "object" ? check : {};
+    return {
+      label: item.label || item.question || null,
+      amount: item.amount ?? null,
+      reason: item.reason || item.helper || null,
+    };
+  });
 }
 
 function compactStatementIntelligence(summary: any) {
@@ -642,12 +720,12 @@ function compactStatementIntelligence(summary: any) {
           possible_pass_through_count: summary.pass_through_analysis.possible_pass_through_count || 0,
         }
       : null,
-    category_totals: (summary.category_totals || []).slice(0, 10),
-    merchant_totals: (summary.merchant_totals || []).slice(0, 12),
-    income_streams: (summary.income_streams || []).slice(0, 8),
-    recurring_outgoings: (summary.recurring_outgoings || []).slice(0, 10),
-    large_outgoings: compactTransactions(summary.large_outgoings || []).slice(0, 10),
-    unusual_transactions: compactTransactions(summary.unusual_transactions || []).slice(0, 10),
+    category_totals: safeArray(summary.category_totals).slice(0, 10),
+    merchant_totals: safeArray(summary.merchant_totals).slice(0, 12),
+    income_streams: safeArray(summary.income_streams).slice(0, 8),
+    recurring_outgoings: safeArray(summary.recurring_outgoings).slice(0, 10),
+    large_outgoings: compactTransactions(summary.large_outgoings).slice(0, 10),
+    unusual_transactions: compactTransactions(summary.unusual_transactions).slice(0, 10),
   };
 }
 
@@ -655,8 +733,8 @@ function compactMoneyUnderstanding(context: any) {
   if (!context) return null;
   return {
     summary: context.summary || null,
-    bills_found: compactBills(context.bills_found || []),
-    recent_transactions: compactTransactions(context.recent_transactions || []).slice(0, 12),
+    bills_found: compactBills(context.bills_found),
+    recent_transactions: compactTransactions(context.recent_transactions).slice(0, 12),
   };
 }
 
@@ -966,9 +1044,10 @@ Return exactly this shape:
 
 Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
-  if (hasCorsConfigError(corsHeaders)) {
-    return new Response(JSON.stringify({ error: "ALLOWED_ORIGINS must be set in production." }), {
-      status: 500,
+  const corsError = getCorsConfigError(corsHeaders);
+  if (corsError) {
+    return new Response(JSON.stringify({ error: getCorsErrorMessage(corsError), code: corsError }), {
+      status: getCorsErrorStatus(corsError),
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -1043,9 +1122,11 @@ Deno.serve(async (req) => {
 
     const savedContext = await getSavedCoachContext(req);
     const wantsSearchableTransactions = isCompactLookup(safeMessage);
-    const promptContext = wantsSearchableTransactions
+    let promptContext = wantsSearchableTransactions
       ? buildSavedCoachBrainForPrompt(savedContext, safeMessage)
       : buildMinimalCoachBrainForPrompt(savedContext, safeMessage);
+    const trimmedPromptContext = trimCoachPromptContext(promptContext);
+    promptContext = trimmedPromptContext.context;
     const coachCheckSuggestions = buildCoachCheckSuggestions((promptContext as any)?.query_focus);
     const deterministicReply = buildDeterministicLookupReply(safeMessage, promptContext);
     if (deterministicReply) {
@@ -1063,6 +1144,7 @@ Deno.serve(async (req) => {
     });
 
     let contextDetail = wantsSearchableTransactions ? "searchable_compact" : "decision_compact";
+    if (trimmedPromptContext.trimmed) contextDetail += "_size_guard";
     let data: any;
     let model = "";
     try {

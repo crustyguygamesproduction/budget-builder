@@ -1,6 +1,6 @@
 # Codex Next Pass Prompt
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 ## Current State
 
@@ -10,6 +10,8 @@ Money Hub now has a compact pre-Coach money brain:
 - `src/lib/appMoneyModel.js` builds user-share bills, real income, real spending, safe saving reads and `cleanMonthlyFacts`.
 - `src/lib/coachContext.js` passes `clean_monthly_facts` into the saved Coach snapshot.
 - `supabase/functions/ai-coach/index.ts` consumes compact facts and is instructed not to parse raw statement history or compare all-history totals to monthly income.
+- `ai-coach` fail-closes CORS with explicit safe error codes, accepts the Budget Builder Vercel project aliases, validates saved snapshot shape, and trims oversized prompt context.
+- `CoachPage.jsx` saves chat messages only after the Edge Function succeeds. Keep that flow so failed sends do not create duplicate blue user messages.
 
 Read `docs/COACH_BRAIN_NUMBERS_AND_TRENDS.md` before changing Coach maths.
 
@@ -20,6 +22,7 @@ Read `docs/COACH_BRAIN_NUMBERS_AND_TRENDS.md` before changing Coach maths.
 - Do not treat internal transfers, savings/investment movement, shared money, refunds, reimbursements or pass-through money as real spending/income.
 - Preserve exact lookup behaviour through `query_focus`.
 - Keep Coach prompts token-efficient. Normal advice should use compact facts, not raw history.
+- If Coach send failures return, check function deployment, `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ALLOWED_ORIGINS`, and `ENVIRONMENT` / `APP_ENV` before changing money maths.
 - Run `npm run check`.
 
 ## Good Next Work
