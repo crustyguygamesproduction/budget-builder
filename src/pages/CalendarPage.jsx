@@ -140,6 +140,18 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   const canGoPrev = usingShortHistoryView ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, -1) : calendarMode === "recurring" ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, -1) : canShiftCalendarMonth(activeViewDate, calendarBounds, -1);
   const canGoNext = usingShortHistoryView ? canShiftShortWindow(activeShortEndDate, shortWindowBounds, shortWindowSize, 1) : calendarMode === "recurring" ? canShiftCalendarMonth(activeRecurringViewDate, recurringBounds, 1) : canShiftCalendarMonth(activeViewDate, calendarBounds, 1);
   const shortRangeTitle = usingShortHistoryView ? formatShortWindowTitle(rollingHistoryWindow.startDate, rollingHistoryWindow.endDate, timeframe) : calendarMode === "recurring" ? `${MONTH_NAMES[activeRecurringViewDate.getMonth()]} ${activeRecurringViewDate.getFullYear()}` : `${MONTH_NAMES[activeViewDate.getMonth()]} ${activeViewDate.getFullYear()}`;
+  const calendarRead = getCalendarRead({
+    calendarMode,
+    recurringMonthEvents,
+    personalBillTotal,
+    nextRecurringEvent,
+    visibleMissingBillCandidates,
+    hiddenSuggestionRules,
+    sharedBillMoney,
+    summary,
+    timeframeLabel,
+    shortRangeTitle,
+  });
   const allowHorizontalScroll = usingShortHistoryView ? shortWindowSize > 7 || screenWidth <= 760 : screenWidth <= 760;
 
   function clearCalendarAiRead() { setCalendarAiText(""); setCalendarAiError(""); }
@@ -353,9 +365,38 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
 
   return (
     <>
-      <Section styles={styles} title="Your Bills Calendar">
+      <CalendarCommandCenter
+        read={calendarRead}
+        calendarMode={calendarMode}
+        screenWidth={screenWidth}
+        onPrimary={() => {
+          if (calendarMode === "history") {
+            runCalendarAiAnalysis();
+            return;
+          }
+          if (visibleMissingBillCandidates.length) {
+            setShowMissingBills(true);
+            setShowBillsList(false);
+            return;
+          }
+          if (recurringMonthEvents.length) {
+            setShowBillsList(true);
+            setShowMissingBills(false);
+            return;
+          }
+          runCalendarAiAnalysis();
+        }}
+        onReview={() => {
+          setShowMissingBills(true);
+          setShowBillsList(false);
+        }}
+        onAskAi={runCalendarAiAnalysis}
+        aiBusy={calendarAiBusy}
+      />
+
+      <Section styles={styles} title={calendarMode === "recurring" ? "Bills Timeline" : "Spending Timeline"}>
         <div style={styles.calendarTopRow}>
-          <button style={{ ...styles.secondaryInlineBtn, ...(canGoPrev ? null : styles.calendarNavBtnDisabled) }} type="button" onClick={(event) => { event.currentTarget.blur(); handleRangeShift(-1); }} disabled={!canGoPrev}>Prev</button>
+          <button style={{ ...styles.secondaryInlineBtn, ...(canGoPrev ? null : styles.calendarNavBtnDisabled) }} type="button" onClick={(event) => { event.currentTarget.blur(); handleRangeShift(-1); }} disabled={!canGoPrev}>Previous</button>
           <div style={styles.calendarTitleWrap}>
             <h4 style={styles.calendarTitle}>{shortRangeTitle}</h4>
             <p style={styles.smallMuted}>{calendarMode === "recurring" ? "Only bills and subscriptions Money Hub is confident about show here. Unsure payments go to Checks." : usingShortHistoryView ? "Showing a short slice of your real spending history." : timeframe === "all" ? "Showing your full uploaded history." : `Showing the latest month inside your ${timeframeLabel} view.`}</p>
@@ -364,8 +405,12 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
         </div>
 
         <div style={styles.calendarToolbar}>
-          <div style={styles.modeChipRow}>{[["recurring", "Future bills"],["history", "Past spending"]].map(([key, label]) => (<button key={key} type="button" aria-pressed={calendarMode === key} onClick={(event) => { event.currentTarget.blur(); setCalendarMode(key); setSelectedDayKey(""); clearCalendarAiRead(); if (key === "recurring" && isShortTimeframe(timeframe)) { setTimeframe("all"); setViewDate(recurringBounds.start); return; } if (key === "recurring") setViewDate(recurringBounds.start); }} style={{ ...styles.calendarModeChip, ...(calendarMode === key ? styles.calendarModeChipActive : null) }}>{label}</button>))}</div>
-          <div style={styles.modeChipRow}>{timeframeOptions.map(([key, label]) => { const needsMonths = getTimeframeMonthCount(key); const unavailable = needsMonths > 0 && key !== "all" && availableMonthCount < needsMonths; return (<button key={key} type="button" aria-pressed={timeframe === key} onClick={(event) => { event.currentTarget.blur(); handleTimeframeChange(key); }} disabled={calendarMode === "recurring" ? true : unavailable} style={{ ...styles.calendarTimeframeChip, ...(timeframe === key ? styles.calendarTimeframeChipActive : null), ...((calendarMode === "recurring" || unavailable) ? styles.timeframeChipDisabled : null) }}>{label}</button>); })}</div>
+          <ToolbarGroup label="View">
+            {[["recurring", "Future bills"],["history", "Past spending"]].map(([key, label]) => (<button key={key} type="button" aria-pressed={calendarMode === key} onClick={(event) => { event.currentTarget.blur(); setCalendarMode(key); setSelectedDayKey(""); clearCalendarAiRead(); if (key === "recurring" && isShortTimeframe(timeframe)) { setTimeframe("all"); setViewDate(recurringBounds.start); return; } if (key === "recurring") setViewDate(recurringBounds.start); }} style={{ ...styles.calendarModeChip, ...(calendarMode === key ? styles.calendarModeChipActive : null) }}>{label}</button>))}
+          </ToolbarGroup>
+          <ToolbarGroup label="History range">
+            {timeframeOptions.map(([key, label]) => { const needsMonths = getTimeframeMonthCount(key); const unavailable = needsMonths > 0 && key !== "all" && availableMonthCount < needsMonths; return (<button key={key} type="button" aria-pressed={timeframe === key} onClick={(event) => { event.currentTarget.blur(); handleTimeframeChange(key); }} disabled={calendarMode === "recurring" ? true : unavailable} style={{ ...styles.calendarTimeframeChip, ...(timeframe === key ? styles.calendarTimeframeChipActive : null), ...((calendarMode === "recurring" || unavailable) ? styles.timeframeChipDisabled : null) }}>{label}</button>); })}
+          </ToolbarGroup>
         </div>
 
         {calendarNotice ? <p style={{ ...styles.calendarRangeHint, color: calendarNotice.toLowerCase().includes("could not") ? "#dc2626" : "#2563eb" }}>{calendarNotice}</p> : null}
@@ -385,10 +430,10 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
               <small>Check possible missing bills</small>
             </button>
             <button type="button" onClick={() => setShowHiddenSuggestions((open) => !open)} style={styles.calendarSummaryAction}>
-  <span>Hidden</span>
-  <strong>{hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "None"}</strong>
-  <small>Bring back things you removed</small>
-</button>
+              <span>Hidden</span>
+              <strong>{hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "None"}</strong>
+              <small>Bring back things you removed</small>
+            </button>
             <MiniCard styles={styles} title="Next bill" value={nextRecurringEvent ? `${nextRecurringEvent.title}` : "None"} />
             <MiniCard styles={styles} title={getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).hasShare ? "Your share" : "Amount"} value={nextRecurringEvent ? formatCurrency(getSharedAdjustedEventAmount(nextRecurringEvent, sharedContributions).amount) : "£0.00"} />
           </div>
@@ -409,14 +454,14 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
           <MissingBillsPanel candidates={visibleMissingBillCandidates} styles={styles} busyKey={correctionBusyKey} onConfirm={markCandidateAsBill} onHide={hideMissingBillCandidate} onClose={() => setShowMissingBills(false)} />
         ) : null}
         {calendarMode === "recurring" && showHiddenSuggestions ? (
-  <HiddenSuggestionsPanel
-    rules={hiddenSuggestionRules}
-    styles={styles}
-    busyKey={correctionBusyKey}
-    onRestore={restoreHiddenSuggestion}
-    onClose={() => setShowHiddenSuggestions(false)}
-  />
-) : null}
+          <HiddenSuggestionsPanel
+            rules={hiddenSuggestionRules}
+            styles={styles}
+            busyKey={correctionBusyKey}
+            onRestore={restoreHiddenSuggestion}
+            onClose={() => setShowHiddenSuggestions(false)}
+          />
+        ) : null}
 
         <div style={{ ...styles.calendarGridViewport, overflowX: allowHorizontalScroll ? "auto" : "hidden" }}>
           <div style={{ ...(shortTimeframe && calendarMode === "history" ? getRollingDaysGridStyle(screenWidth, shortWindowSize) : styles.calendarGrid), minWidth: usingShortHistoryView && allowHorizontalScroll ? `${Math.max(shortWindowSize, 7) * 96}px` : !usingShortHistoryView && screenWidth <= 760 ? "640px" : undefined }}>
@@ -460,6 +505,64 @@ export default function CalendarPage({ transactions, transactionRules = [], mone
   );
 }
 
+function CalendarCommandCenter({ read, calendarMode, screenWidth, onPrimary, onReview, onAskAi, aiBusy }) {
+  return (
+    <section style={getCalendarHeroStyle(screenWidth, read.tone)}>
+      <div style={getCalendarHeroTopStyle(screenWidth)}>
+        <div>
+          <p style={getCalendarHeroEyebrowStyle()}>{calendarMode === "recurring" ? "Forward look" : "History read"}</p>
+          <h2 style={getCalendarHeroTitleStyle(screenWidth)}>{read.headline}</h2>
+          <p style={getCalendarHeroBodyStyle()}>{read.body}</p>
+        </div>
+        <div style={getCalendarHeroStatusStyle(read.tone)}>
+          <span>{read.statusLabel}</span>
+          <strong>{read.statusValue}</strong>
+          <small>{read.statusDetail}</small>
+        </div>
+      </div>
+
+      <div style={getCalendarHeroMetricGridStyle(screenWidth)}>
+        {read.metrics.map((metric) => (
+          <CalendarHeroMetric key={metric.label} metric={metric} />
+        ))}
+      </div>
+
+      <div style={getCalendarHeroActionRowStyle()}>
+        <button type="button" style={getCalendarHeroPrimaryButtonStyle(read.tone)} onClick={onPrimary}>
+          {read.primaryLabel}
+        </button>
+        {calendarMode === "recurring" ? (
+          <button type="button" style={getCalendarHeroSecondaryButtonStyle()} onClick={onReview}>
+            Check possible bills
+          </button>
+        ) : null}
+        <button type="button" style={getCalendarHeroSecondaryButtonStyle()} onClick={onAskAi} disabled={aiBusy}>
+          {aiBusy ? "Checking..." : "Ask AI"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CalendarHeroMetric({ metric }) {
+  return (
+    <div style={getCalendarHeroMetricStyle(metric.tone)}>
+      <span>{metric.label}</span>
+      <strong>{metric.value}</strong>
+      <small>{metric.detail}</small>
+    </div>
+  );
+}
+
+function ToolbarGroup({ label, children }) {
+  return (
+    <div style={getToolbarGroupStyle()}>
+      <span style={getToolbarLabelStyle()}>{label}</span>
+      <div style={getToolbarButtonRowStyle()}>{children}</div>
+    </div>
+  );
+}
+
 function MonthSummaryCard({ month, styles }) {
   return (
     <div style={styles.daySummaryCard}>
@@ -484,6 +587,56 @@ function MonthTrendRow({ month, styles }) {
       </strong>
     </div>
   );
+}
+
+function getCalendarRead({
+  calendarMode,
+  recurringMonthEvents,
+  personalBillTotal,
+  nextRecurringEvent,
+  visibleMissingBillCandidates,
+  hiddenSuggestionRules,
+  sharedBillMoney,
+  summary,
+  timeframeLabel,
+  shortRangeTitle,
+}) {
+  if (calendarMode === "history") {
+    const netLabel = `${summary.net >= 0 ? "+" : "-"}${formatCurrency(Math.abs(summary.net))}`;
+    return {
+      tone: summary.net < 0 ? "warn" : "good",
+      headline: `${shortRangeTitle} without the fog.`,
+      body: "Past spending is for pattern-spotting. Use it to catch heavy days, then go back to Future bills before deciding what is safe to spend.",
+      statusLabel: "Visible range",
+      statusValue: timeframeLabel,
+      statusDetail: `${summary.activeDays} active day${summary.activeDays === 1 ? "" : "s"}`,
+      primaryLabel: "Ask what changed",
+      metrics: [
+        { label: "Money out", value: formatCurrency(summary.spent), detail: "Visible spending", tone: "bad" },
+        { label: "Money in", value: formatCurrency(summary.earned), detail: "Visible income", tone: "good" },
+        { label: "Net", value: netLabel, detail: "Raw range movement", tone: summary.net < 0 ? "bad" : "good" },
+      ],
+    };
+  }
+
+  const missingCount = visibleMissingBillCandidates.length;
+  const tone = missingCount ? "warn" : recurringMonthEvents.length ? "focus" : "empty";
+  return {
+    tone,
+    headline: nextRecurringEvent ? `${nextRecurringEvent.title} is the next thing to respect.` : "No confident bills found yet.",
+    body: nextRecurringEvent
+      ? "This page protects money that is already spoken for. Confirm the weird stuff so Home and Coach stop guessing."
+      : "Upload more history or check possible bills. A blank calendar usually means the data is too thin, not that life is free.",
+    statusLabel: sharedBillMoney > 0 ? "Your bill burden" : "Bills this month",
+    statusValue: formatCurrency(personalBillTotal),
+    statusDetail: sharedBillMoney > 0 ? "After regular shared money" : `${recurringMonthEvents.length} expected payment${recurringMonthEvents.length === 1 ? "" : "s"}`,
+    primaryLabel: missingCount ? `Review ${missingCount} possible bill${missingCount === 1 ? "" : "s"}` : recurringMonthEvents.length ? "Manage bills found" : "Ask what is missing",
+    metrics: [
+      { label: "To cover", value: formatCurrency(personalBillTotal), detail: sharedBillMoney > 0 ? "Your share estimate" : "Expected bills", tone: personalBillTotal > 0 ? "bad" : "neutral" },
+      { label: "Next bill", value: nextRecurringEvent ? nextRecurringEvent.title : "None found", detail: nextRecurringEvent ? `Around day ${nextRecurringEvent.day}` : "Needs more data", tone: "focus" },
+      { label: "Needs review", value: missingCount ? `${missingCount}` : "Clear", detail: hiddenSuggestionRules.length ? `${hiddenSuggestionRules.length} hidden` : "Possible bills", tone: missingCount ? "warn" : "good" },
+    ],
+  };
 }
 
 function getDisplayMonthlyBreakdown({ cleanRows, rawRows, timeframe }) {
@@ -512,6 +665,168 @@ function getDisplayMonthlyBreakdown({ cleanRows, rawRows, timeframe }) {
     valueLabel: "Raw bank movement",
     detailLabel: `Raw bank movement - used on ${row.activeDays} day${row.activeDays === 1 ? "" : "s"}`,
   }));
+}
+
+function getCalendarHeroStyle(screenWidth, tone) {
+  const accent = tone === "warn" ? "#f59e0b" : tone === "good" ? "#10b981" : tone === "empty" ? "#64748b" : "#2563eb";
+  return {
+    marginBottom: 14,
+    padding: screenWidth <= 520 ? 16 : 18,
+    borderRadius: 26,
+    border: "1px solid rgba(203, 213, 225, 0.84)",
+    background: `linear-gradient(135deg, #ffffff 0%, #f8fbff 58%, ${hexToRgba(accent, 0.12)} 100%)`,
+    boxShadow: "0 18px 46px rgba(15, 23, 42, 0.08)",
+    overflow: "hidden",
+  };
+}
+
+function getCalendarHeroTopStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "minmax(0, 1.25fr) minmax(180px, 0.75fr)",
+    gap: 14,
+    alignItems: "stretch",
+  };
+}
+
+function getCalendarHeroEyebrowStyle() {
+  return {
+    margin: "0 0 6px",
+    color: "#2563eb",
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+  };
+}
+
+function getCalendarHeroTitleStyle(screenWidth) {
+  return {
+    margin: 0,
+    color: "#0f172a",
+    fontSize: screenWidth <= 520 ? 24 : 30,
+    lineHeight: 1.04,
+    letterSpacing: 0,
+  };
+}
+
+function getCalendarHeroBodyStyle() {
+  return {
+    margin: "9px 0 0",
+    color: "#526174",
+    fontSize: 14,
+    lineHeight: 1.48,
+  };
+}
+
+function getCalendarHeroStatusStyle(tone) {
+  const background = tone === "warn" ? "#fff7ed" : tone === "good" ? "#ecfdf5" : "#eff6ff";
+  const border = tone === "warn" ? "#fed7aa" : tone === "good" ? "#bbf7d0" : "#bfdbfe";
+  return {
+    display: "grid",
+    gap: 5,
+    alignContent: "center",
+    padding: 14,
+    borderRadius: 20,
+    background,
+    border: `1px solid ${border}`,
+  };
+}
+
+function getCalendarHeroMetricGridStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 620 ? "1fr" : "repeat(3, minmax(0, 1fr))",
+    gap: 9,
+    marginTop: 14,
+  };
+}
+
+function getCalendarHeroMetricStyle(tone) {
+  const colors = {
+    bad: ["#fff1f2", "#fecdd3", "#991b1b"],
+    good: ["#ecfdf5", "#bbf7d0", "#047857"],
+    warn: ["#fff7ed", "#fed7aa", "#b45309"],
+    focus: ["#eff6ff", "#bfdbfe", "#1d4ed8"],
+    neutral: ["#f8fafc", "#e2e8f0", "#334155"],
+  }[tone] || ["#f8fafc", "#e2e8f0", "#334155"];
+
+  return {
+    minWidth: 0,
+    display: "grid",
+    gap: 5,
+    padding: 12,
+    borderRadius: 18,
+    background: colors[0],
+    border: `1px solid ${colors[1]}`,
+    color: colors[2],
+  };
+}
+
+function getCalendarHeroActionRowStyle() {
+  return {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 9,
+    marginTop: 14,
+  };
+}
+
+function getCalendarHeroPrimaryButtonStyle(tone) {
+  return {
+    border: 0,
+    borderRadius: 16,
+    padding: "11px 14px",
+    background: tone === "warn" ? "#b45309" : "#0f172a",
+    color: "white",
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}
+
+function getCalendarHeroSecondaryButtonStyle() {
+  return {
+    border: "1px solid #dbe4ef",
+    borderRadius: 16,
+    padding: "10px 13px",
+    background: "rgba(255,255,255,0.88)",
+    color: "#253348",
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}
+
+function getToolbarGroupStyle() {
+  return {
+    display: "grid",
+    gap: 6,
+  };
+}
+
+function getToolbarLabelStyle() {
+  return {
+    color: "#64748b",
+    fontSize: 11,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+  };
+}
+
+function getToolbarButtonRowStyle() {
+  return {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+  };
+}
+
+function hexToRgba(hex, alpha) {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function CalendarBillsPanel({ events, styles, busyKey, onNotBill, sharedContributions = [] }) {
@@ -587,7 +902,7 @@ function MissingBillsPanel({ candidates, styles, busyKey, onConfirm, onHide, onC
               </button>
             ))}
             <button style={styles.secondaryInlineBtn} type="button" disabled={busyKey === candidate.key} onClick={() => onHide(candidate)}>
-              {busyKey === candidate.key ? "Saving..." : "X Not a bill"}
+              {busyKey === candidate.key ? "Saving..." : "Not a bill"}
             </button>
           </div>
         </div>

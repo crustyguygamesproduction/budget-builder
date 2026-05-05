@@ -825,15 +825,24 @@
     justifyContent: "space-between",
     alignItems: "center",
     gap: "12px",
-    marginBottom: "16px",
+    marginBottom: "14px",
+    padding: "12px",
+    borderRadius: "20px",
+    background: "#f8fbff",
+    border: "1px solid #e2e8f0",
+    flexWrap: "wrap",
   },
 
   calendarToolbar: {
     display: "flex",
     justifyContent: "space-between",
-    gap: "10px",
+    gap: "14px",
     flexWrap: "wrap",
-    marginBottom: "14px",
+    marginBottom: "16px",
+    padding: "12px",
+    borderRadius: "20px",
+    background: "rgba(248, 250, 252, 0.76)",
+    border: "1px solid rgba(226, 232, 240, 0.9)",
   },
 
   calendarModeChip: {
@@ -878,25 +887,25 @@
 
   calendarSummaryAction: {
     border: "1px solid #cfe0ff",
-    background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
+    background: "linear-gradient(180deg, #ffffff 0%, #f6f9ff 100%)",
     color: "#0f172a",
-    borderRadius: "18px",
+    borderRadius: "20px",
     padding: "16px",
     display: "grid",
     gap: "7px",
     textAlign: "left",
     cursor: "pointer",
-    boxShadow: "0 12px 28px rgba(15, 23, 42, 0.05)",
+    boxShadow: "0 12px 28px rgba(15, 23, 42, 0.06)",
     minHeight: "104px",
     fontWeight: "700",
   },
 
   calendarCorrectionPanel: {
-    border: "1px solid rgba(148,163,184,.22)",
-    borderRadius: "20px",
+    border: "1px solid rgba(37, 99, 235, 0.16)",
+    borderRadius: "22px",
     padding: "14px",
     margin: "12px 0 16px",
-    background: "rgba(248,250,252,.92)",
+    background: "linear-gradient(180deg, rgba(248,250,252,.96), rgba(239,246,255,.72))",
     display: "grid",
     gap: "10px",
   },
@@ -916,9 +925,10 @@
     alignItems: "flex-start",
     flexWrap: "wrap",
     border: "1px solid rgba(148,163,184,.2)",
-    borderRadius: "16px",
+    borderRadius: "18px",
     padding: "12px",
     background: "white",
+    boxShadow: "0 8px 20px rgba(15, 23, 42, 0.04)",
   },
 
   calendarCorrectionButtons: {
@@ -977,6 +987,8 @@
     gap: "8px",
     textAlign: "left",
     overflow: "hidden",
+    cursor: "pointer",
+    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.035)",
   },
 
   calendarCellShort: {

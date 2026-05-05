@@ -19,6 +19,11 @@ export default function AuthPage({ screenWidth, styles }) {
 
   function validateAuthInput(isSignup = false) {
     const normalizedEmail = email.trim().toLowerCase();
+    if (!agreedToPrivacy) {
+      showNotice("Tick the privacy and data-use box before logging in or creating an account.");
+      return null;
+    }
+
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       showNotice("Type your email address in the normal format, like name@example.com.");
       return null;
@@ -42,7 +47,10 @@ export default function AuthPage({ screenWidth, styles }) {
     if (!credentials || busy) return;
 
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword(credentials);
+    const { data, error } = await supabase.auth.signInWithPassword(credentials);
+    if (!error && data?.user?.id) {
+      await persistPrivacyConsent(data.user.id, credentials.email, buildConsentPayload());
+    }
     setBusy(false);
 
     if (error) showNotice("Login did not work. Check your email and password, then try again.");
@@ -52,17 +60,7 @@ export default function AuthPage({ screenWidth, styles }) {
     const credentials = validateAuthInput(true);
     if (!credentials || busy) return;
 
-    if (!agreedToPrivacy) {
-      showNotice("Please tick the privacy box before creating an account.");
-      return;
-    }
-
-    const acceptedAt = new Date().toISOString();
-    const consentPayload = {
-      privacy_policy_version: PRIVACY_POLICY_VERSION,
-      privacy_policy_accepted_at: acceptedAt,
-      ai_processing_acknowledged_at: acceptedAt,
-    };
+    const consentPayload = buildConsentPayload();
 
     setBusy(true);
     const { data, error } = await supabase.auth.signUp({
@@ -84,6 +82,15 @@ export default function AuthPage({ screenWidth, styles }) {
 
     setBusy(false);
     showNotice("Account created. You can now log in.", "good");
+  }
+
+  function buildConsentPayload() {
+    const acceptedAt = new Date().toISOString();
+    return {
+      privacy_policy_version: PRIVACY_POLICY_VERSION,
+      privacy_policy_accepted_at: acceptedAt,
+      ai_processing_acknowledged_at: acceptedAt,
+    };
   }
 
   async function persistPrivacyConsent(userId, normalizedEmail, consentPayload) {
@@ -147,39 +154,42 @@ export default function AuthPage({ screenWidth, styles }) {
             autoComplete="current-password"
           />
 
-          <button style={styles.primaryBtn} type="submit" disabled={busy}>
-            {busy ? "Working..." : "Login"}
-          </button>
+          <div style={getConsentBoxStyle(agreedToPrivacy)}>
+            <p style={styles.smallMuted}>
+              Money Hub stores private financial data and uses it to build insights and AI answers.
+            </p>
+            <label style={{ ...styles.checkRow, marginTop: 8, marginBottom: 0 }}>
+              <input
+                type="checkbox"
+                checked={agreedToPrivacy}
+                onChange={(e) => setAgreedToPrivacy(e.target.checked)}
+                required
+              />
+              <span>
+                I agree to the{" "}
+                <button type="button" style={styles.textLink || linkStyle} onClick={() => setShowPrivacy(true)}>
+                  Privacy Policy
+                </button>{" "}
+                and the app's data-use terms.
+              </span>
+            </label>
+          </div>
+
+          <div style={getAuthButtonRowStyle(screenWidth)}>
+            <button style={{ ...styles.primaryBtn, ...getDisabledAuthButtonStyle(busy || !agreedToPrivacy) }} type="submit" disabled={busy || !agreedToPrivacy}>
+              {busy ? "Working..." : "Login"}
+            </button>
+            <button
+              style={{ ...styles.secondaryBtn, ...getDisabledAuthButtonStyle(busy || !agreedToPrivacy) }}
+              onClick={signup}
+              type="button"
+              disabled={busy || !agreedToPrivacy}
+            >
+              Create Account
+            </button>
+          </div>
         </form>
 
-        <div style={{ marginTop: 14 }}>
-          <p style={styles.smallMuted}>
-            Creating an account means saving private financial data in Money Hub.
-          </p>
-          <label style={{ ...styles.checkRow, marginTop: 8, marginBottom: 10 }}>
-            <input
-              type="checkbox"
-              checked={agreedToPrivacy}
-              onChange={(e) => setAgreedToPrivacy(e.target.checked)}
-            />
-          <span>
-            I agree to the{" "}
-            <button type="button" style={styles.textLink || linkStyle} onClick={() => setShowPrivacy(true)}>
-              Privacy Policy
-            </button>{" "}
-            and understand my data is processed to provide insights and AI features.
-          </span>
-          </label>
-        </div>
-
-        <button
-          style={styles.secondaryBtn}
-          onClick={signup}
-          type="button"
-          disabled={busy || !agreedToPrivacy}
-        >
-          Create Account
-        </button>
         {showPrivacy ? (
           <div style={{ marginTop: 18 }}>
             <Suspense fallback={<p style={styles.smallMuted}>Opening privacy...</p>}>
@@ -236,6 +246,35 @@ function getHeroTitleStyle(screenWidth, styles) {
     ...styles.heroTitle,
     fontSize: screenWidth <= 480 ? "32px" : screenWidth <= 768 ? "36px" : "40px",
   };
+}
+
+function getConsentBoxStyle(agreed) {
+  return {
+    marginTop: 10,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 18,
+    border: agreed ? "1px solid #bbf7d0" : "1px solid #fecaca",
+    background: agreed ? "#f0fdf4" : "#fff7f7",
+  };
+}
+
+function getAuthButtonRowStyle(screenWidth) {
+  return {
+    display: "grid",
+    gridTemplateColumns: screenWidth <= 520 ? "1fr" : "1fr 1fr",
+    gap: 10,
+    alignItems: "stretch",
+  };
+}
+
+function getDisabledAuthButtonStyle(disabled) {
+  return disabled
+    ? {
+        opacity: 0.52,
+        cursor: "not-allowed",
+      }
+    : {};
 }
 
 const trustPointStyle = {
