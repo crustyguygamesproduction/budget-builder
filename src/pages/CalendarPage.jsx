@@ -18,6 +18,7 @@ export default function CalendarPage({
   transactionRules = [],
   moneyUnderstanding,
   appMoneyModel,
+  reviewChecks = null,
   onTransactionRulesChange,
   onRefreshMoneyUnderstanding,
   onNavigate,
@@ -59,6 +60,7 @@ export default function CalendarPage({
   const sharedBillMoney = Number(appMoneyModel?.monthlySharedContributionTotal || appMoneyModel?.sharedBillContributions?.monthlyTotal || 0);
   const grossMonthlyBillTotal = Number(appMoneyModel?.grossMonthlyBillTotal || 0);
   const personalBillTotal = Number(appMoneyModel?.monthlyBillBurdenTotal ?? appMoneyModel?.monthlyBillTotal ?? 0);
+  const reviewCheckCount = reviewChecks?.length ?? appMoneyModel?.checksWaiting?.length ?? 0;
 
   const upcomingBills = useMemo(
     () => buildUpcomingBillRows({
@@ -94,6 +96,7 @@ export default function CalendarPage({
     grossMonthlyBillTotal,
     sharedBillMoney,
     missingBillCount: visibleMissingBillCandidates.length,
+    reviewCheckCount,
     sharedContributionsToCheck,
   });
 
@@ -452,9 +455,12 @@ function getCalendarHeroRead({
   grossMonthlyBillTotal,
   sharedBillMoney,
   missingBillCount,
+  reviewCheckCount = 0,
   sharedContributionsToCheck,
 }) {
   const needsSharedCheck = sharedContributionsToCheck.length > 0;
+  const reviewMetric = getReviewMetric({ reviewCheckCount, missingBillCount });
+
   if (needsSharedCheck) {
     return {
       tone: "warn",
@@ -468,7 +474,7 @@ function getCalendarHeroRead({
       metrics: [
         { label: "To cover", value: formatCurrency(personalBillTotal || grossMonthlyBillTotal), detail: "Before uncertain shared money", tone: "warn" },
         { label: "Next bill", value: nextBill ? nextBill.name : "None found", detail: nextBill?.dueLabel || "Needs more data", tone: "focus" },
-        { label: "Checks", value: `${sharedContributionsToCheck.length}`, detail: "Shared money", tone: "warn" },
+        reviewMetric,
       ],
     };
   }
@@ -486,7 +492,7 @@ function getCalendarHeroRead({
       metrics: [
         { label: "Your share", value: formatCurrency(personalBillTotal), detail: "Known bills", tone: "neutral" },
         { label: "Next bill", value: "None found", detail: "Needs more data", tone: "neutral" },
-        { label: "Review", value: missingBillCount ? `${missingBillCount}` : "Clear", detail: "Possible bills", tone: missingBillCount ? "warn" : "good" },
+        reviewMetric,
       ],
     };
   }
@@ -505,8 +511,35 @@ function getCalendarHeroRead({
     metrics: [
       { label: "Monthly cover", value: formatCurrency(personalBillTotal), detail: sharedBillMoney > 0 ? "Your share estimate" : "Expected bills", tone: personalBillTotal > 0 ? "bad" : "neutral" },
       { label: "Shared money", value: sharedBillMoney > 0 ? formatCurrency(sharedBillMoney) : "None found", detail: sharedBillMoney > 0 ? "Excluded from income" : "No regular contribution", tone: sharedBillMoney > 0 ? "good" : "neutral" },
-      { label: "Review", value: missingBillCount ? `${missingBillCount}` : "Clear", detail: "Possible bills", tone: missingBillCount ? "warn" : "good" },
+      reviewMetric,
     ],
+  };
+}
+
+function getReviewMetric({ reviewCheckCount = 0, missingBillCount = 0 }) {
+  if (reviewCheckCount > 0) {
+    return {
+      label: "Review",
+      value: `${reviewCheckCount} to answer`,
+      detail: "Checks waiting",
+      tone: "warn",
+    };
+  }
+
+  if (missingBillCount > 0) {
+    return {
+      label: "Review",
+      value: `${missingBillCount}`,
+      detail: "Possible bills",
+      tone: "warn",
+    };
+  }
+
+  return {
+    label: "Review",
+    value: "Clear",
+    detail: "No checks waiting",
+    tone: "good",
   };
 }
 

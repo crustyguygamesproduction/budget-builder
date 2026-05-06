@@ -16,6 +16,7 @@ import { getHomeStatusPillStyle } from "../lib/styleHelpers";
 export default function HomePage({
   transactions,
   appMoneyModel,
+  reviewChecks = null,
   accounts,
   goals,
   debts,
@@ -40,7 +41,7 @@ export default function HomePage({
   const nextBill = calendarBills.nextBill;
   const moneyLeft = visibleCash.hasBalance ? visibleCash.total - billShare.personalTotal : null;
   const homeRead = getHomeRead({ visibleCash, billShare, nextBill, moneyLeft, dataFreshness, expectedIncome });
-  const checksWaitingCount = appMoneyModel?.checksWaiting?.length || 0;
+  const checksWaitingCount = reviewChecks?.length ?? appMoneyModel?.checksWaiting?.length ?? 0;
   const primaryGoal = getPrimaryGoal(goals);
   const unlinkedDebtSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const unlinkedInvestmentSignals = investmentSignals.filter((signal) => !hasMatchingInvestment(signal, investments));
@@ -138,7 +139,7 @@ export default function HomePage({
           <Shortcut title="Calendar" body={nextBill ? `Next: ${nextBill.name}` : "Bills and dates"} onClick={() => onNavigate("calendar")} />
           <Shortcut title="Goals" body={primaryGoal ? primaryGoal.name : "Safety first"} onClick={() => onNavigate("goals")} />
           {checksWaitingCount > 0 ? (
-            <Shortcut title="Review" body={`${appMoneyModel.checksWaiting.length} to answer`} onClick={() => onNavigate("confidence")} />
+            <Shortcut title="Review" body={`${checksWaitingCount} to answer`} onClick={() => onNavigate("confidence")} />
           ) : (
             <Shortcut title="Upload" body={!dataFreshness.hasData ? "First CSV" : dataFreshness.needsUpload ? "Add latest" : "Add more history"} onClick={() => onNavigate("upload")} />
           )}

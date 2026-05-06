@@ -58,6 +58,7 @@ export default function DebtsPage({
 
   const unlinkedSignals = debtSignals.filter((signal) => !hasMatchingDebt(signal, debts));
   const totalDetectedPayments = debtSignals.reduce((sum, item) => sum + item.total, 0);
+  const debtTrendLabel = debts.length || unlinkedSignals.length || totalDetectedPayments > 0 ? trendSummary.label : "Quiet";
   const debtSnapshot = getDebtPortfolioSnapshot(debts, transactions);
   const calendarDebtBills = (moneyUnderstanding?.billStreams || []).filter((stream) =>
     /debt|loan|credit|finance/i.test(`${stream.kind || ""} ${stream.name || ""}`)
@@ -343,7 +344,7 @@ export default function DebtsPage({
         <MiniCard styles={styles} title="Debts" value={`${debts.length}`} />
         <MiniCard styles={styles} title="Possible debts" value={`${unlinkedSignals.length}`} />
         <MiniCard styles={styles} title="Paid out" value={formatCurrency(totalDetectedPayments)} />
-        <MiniCard styles={styles} title="Trend" value={trendSummary.label} />
+        <MiniCard styles={styles} title="Trend" value={debtTrendLabel} />
       </div>
 
       <Section styles={styles} title="Debt Snapshot">

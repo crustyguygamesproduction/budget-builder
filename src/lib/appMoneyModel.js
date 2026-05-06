@@ -6,6 +6,7 @@ import {
   parseAppDate,
   toIsoDate,
 } from "./finance";
+import { getRealWorldMerchant } from "./merchantIntelligence";
 import { getBillBaseName } from "./moneyUnderstandingGuards";
 
 const INCOME_WORDS = /\b(salary|payroll|wage|wages|paye|universal credit|child benefit|benefit|pension|maintenance|regular income)\b/;
@@ -286,6 +287,8 @@ function getIncomeTransactions(transactions) {
     const amount = Number(transaction.amount || 0);
     if (amount <= 0) return false;
     if (isInternalTransferLike(transaction)) return false;
+    const merchant = getRealWorldMerchant(transaction);
+    if (["work_money", "investment"].includes(merchant.type)) return false;
 
     const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
     if (REFUND_WORDS.test(text) || PASS_THROUGH_WORDS.test(text)) return false;
@@ -382,8 +385,11 @@ function isPossibleSharedBillContribution(transaction, recurringContributionKeys
   const amount = Number(transaction.amount || 0);
   if (amount <= 0 || amount < 100) return false;
   if (isInternalTransferLike(transaction)) return false;
+  const merchant = getRealWorldMerchant(transaction);
   const text = normalizeText(`${transaction.description || ""} ${getMeaningfulCategory(transaction)}`);
   if (isConfirmedSharedContribution(transaction)) return true;
+  if (["work_money", "investment"].includes(merchant.type)) return false;
+  if (merchant.known && !SHARED_BILL_WORDS.test(text)) return false;
   if (INCOME_WORDS.test(text) || REFUND_WORDS.test(text) || PASS_THROUGH_WORDS.test(text)) return false;
   if (SAVINGS_INVESTMENT_WORDS.test(text)) return false;
   if (amount > 1800 && !SHARED_BILL_WORDS.test(text)) return false;

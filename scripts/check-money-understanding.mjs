@@ -15,6 +15,7 @@ const { getStatementIntelligenceContext } = await server.ssrLoadModule("/src/lib
 const { buildCoachContext } = await server.ssrLoadModule("/src/lib/coachContext.js");
 const { buildCalendarMonthlyRows } = await server.ssrLoadModule("/src/lib/calendarMoneyPresentation.js");
 const { REVIEW_RULE_OPTIONS } = await server.ssrLoadModule("/src/lib/reviewOptions.js");
+const { buildVisibleReviewChecks } = await server.ssrLoadModule("/src/lib/reviewQueue.js");
 
 let nextId = 1;
 
@@ -440,6 +441,53 @@ function buildModel(transactions, options = {}) {
   });
   assert.equal(skippedRuleRead.appModel.checksWaiting.some((check) => check.sharedContribution), false);
   assert.equal(skippedRuleRead.appModel.sharedBillContributions.needsChecking.length, 0);
+}
+
+{
+  const { understanding, appModel } = buildModel([
+    tx("Rent to landlord", -1450, "2026-03-01", { category: "Rent", is_bill: true }),
+    tx("Rent to landlord", -1450, "2026-04-01", { category: "Rent", is_bill: true }),
+    tx("Mynextbike work expenses", 360, "2026-03-01"),
+    tx("Mynextbike work expenses", 360, "2026-04-01"),
+  ]);
+
+  assert.equal(appModel.income.monthlyEstimate, 0);
+  assert.equal(appModel.sharedBillContributions.confirmed.length, 0);
+  assert.equal(appModel.sharedBillContributions.needsChecking.length, 0);
+  assert.equal(appModel.checksWaiting.some((check) => /Mynextbike/i.test(check.label || check.question || "")), false);
+  assert.equal(understanding.checks.some((check) => /Mynextbike/i.test(check.label || check.question || "")), false);
+}
+
+{
+  const { understanding, appModel } = buildModel([
+    tx("ACME payment", -420, "2026-02-14"),
+    tx("ACME payment", -420, "2026-03-14"),
+    tx("ACME payment", -420, "2026-04-14"),
+  ]);
+  const reviewChecks = buildVisibleReviewChecks({
+    moneyUnderstanding: understanding,
+    appMoneyModel: appModel,
+    transactionRules: [],
+    dismissedCheckKeys: [],
+    coachChecks: [{
+      key: "coach:dad",
+      label: "From Dad",
+      matchText: "From Dad",
+      amount: 360,
+      source: "coach",
+    }],
+  });
+
+  assert.equal(reviewChecks.length, 2);
+  assert.equal(reviewChecks.filter((check) => check.key === "coach:dad").length, 1);
+  assert.equal(reviewChecks.filter((check) => check.key === appModel.checksWaiting[0].key).length, 1);
+  assert.equal(buildVisibleReviewChecks({
+    moneyUnderstanding: understanding,
+    appMoneyModel: appModel,
+    transactionRules: [],
+    dismissedCheckKeys: ["coach:dad"],
+    coachChecks: reviewChecks,
+  }).length, 1);
 }
 
 {

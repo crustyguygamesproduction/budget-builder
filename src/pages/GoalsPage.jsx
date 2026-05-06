@@ -7,6 +7,7 @@ import { formatCurrency, numberOrNull } from "../lib/finance";
 export default function GoalsPage({
   goals,
   appMoneyModel,
+  reviewChecks = null,
   onGoToCoach,
   onNavigate,
   onChange,
@@ -23,8 +24,9 @@ export default function GoalsPage({
     target_date: "",
   });
 
-  const recommendedGoals = getRecommendedGoals(appMoneyModel);
-  const goalReality = getGoalReality(appMoneyModel);
+  const reviewCheckCount = reviewChecks?.length ?? appMoneyModel?.checksWaiting?.length ?? 0;
+  const recommendedGoals = getRecommendedGoals(appMoneyModel, reviewCheckCount);
+  const goalReality = getGoalReality(appMoneyModel, reviewCheckCount);
   const activeGoal =
     goals.find((goal) => goal.id === activeGoalId) ||
     goals[0] ||
@@ -90,6 +92,7 @@ export default function GoalsPage({
   const planPrompt = buildGoalCoachPrompt({
     goal: activeGoal || recommendedGoals[0],
     appMoneyModel,
+    reviewCheckCount,
     formatCurrency,
   });
 
@@ -179,7 +182,7 @@ export default function GoalsPage({
         <div style={styles.inlineInfoBlock}>
           <Row styles={styles} name="Regular income" value={appMoneyModel?.income?.label || "Not clear yet"} />
           <Row styles={styles} name="Scheduled outgoings" value={formatCurrency(getMonthlyOutgoingsToCover(appMoneyModel))} />
-          <Row styles={styles} name="Everyday spending" value={appMoneyModel?.flexibleSpending?.planningLabel || "Spending needs checking"} />
+          <Row styles={styles} name="Everyday spending" value={getEverydaySpendingRead(appMoneyModel, reviewCheckCount)} />
           <Row styles={styles} name="Best first move" value={goalReality.nextMove} />
         </div>
       </Section>
@@ -189,7 +192,7 @@ export default function GoalsPage({
           <button type="button" style={styles.primaryInlineBtn} onClick={() => onGoToCoach(planPrompt, { autoSend: true })}>
             Ask AI for a simple plan
           </button>
-          {(appMoneyModel?.checksWaiting?.length || 0) > 0 ? (
+          {reviewCheckCount > 0 ? (
             <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("confidence", { returnToCurrent: true })}>Answer Review</button>
           ) : null}
           <button type="button" style={styles.secondaryInlineBtn} onClick={() => onNavigate("calendar", { returnToCurrent: true })}>Review bills</button>
@@ -220,14 +223,14 @@ export default function GoalsPage({
   );
 }
 
-function getRecommendedGoals(appMoneyModel) {
+function getRecommendedGoals(appMoneyModel, reviewCheckCount = 0) {
   const monthlyBills = getMonthlyOutgoingsToCover(appMoneyModel);
   const usualSpending = appMoneyModel?.flexibleSpending?.isUsefulForPlanning
     ? Number(appMoneyModel?.flexibleSpending?.monthlyEstimate || 0)
     : 0;
   const income = Number(appMoneyModel?.income?.monthlyEstimate || 0);
   const safeSave = Number(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0);
-  const checks = appMoneyModel?.checksWaiting?.length || 0;
+  const checks = reviewCheckCount || appMoneyModel?.checksWaiting?.length || 0;
   const starterTarget = Math.max(100, roundToNearest(Math.min(monthlyBills || 300, Math.max(income * 0.1, 100)), 25));
   const safetyTarget = Math.max(500, roundToNearest(monthlyBills + usualSpending, 50));
   const chaosTarget = Math.max(250, roundToNearest((usualSpending || monthlyBills || 500) * 0.35, 25));
@@ -283,11 +286,11 @@ function getRecommendedGoals(appMoneyModel) {
   return goals.slice(0, 3);
 }
 
-function getGoalReality(appMoneyModel) {
+function getGoalReality(appMoneyModel, reviewCheckCount = 0) {
   const income = Number(appMoneyModel?.income?.monthlyEstimate || 0);
   const outgoings = getMonthlyOutgoingsToCover(appMoneyModel);
   const safeSave = Number(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0);
-  const checks = appMoneyModel?.checksWaiting?.length || 0;
+  const checks = reviewCheckCount || appMoneyModel?.checksWaiting?.length || 0;
   if (!income) {
     return { mainAdvice: "I need clearer income before I can suggest a confident saving amount.", nextMove: "Upload more wages history" };
   }
@@ -303,7 +306,7 @@ function getGoalReality(appMoneyModel) {
   };
 }
 
-function buildGoalCoachPrompt({ goal, appMoneyModel, formatCurrency }) {
+function buildGoalCoachPrompt({ goal, appMoneyModel, reviewCheckCount = 0, formatCurrency }) {
   return [
     "Build a very simple Money Hub goal plan.",
     `Goal: ${goal?.name || "Safety buffer"}.`,
@@ -311,9 +314,26 @@ function buildGoalCoachPrompt({ goal, appMoneyModel, formatCurrency }) {
     `Safe monthly amount: ${formatCurrency(appMoneyModel?.savingsCapacity?.safeMonthlyAmount || 0)}.`,
     `Scheduled outgoings to cover: ${formatCurrency(getMonthlyOutgoingsToCover(appMoneyModel))}.`,
     `Income: ${appMoneyModel?.income?.label || "not clear"}.`,
-    `Everyday spending: ${appMoneyModel?.flexibleSpending?.planningLabel || "needs checking"}.`,
+    `Everyday spending: ${getEverydaySpendingRead(appMoneyModel, reviewCheckCount)}.`,
+    `Review checks waiting: ${reviewCheckCount}.`,
     "Explain it for someone bad with money. Give one next action.",
   ].join(" ");
+}
+
+function getEverydaySpendingRead(appMoneyModel, reviewCheckCount = 0) {
+  const facts = appMoneyModel?.cleanMonthlyFacts || {};
+  const flags = facts.uncertainty_flags || [];
+  const flexible = appMoneyModel?.flexibleSpending || {};
+  const rowsNeedChecking = (facts.monthly_rows || []).some((row) => row.calendar_status === "needs_checking" || row.status === "needs_checking");
+  const shouldHoldBack =
+    reviewCheckCount > 0 ||
+    flexible.confidence === "low" ||
+    flags.includes("raw_outgoings_likely_inflated") ||
+    flags.includes("shared_or_pass_through_money_needs_review") ||
+    rowsNeedChecking;
+
+  if (shouldHoldBack) return "Needs checking";
+  return flexible.planningLabel || "Spending needs checking";
 }
 
 function getMonthlyOutgoingsToCover(appMoneyModel) {

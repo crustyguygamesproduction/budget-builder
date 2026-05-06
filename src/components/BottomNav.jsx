@@ -16,7 +16,7 @@ const MORE_ITEMS = [
   { key: "settings", label: "Settings", hint: "Setup and privacy" },
 ];
 
-export default function BottomNav({ page, setPage, screenWidth, styles }) {
+export default function BottomNav({ page, setPage, reviewCheckCount = 0, screenWidth, styles }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const pageInMore = MORE_ITEMS.some((item) => item.key === page);
 
@@ -42,7 +42,7 @@ export default function BottomNav({ page, setPage, screenWidth, styles }) {
                 onClick={() => go(item.key)}
               >
                 <strong>{item.label}</strong>
-                <span>{item.hint}</span>
+                <span>{getMoreItemHint(item, reviewCheckCount)}</span>
               </button>
             ))}
           </div>
@@ -82,6 +82,13 @@ export default function BottomNav({ page, setPage, screenWidth, styles }) {
       </nav>
     </>
   );
+}
+
+function getMoreItemHint(item, reviewCheckCount) {
+  if (item.key === "confidence" && reviewCheckCount > 0) {
+    return `${reviewCheckCount} to answer`;
+  }
+  return item.hint;
 }
 
 function NavIcon({ name }) {

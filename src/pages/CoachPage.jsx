@@ -80,7 +80,11 @@ export default function CoachPage({
 
   const debtSignals = useMemo(() => getDebtSignals(transactions), [transactions]);
   const investmentSignals = useMemo(() => getInvestmentSignals(transactions), [transactions]);
-  const topCategories = useMemo(() => getTopCategories(transactions), [transactions]);
+  const topCategories = useMemo(() => {
+    const cleanCategories = appMoneyModel?.flexibleSpending?.topCategories || [];
+    const source = cleanCategories.length ? cleanCategories : getTopCategories(transactions);
+    return source.filter((item) => isCuttableSpendingCategory(item?.category));
+  }, [appMoneyModel?.flexibleSpending?.topCategories, transactions]);
   const correctionCandidates = useMemo(
     () => (moneyUnderstanding?.checks || [])
       .filter((candidate) => !dismissedRuleKeys.includes(candidate.key))
@@ -825,7 +829,7 @@ function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmen
 
   const topCategory = topCategories.find((item) => {
     const category = String(item?.category || "").trim().toLowerCase();
-    return category && !["spending", "uncategorised", "income"].includes(category);
+    return category && isCuttableSpendingCategory(category);
   });
 
   if (topCategory) {
@@ -851,6 +855,12 @@ function getSmartCoachPrompts({ topCategories, houseGoal, debtSignals, investmen
   }
 
   return prompts.slice(0, 6);
+}
+
+function isCuttableSpendingCategory(category) {
+  const value = String(category || "").trim().toLowerCase();
+  if (!value || ["spending", "uncategorised", "income"].includes(value)) return false;
+  return !/\b(work|pass.?through|transfer|internal|refund|reimburse|paid back|cashback|income|salary|wages|payroll|benefit|rent|mortgage|bill|subscription|debt|credit|loan|investment|savings?|isa|shared)\b/.test(value);
 }
 
 function getCoachSectionStyle(viewportHeight, screenWidth, styles) {

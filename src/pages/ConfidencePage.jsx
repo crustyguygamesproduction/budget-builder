@@ -1,15 +1,16 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
-import { readCoachGeneratedChecks } from "../lib/coachGeneratedChecks";
 import { normalizeText } from "../lib/finance";
 import { dismissReviewCheckKey, readDismissedReviewCheckKeys } from "../lib/reviewDismissals";
 import { REVIEW_RULE_OPTIONS } from "../lib/reviewOptions";
+import { buildVisibleReviewChecks, getCandidateMatchText } from "../lib/reviewQueue";
 import { Section, MiniCard } from "../components/ui";
 
 export default function ConfidencePage({
   transactions,
   transactionRules = [],
   moneyUnderstanding,
+  reviewChecks = null,
   onTransactionRulesChange,
   returnTarget,
   onBack,
@@ -24,25 +25,20 @@ export default function ConfidencePage({
 
   const checks = useMemo(
     () => {
-      const coachChecks = readCoachGeneratedChecks();
-      return [...coachChecks, ...(moneyUnderstanding?.checks || [])]
-        .filter((candidate) => !dismissedKeys.includes(candidate.key))
-        .filter((candidate) => !hasAnsweredRule(candidate, transactionRules))
-        .filter((candidate, index, all) =>
-          all.findIndex((item) => item.key === candidate.key) === index
-        )
+      const sourceChecks = Array.isArray(reviewChecks)
+        ? reviewChecks
+        : buildVisibleReviewChecks({ moneyUnderstanding, transactionRules, dismissedCheckKeys: dismissedKeys });
+      return sourceChecks
         .map((candidate) => ({
           ...candidate,
           examples: getExamplesForCandidate(transactions, candidate),
         }));
     },
-    [transactions, transactionRules, moneyUnderstanding, dismissedKeys]
+    [transactions, transactionRules, moneyUnderstanding, dismissedKeys, reviewChecks]
   );
   const coachCheckCount = useMemo(
-    () => readCoachGeneratedChecks()
-      .filter((candidate) => !dismissedKeys.includes(candidate.key))
-      .filter((candidate) => !hasAnsweredRule(candidate, transactionRules)).length,
-    [dismissedKeys, transactionRules]
+    () => checks.filter((candidate) => candidate?.source === "coach").length,
+    [checks]
   );
 
   const handledCount = transactionRules.filter((rule) =>
@@ -266,40 +262,40 @@ function formatCheckPattern(candidate) {
   return `About £${amount}, seen ${countText} across ${monthText}.`;
 }
 
-function hasAnsweredRule(candidate, transactionRules = []) {
-  const match = normalizeText(getCandidateMatchText(candidate));
-  if (!match) return false;
-
-  return (transactionRules || []).some((rule) => {
-    const ruleText = normalizeText(rule?.match_text || "");
-    if (!ruleText) return false;
-    return ruleText.includes(match) || match.includes(ruleText);
-  });
-}
-
-function getCandidateMatchText(candidate) {
-  return candidate?.matchText || candidate?.label || candidate?.question || "review check";
-}
-
 function getExamplesForCandidate(transactions, candidate) {
   const match = normalizeText(candidate.matchText || candidate.label);
   if (!match) return [];
   const direction = candidate.direction || "outgoing";
 
-  return transactions
-    .filter((transaction) => {
+  const matches = transactions.filter((transaction) => {
       const amount = Number(transaction.amount || 0);
       if (direction === "incoming" && amount <= 0) return false;
       if (direction !== "incoming" && amount >= 0) return false;
       const text = normalizeText(transaction.description || "");
       return text.includes(match) || match.includes(text.slice(0, 12));
-    })
+    });
+
+  return dedupeExampleTransactions(matches)
     .slice(0, 3)
     .map((transaction) => ({
       date: transaction.transaction_date || "",
       description: transaction.description || "Transaction",
       amount: transaction.amount,
     }));
+}
+
+function dedupeExampleTransactions(transactions = []) {
+  const seen = new Set();
+  return transactions.filter((transaction) => {
+    const key = [
+      transaction.transaction_date || "",
+      normalizeText(transaction.description || ""),
+      Number(transaction.amount || 0).toFixed(2),
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function getStatsGridStyle(screenWidth) {

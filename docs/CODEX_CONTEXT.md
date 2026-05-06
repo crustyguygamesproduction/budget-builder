@@ -1,6 +1,6 @@
 # Codex context for Budget Builder / Money Hub
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 This file is intended to give Codex enough context to work safely on the project without needing the chat history.
 
@@ -121,12 +121,13 @@ Current behaviour:
 
 ### Review skip semantics
 
-Status: completed on 2026-05-05.
+Status: completed on 2026-05-05 and tightened on 2026-05-06.
 
 Relevant files:
 
 - `src/lib/reviewDismissals.js`
 - `src/lib/reviewOptions.js`
+- `src/lib/reviewQueue.js`
 - `src/pages/ConfidencePage.jsx`
 - `src/pages/CoachPage.jsx`
 - `src/lib/appMoneyModel.js`
@@ -139,6 +140,17 @@ Current behaviour:
 - A skipped check should disappear from Review and should not keep Home, Calendar, Goals, Coach or page guides saying there are checks waiting.
 - Skipping does not teach a spending/income classification. If the user wants the money treatment changed, they should pick a Review option.
 - Review options now include plain-language answers for normal purchase, one-off payment, own transfer, and irrelevant/exclude.
+- `src/lib/reviewQueue.js` is the shared visible Review queue. Home, Calendar, Goals, More/page guides and Review should use this same queue/count so Coach-generated checks and deterministic checks do not disagree.
+
+### Work/pass-through money guardrails
+
+Status: tightened on 2026-05-06 after a live account audit.
+
+Current behaviour:
+
+- Known work/pass-through merchants such as Mynextbike/Proovia must not be inferred as personal income or shared rent/bill contributions.
+- Coach quick prompts should use clean flexible-spending categories and must not suggest cutting pass-through, refunds, transfers, income, bills, debt, investing, savings or shared-money categories.
+- Goals should show `Needs checking` for everyday spending while Review checks, raw movement inflation, shared/pass-through uncertainty, or needs-checking monthly rows remain.
 
 ### User scoping
 

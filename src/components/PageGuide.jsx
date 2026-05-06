@@ -15,6 +15,7 @@ export default function PageGuide({
   debts = [],
   investments = [],
   receipts = [],
+  reviewCheckCount = null,
   onNavigate,
   onGoToCoach,
 }) {
@@ -22,14 +23,14 @@ export default function PageGuide({
   const guide = useMemo(
     () => getGuide(page, {
       transactionCount: transactions.length,
-      checkCount: appMoneyModel?.checksWaiting?.length || 0,
+      checkCount: reviewCheckCount ?? appMoneyModel?.checksWaiting?.length ?? 0,
       goalCount: goals.length,
       debtCount: debts.length,
       investmentCount: investments.length,
       receiptCount: receipts.length,
       scheduledOutgoings: appMoneyModel?.monthlyScheduledOutgoingsTotal ?? null,
     }),
-    [appMoneyModel, debts.length, goals.length, investments.length, page, receipts.length, transactions.length]
+    [appMoneyModel, debts.length, goals.length, investments.length, page, receipts.length, reviewCheckCount, transactions.length]
   );
 
   useEffect(() => {
